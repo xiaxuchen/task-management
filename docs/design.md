@@ -361,7 +361,7 @@ task-board/
 - **破坏性操作**：删除 / 移动需显式 `--confirm`（接口 `confirm: true`），未确认返回 400 `CONFIRM_REQUIRED`
 - **错误**：统一 `{ error: { code, message, details } }`，错误码稳定，`details` 定位到字段 / 路径
 - **并发**：SQLite WAL + `busy_timeout=5000`，Web / CLI / MCP 三方直接读写同一库
-- **变更可见**：任何写入使 `GET /api/revision` 递增；前端每 10 秒轮询并自动刷新
+- **变更可见**：任何写入使 `GET /api/revision` 递增（**一次用户 / AI 操作只递增一次**，组合写入不重复计数）；前端每 10 秒轮询并自动刷新
 - **预览与冲突**：`diff` 读单 commit / 节点（含子树）的 diff；`merge precheck` 预检；`merge run` 执行合并；`conflict show` 返回 base / ours / theirs 三方内容；`conflict resolve` 写回合并结果与补丁（AI 可直接处理冲突）
 - **工具清单**：MCP 工具与 CLI 命令是 §6 REST 能力的 1:1 映射（schema / tree / node / attr-def / doc / repo / unit / commit / diff / merge / conflict / mr / batch / import / upload）
 - **文档**：README 附「给 AI 的用法」（工具清单 + 示例 + bootstrap prompt）
