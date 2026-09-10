@@ -197,6 +197,33 @@ export function createStore(db, options = {}) {
     return roots
   }
 
+  function resolveRef(ref) {
+    const asText = String(ref ?? '').trim()
+    if (asText === '') throw new AppError(CODES.PATH_NOT_FOUND, '引用为空', { ref })
+    if (/^\d+$/.test(asText)) return nodeVO(rawNode(Number(asText)))
+
+    const parts = asText.split('/').map((s) => s.trim()).filter(Boolean)
+    let candidates = db.prepare('SELECT * FROM nodes WHERE parent_id IS NULL').all()
+    let cur = null
+    for (let i = 0; i < parts.length; i += 1) {
+      const name = parts[i]
+      const matched = candidates.filter((n) => n.name === name)
+      const walked = parts.slice(0, i + 1).join('/')
+      if (matched.length === 0) {
+        throw new AppError(CODES.PATH_NOT_FOUND, `路径不存在：${walked}`, { ref })
+      }
+      if (matched.length > 1) {
+        throw new AppError(CODES.PATH_AMBIGUOUS, `路径歧义：${walked}，请改用 id 引用`, {
+          ref,
+          matchedIds: matched.map((m) => m.id)
+        })
+      }
+      cur = matched[0]
+      candidates = db.prepare('SELECT * FROM nodes WHERE parent_id = ?').all(cur.id)
+    }
+    return nodeVO(cur)
+  }
+
   function reorderSiblings(parentId, orderedIds) {
     const ts = now()
     const upd = db.prepare('UPDATE nodes SET sort = ?, updated_at = ? WHERE id = ?')
@@ -272,6 +299,7 @@ export function createStore(db, options = {}) {
     updateNode,
     deleteNode,
     getNode: (id) => nodeVO(rawNode(id)),
+    resolveRef,
     listChildren,
     listTree,
     reorderSiblings,
