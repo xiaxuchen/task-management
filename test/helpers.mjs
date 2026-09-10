@@ -17,7 +17,12 @@ export async function tempHome() {
   // config/db 在 import 时读取该变量，所以用动态 import 保证顺序
   const db = await import('../server/db.mjs')
   const config = await import('../server/config.mjs')
-  const store = await import('../server/store.mjs')
+  // store.mjs 在计划 1 Task 5 才实现；这里容错，避免 db/config 用例被连带失败
+  const store = await import('../server/store.mjs').catch(() => ({
+    createStore() {
+      throw new Error('server/store.mjs 尚未实现（计划 1 Task 5）')
+    }
+  }))
   return {
     dir,
     openDb: db.openDb,
