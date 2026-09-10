@@ -436,27 +436,103 @@ export function createStore(db, options = {}) {
     return out
   }
 
-  function upsertDocument(nodeId, name, content = '', by = 'user') {
-    // 计划 1 Task 8 会替换成完整实现（重名 409、改名查重等）
-    rawNode(nodeId)
-    const ts = now()
-    const existing = db.prepare('SELECT id FROM documents WHERE node_id = ? AND name = ?').get(nodeId, name)
-    if (existing) {
-      db.prepare('UPDATE documents SET content = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(
-        content,
-        ts,
-        actor(by),
-        existing.id
-      )
-      return { id: existing.id, created: false }
+  function docVO(r) {
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      name: r.name,
+      content: r.content,
+      sort: r.sort,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by
     }
+  }
+
+  function listDocuments(nodeId) {
+    rawNode(nodeId)
+    return db.prepare('SELECT * FROM documents WHERE node_id = ? ORDER BY sort, id').all(nodeId).map(docVO)
+  }
+
+  function createDocument(nodeId, name, content = '', by = 'user') {
+    rawNode(nodeId)
+    const docName = String(name || '').trim()
+    if (!docName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    const dup = db.prepare('SELECT id FROM documents WHERE node_id = ? AND name = ?').get(nodeId, docName)
+    if (dup) throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${docName}」`, { nodeId, name: docName })
+    const ts = now()
     const sort = db.prepare('SELECT IFNULL(MAX(sort),0) + 10 s FROM documents WHERE node_id = ?').get(nodeId).s
     const info = db
       .prepare(
         'INSERT INTO documents (node_id,name,content,sort,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)'
       )
-      .run(nodeId, name, content, sort, ts, ts, actor(by), actor(by))
-    return { id: Number(info.lastInsertRowid), created: true }
+      .run(nodeId, docName, String(content ?? ''), sort, ts, ts, actor(by), actor(by))
+    bumpRevision()
+    return docVO(db.prepare('SELECT * FROM documents WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function updateDocument(docId, patch, by = 'user') {
+    const cur = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
+    const fields = []
+    const args = []
+    if (patch.name !== undefined) {
+      const docName = String(patch.name || '').trim()
+      if (!docName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+      const dup = db
+        .prepare('SELECT id FROM documents WHERE node_id = ? AND name = ? AND id <> ?')
+        .get(cur.node_id, docName, docId)
+      if (dup) throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${docName}」`, { name: docName })
+      fields.push('name = ?')
+      args.push(docName)
+    }
+    if (patch.content !== undefined) {
+      fields.push('content = ?')
+      args.push(String(patch.content ?? ''))
+    }
+    fields.push('updated_at = ?', 'updated_by = ?')
+    args.push(now(), actor(by), docId)
+    db.prepare(`UPDATE documents SET ${fields.join(', ')} WHERE id = ?`).run(...args)
+    bumpRevision()
+    return docVO(db.prepare('SELECT * FROM documents WHERE id = ?').get(docId))
+  }
+
+  function upsertDocument(nodeId, name, content = null, by = 'user') {
+    rawNode(nodeId)
+    const docName = String(name || '').trim()
+    if (!docName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    const existing = db.prepare('SELECT * FROM documents WHERE node_id = ? AND name = ?').get(nodeId, docName)
+    if (!existing) {
+      const created = createDocument(nodeId, docName, content ?? '', by)
+      return { id: created.id, created: true, name: docName }
+    }
+    if (content != null) updateDocument(existing.id, { content }, by)
+    return { id: existing.id, created: false, name: docName }
+  }
+
+  function deleteDocument(docId) {
+    const cur = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
+    db.prepare('DELETE FROM documents WHERE id = ?').run(docId)
+    bumpRevision()
+    return { id: docId }
+  }
+
+  function reorderDocuments(nodeId, orderedIds) {
+    rawNode(nodeId)
+    const ts = now()
+    const upd = db.prepare('UPDATE documents SET sort = ?, updated_at = ? WHERE id = ? AND node_id = ?')
+    db.exec('BEGIN')
+    try {
+      orderedIds.forEach((id, idx) => upd.run((idx + 1) * 10, ts, id, nodeId))
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
+    }
+    bumpRevision()
+    return listDocuments(nodeId)
   }
 
   return {
@@ -471,14 +547,19 @@ export function createStore(db, options = {}) {
     listTree,
     reorderSiblings,
     subtreeIds,
-    // attrs / documents（Task 8 补全文档部分）
+    // attrs / documents
     setAttrs,
     getAttrs,
     listAttrDefs,
     addAttrDef,
     updateAttrDef,
     deleteAttrDef,
+    listDocuments,
+    createDocument,
+    updateDocument,
     upsertDocument,
+    deleteDocument,
+    reorderDocuments,
     docPresetNames,
     // revision
     getRevision,
