@@ -239,34 +239,201 @@ export function createStore(db, options = {}) {
     return listChildren(parentId)
   }
 
-  function setAttrs(nodeId, attrs, by = 'user') {
-    // 计划 1 Task 7 会替换成带类型/必填校验的完整实现
-    const node = rawNode(nodeId)
+  const DATA_TYPES = new Set(['text', 'textarea', 'number', 'date', 'select', 'url'])
+
+  function defVO(r) {
+    return {
+      id: r.id,
+      nodeType: r.node_type,
+      key: r.key,
+      label: r.label,
+      dataType: r.data_type,
+      options: r.options ? JSON.parse(r.options) : null,
+      required: !!r.required,
+      defaultValue: r.default_value,
+      sort: r.sort,
+      enabled: !!r.enabled
+    }
+  }
+
+  function listAttrDefs(nodeType, { includeDisabled = false } = {}) {
+    const rows = nodeType
+      ? db.prepare('SELECT * FROM attr_defs WHERE node_type = ? ORDER BY sort, id').all(nodeType)
+      : db.prepare('SELECT * FROM attr_defs ORDER BY node_type, sort, id').all()
+    return rows.map(defVO).filter((d) => includeDisabled || d.enabled)
+  }
+
+  function addAttrDef({
+    nodeType,
+    key,
+    label,
+    dataType = 'text',
+    options = null,
+    required = false,
+    defaultValue = null,
+    sort = 100
+  }) {
+    if (!nodeType || !key || !label) throw new AppError(CODES.VALIDATION_FAILED, 'nodeType / key / label 必填')
+    if (!DATA_TYPES.has(dataType)) throw new AppError(CODES.VALIDATION_FAILED, `不支持的 dataType ${dataType}`, { dataType })
+    const dup = db.prepare('SELECT id FROM attr_defs WHERE node_type = ? AND key = ?').get(nodeType, key)
+    if (dup) throw new AppError(CODES.VALIDATION_FAILED, `${nodeType} 下已存在属性 ${key}`, { key })
     const ts = now()
-    for (const [key, value] of Object.entries(attrs || {})) {
-      const def = db
-        .prepare('SELECT id FROM attr_defs WHERE node_type = ? AND key = ? AND enabled = 1')
-        .get(node.type, key)
-      if (!def) throw new AppError(CODES.VALIDATION_FAILED, `属性 ${key} 不在 ${node.type} 的定义里`, { key })
-      const existing = db.prepare('SELECT id FROM attr_values WHERE node_id = ? AND attr_def_id = ?').get(nodeId, def.id)
-      if (existing) {
-        db.prepare('UPDATE attr_values SET value = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(
-          value == null ? null : String(value),
-          ts,
-          actor(by),
-          existing.id
-        )
-      } else {
-        db.prepare('INSERT INTO attr_values (node_id,attr_def_id,value,updated_at,updated_by) VALUES (?,?,?,?,?)').run(
-          nodeId,
-          def.id,
-          value == null ? null : String(value),
-          ts,
-          actor(by)
-        )
+    const info = db
+      .prepare(
+        'INSERT INTO attr_defs (node_type,key,label,data_type,options,required,default_value,sort,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)'
+      )
+      .run(
+        nodeType,
+        key,
+        label,
+        dataType,
+        options ? JSON.stringify(options) : null,
+        required ? 1 : 0,
+        defaultValue,
+        sort,
+        ts,
+        ts
+      )
+    bumpRevision()
+    return defVO(db.prepare('SELECT * FROM attr_defs WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function updateAttrDef(id, patch) {
+    const cur = db.prepare('SELECT * FROM attr_defs WHERE id = ?').get(id)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `属性定义 ${id} 不存在`, { id })
+    const fields = []
+    const args = []
+    if (patch.label !== undefined) {
+      fields.push('label = ?')
+      args.push(patch.label)
+    }
+    if (patch.dataType !== undefined) {
+      if (!DATA_TYPES.has(patch.dataType)) {
+        throw new AppError(CODES.VALIDATION_FAILED, `不支持的 dataType ${patch.dataType}`)
+      }
+      fields.push('data_type = ?')
+      args.push(patch.dataType)
+    }
+    if (patch.options !== undefined) {
+      fields.push('options = ?')
+      args.push(patch.options ? JSON.stringify(patch.options) : null)
+    }
+    if (patch.required !== undefined) {
+      fields.push('required = ?')
+      args.push(patch.required ? 1 : 0)
+    }
+    if (patch.defaultValue !== undefined) {
+      fields.push('default_value = ?')
+      args.push(patch.defaultValue)
+    }
+    if (patch.sort !== undefined) {
+      fields.push('sort = ?')
+      args.push(patch.sort)
+    }
+    if (patch.enabled !== undefined) {
+      fields.push('enabled = ?')
+      args.push(patch.enabled ? 1 : 0)
+    }
+    fields.push('updated_at = ?')
+    args.push(now(), id)
+    db.prepare(`UPDATE attr_defs SET ${fields.join(', ')} WHERE id = ?`).run(...args)
+    bumpRevision()
+    return defVO(db.prepare('SELECT * FROM attr_defs WHERE id = ?').get(id))
+  }
+
+  function deleteAttrDef(id) {
+    const cur = db.prepare('SELECT id FROM attr_defs WHERE id = ?').get(id)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `属性定义 ${id} 不存在`, { id })
+    db.prepare('DELETE FROM attr_defs WHERE id = ?').run(id)
+    bumpRevision()
+    return { id }
+  }
+
+  function validateValue(def, value) {
+    if (value == null || value === '') {
+      if (def.required) {
+        throw new AppError(CODES.VALIDATION_FAILED, `属性「${def.label}」必填`, { key: def.key, required: true })
+      }
+      return null
+    }
+    const v = String(value)
+    if (def.dataType === 'number' && Number.isNaN(Number(v))) {
+      throw new AppError(CODES.VALIDATION_FAILED, `属性「${def.label}」必须是数字`, { key: def.key, value: v })
+    }
+    if (def.dataType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `属性「${def.label}」必须是 YYYY-MM-DD`, { key: def.key, value: v })
+    }
+    if (def.dataType === 'select') {
+      const allowed = (def.options || []).map((o) => String(o.value))
+      if (!allowed.includes(v)) {
+        throw new AppError(CODES.VALIDATION_FAILED, `属性「${def.label}」必须是 ${allowed.join(' / ')} 之一`, {
+          key: def.key,
+          value: v
+        })
       }
     }
-    return true
+    return v
+  }
+
+  function setAttrs(nodeId, attrs, by = 'user') {
+    const node = rawNode(nodeId)
+    const defs = new Map(listAttrDefs(node.type).map((d) => [d.key, d]))
+    const ts = now()
+    db.exec('BEGIN')
+    try {
+      for (const [key, raw] of Object.entries(attrs || {})) {
+        const def = defs.get(key)
+        if (!def) throw new AppError(CODES.VALIDATION_FAILED, `属性 ${key} 不在 ${node.type} 的启用定义里（或已停用）`, { key })
+        const value = validateValue(def, raw)
+        const existing = db.prepare('SELECT id FROM attr_values WHERE node_id = ? AND attr_def_id = ?').get(nodeId, def.id)
+        if (existing) {
+          db.prepare('UPDATE attr_values SET value = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(
+            value,
+            ts,
+            actor(by),
+            existing.id
+          )
+        } else {
+          db.prepare('INSERT INTO attr_values (node_id,attr_def_id,value,updated_at,updated_by) VALUES (?,?,?,?,?)').run(
+            nodeId,
+            def.id,
+            value,
+            ts,
+            actor(by)
+          )
+        }
+      }
+      db.prepare('UPDATE nodes SET updated_at = ?, updated_by = ? WHERE id = ?').run(ts, actor(by), nodeId)
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
+    }
+    bumpRevision()
+    return getAttrs(nodeId)
+  }
+
+  function getAttrs(nodeId) {
+    rawNode(nodeId)
+    const rows = db
+      .prepare(
+        `SELECT d.key, d.label, d.data_type, d.options, v.value, v.updated_at, v.updated_by
+           FROM attr_values v JOIN attr_defs d ON d.id = v.attr_def_id
+          WHERE v.node_id = ?`
+      )
+      .all(nodeId)
+    const out = {}
+    for (const r of rows) out[r.key] = r.value
+    Object.defineProperty(out, '__meta', {
+      enumerable: false,
+      value: Object.fromEntries(
+        rows.map((r) => [
+          r.key,
+          { label: r.label, dataType: r.data_type, updatedAt: r.updated_at, updatedBy: r.updated_by }
+        ])
+      )
+    })
+    return out
   }
 
   function upsertDocument(nodeId, name, content = '', by = 'user') {
@@ -304,8 +471,13 @@ export function createStore(db, options = {}) {
     listTree,
     reorderSiblings,
     subtreeIds,
-    // attrs / documents（Task 7、8 补全）
+    // attrs / documents（Task 8 补全文档部分）
     setAttrs,
+    getAttrs,
+    listAttrDefs,
+    addAttrDef,
+    updateAttrDef,
+    deleteAttrDef,
     upsertDocument,
     docPresetNames,
     // revision
