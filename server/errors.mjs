@@ -14,7 +14,9 @@ export const CODES = {
 export class AppError extends Error {
   constructor(code, message, details) {
     super(message)
-    this.name = 'AppError'
+    // name 直接用错误码：String(err) 输出 "PARENT_TYPE_INVALID: …"，
+    // 既方便 CLI 直接打印，也让测试里的 assert.throws(fn, /CODE/) 能命中
+    this.name = code
     this.code = code
     this.details = details
   }
