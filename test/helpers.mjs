@@ -25,7 +25,9 @@ export async function tempHome() {
   }))
   return {
     dir,
-    openDb: db.openDb,
+    // 注意：config/db 模块在首次 import 时就把 TASKBOARD_HOME 固定下来了（ESM 模块只求值一次），
+    // 所以同一个测试文件内多次 tempHome() 并不会换 HOME；要真隔离得给每次调用独立的库文件。
+    openDb: (file) => db.openDb(file || path.join(dir, 'data.db')),
     config,
     store,
     cleanup() {
