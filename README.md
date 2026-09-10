@@ -14,4 +14,12 @@ npm test        # 数据层单测（计划 1 起可用）
 
 ## 计划进度
 
-计划 1 数据层（本仓库当前内容）→ 计划 2 三入口 → 计划 3 Web UI → 计划 4 Git 集成与冲突处理 → 计划 5 MR / 上传 / 冒烟
+- [x] 计划 1 数据层（config / db / store：节点·属性·文档·revision，24 个用例全绿）
+- [ ] 计划 2 三入口（HTTP API + CLI + MCP）
+- [ ] 计划 3 Web UI（表格式展开树 + 右侧抽屉 + 文档区）
+- [ ] 计划 4 Git 集成与冲突处理
+- [ ] 计划 5 MR 拉取 / 上传 / 冒烟
+
+## 目录约定（功能之家）
+
+每个功能一个目录：`features/<slug>/`，只放 `prd.md`（功能需求）/ `design.md`（功能设计）/ `commit.md`（该功能的提交记录）；代码在 `server/`、`test/`、`web/` 按分层组织。索引见 `features/README.md`，主设计文档在 `docs/design.md`。

@@ -7,3 +7,4 @@
 - feat(config): 默认配置、600 权限与 token 打码
 - feat(db): 建表、索引与预置属性定义（WAL + 外键 + busy_timeout）
 - docs(features): 落地「功能之家」约定（features/<功能>/{prd,design,commit}.md），并把设计文档权威副本纳入仓库 docs/design.md
+- docs: 计划 1 数据层完成，更新 README 进度与功能索引状态

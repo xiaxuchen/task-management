@@ -15,7 +15,7 @@
 | 节点树与增删改 | `node-tree/` | 计划 1 · Task 5–6 | 已完成 | server/store.mjs（节点部分） |
 | 属性系统 | `attributes/` | 计划 1 · Task 7 | 已完成 | server/store.mjs（属性部分） |
 | 文档（Markdown 多份） | `documents/` | 计划 1 · Task 8 | 已完成 | server/store.mjs（文档部分） |
-| 变更可见与审计 | `revision/` | 计划 1 · Task 9 | 待开始 | server/store.mjs（revision / 审计） |
+| 变更可见与审计 | `revision/` | 计划 1 · Task 9 | 已完成 | server/store.mjs（revision / 审计） |
 | 缺陷登记 | `node-tree/`（类型与校验在节点树里） | 计划 1 · Task 5 | 已完成 | nodes.type = defect |
 | commit 手工登记 | `commit-registry/`（随计划 2 建） | 计划 1 建表 · 计划 2 入口 | 表已完成 | commits 表 |
 | 三入口：HTTP API / CLI / MCP | `entrypoints/`（随计划 2 建） | 计划 2 | 待开始 | server/{api,cli,mcp}.mjs、bin/ |

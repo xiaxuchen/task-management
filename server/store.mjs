@@ -18,8 +18,21 @@ export function createStore(db, options = {}) {
   const docPresets = options.docPresets || DEFAULT_DOC_PRESETS
   const stmt = (sql) => db.prepare(sql)
 
+  let bumpDepth = 0
+
   function bumpRevision() {
+    if (bumpDepth > 0) return // 组合写入期间只算一次（见 withoutBump）
     db.prepare("UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'revision'").run()
+  }
+
+  /** 把一组内部写入合并成一次 revision 递增（一次用户/AI 操作 = 一次递增） */
+  function withoutBump(fn) {
+    bumpDepth += 1
+    try {
+      return fn()
+    } finally {
+      bumpDepth -= 1
+    }
   }
   function getRevision() {
     return Number(db.prepare("SELECT value FROM meta WHERE key = 'revision'").get().value)
@@ -113,8 +126,11 @@ export function createStore(db, options = {}) {
       )
       .run(type, parentId, String(name).trim(), status, nextSort, ts, ts, actor(by), actor(by))
     const id = Number(info.lastInsertRowid)
-    if (attrs) setAttrs(id, attrs, by)
-    for (const docName of docPresetNames(type)) upsertDocument(id, docName, '', by)
+    // 建节点 + 写属性 + 预置文档属于「一次操作」，只递增一次 revision
+    withoutBump(() => {
+      if (attrs) setAttrs(id, attrs, by)
+      for (const docName of docPresetNames(type)) upsertDocument(id, docName, '', by)
+    })
     bumpRevision()
     return nodeVO(rawNode(id))
   }
