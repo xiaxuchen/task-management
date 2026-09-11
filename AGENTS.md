@@ -19,6 +19,8 @@ Web UI 面向人但是次要入口。
 npm install && npm run build   # 装依赖 + 构建（postinstall/prebuild 会自动同步 Vditor 资源）
 npm start                      # 起服务 → http://127.0.0.1:3210
 npm test                       # 55 个用例（node:test）
+npm run snapshot:export        # 把 ~/.taskboard/data.db 导成 data/snapshot.json
+npm run snapshot:import        # 从 data/snapshot.json 恢复本地库（幂等）
 ```
 
 要求 **Node ≥ 22.5**（用内置 `node:sqlite`）。
@@ -134,6 +136,9 @@ node delete <ref> --confirm            # 破坏性操作必须 --confirm
 - ❌ 不要给 HTTP / CLI / MCP 各写一套业务逻辑
 - ❌ 不要不加 `--confirm` 就删除 / 移动；不要跳过 `commit.md` 登记
 - ❌ 不要把大文件提交进 git（Vditor 的 21.9 MB 资源已在 `.gitignore` 的 `web/public/vditor/`）
+- ❌ **不要把 `~/.taskboard/config.json` 或 `data.db` 提交进 git** —— 前者含 GitLab token，
+  后者是二进制且带 `-wal`/`-shm`（直接拷会丢未 checkpoint 的数据）。要带数据走用
+  `npm run snapshot:export` 生成 `data/snapshot.json`（文本、可 diff、可回放）
 - ❌ 不要把 token 写进代码或数据库 —— 只存 `~/.taskboard/config.json`（600 权限），接口返回时打码
 - ❌ 不要在 `features/<功能>/` 里放代码 —— 那里只放三份文档
 

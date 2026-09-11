@@ -29,6 +29,8 @@ npm start       # 起服务并打开浏览器（默认 http://127.0.0.1:3210）
 | `node bin/taskboard.js tree --format md` | CLI 入口（`npm link` 后可直接 `taskboard`） |
 | `node server/import-dsh.mjs --dry-run` | 预览 dsh-charge 需求同步（不写库） |
 | `node server/import-dsh.mjs --reset` | 重建导入 dsh-charge 需求 |
+| `npm run snapshot:export` | 把 `~/.taskboard/data.db` 导成 `data/snapshot.json`（文本快照，可入 git / 备份）|
+| `npm run snapshot:import` | 从 `data/snapshot.json` 恢复到本地库（幂等，会自动重映射主键）|
 
 ## 运行时数据
 
@@ -38,6 +40,8 @@ npm start       # 起服务并打开浏览器（默认 http://127.0.0.1:3210）
 | `~/.taskboard/config.json` | 端口 / GitLab token / 状态值域 / 文档预置名（权限 600） |
 | `~/.taskboard/uploads/` | 文档图片 |
 | `TASKBOARD_HOME` | 环境变量，可整体切换数据目录（测试指向临时目录以实现隔离） |
+
+> 数据要跨机器带或纳入版本管理，用 `npm run snapshot:export` 生成 `data/snapshot.json`（**不要**直接提交 `data.db`：二进制不可 diff，且 `-wal`/`-shm` 会丢数据；`config.json` 含 token 永不入库）。
 
 ## 文档
 

@@ -24,3 +24,10 @@
   - 目的：AI 按需只读需要的章节（查表结构只读 `02-data-model.md`），不必加载 727 行全文
   - 章节号 §3–§13 保留，`features/*` 里的「§4.9」类引用经导航表可定位，无需批量改写
   - 接口口径统一：接口表留 `design/04-api.md`，请求/响应示例与 curl 全部归 `docs/api.md`
+- feat(foundation): 新增数据快照导出/导入（`scripts/export-snapshot.mjs` / `import-snapshot.mjs`，
+  npm scripts `snapshot:export` / `snapshot:import`）
+  - 把 `~/.taskboard/data.db` 导成 `data/snapshot.json` 文本快照（可 diff / 可回放），
+    入库 `data/snapshot.json`
+  - 导入幂等：清空业务表后按旧 id→新 id 重映射重建（含父子与外键），revision 一并对齐
+  - 安全：不导出/不恢复 `config.json`（含 GitLab token）；不建议直接提交 `data.db`（二进制 + WAL 会丢数据）
+  - 验证：还原到临时空库后 nodes/docunents/attr_values 计数一致、正文 120804 字符一致、父子关系无孤儿
