@@ -1,0 +1,161 @@
+# AGENTS.md
+
+> 给 AI 编码助手（Qoder / Claude Code / Cursor / Codex 等）的项目指引。
+> 人类用户请先看 [README.md](./README.md)。
+> 若你要在这个仓库里动手，**先读完本文件**。
+
+## 这是什么
+
+`task-board` —— 以树形组织研发任务的**本地**任务管理器：
+`项目 → 需求 → 子需求 → 任务组（可嵌套）→ 子任务（+ 缺陷）`。
+
+**核心原则：AI 是主要操作者**（不是人）。这决定了所有接口设计：MCP + CLI 双入口、
+按 id/路径引用节点、schema 自描述、幂等写入、稳定机器可解析错误码、操作者审计。
+Web UI 面向人但是次要入口。
+
+## 快速上手
+
+```bash
+npm install && npm run build   # 装依赖 + 构建（postinstall/prebuild 会自动同步 Vditor 资源）
+npm start                      # 起服务 → http://127.0.0.1:3210
+npm test                       # 55 个用例（node:test）
+```
+
+要求 **Node ≥ 22.5**（用内置 `node:sqlite`）。
+
+## 动手前必做两件事
+
+1. **读设计文档** → `docs/design.md`（权威副本，727 行）
+   概念模型 · 数据模型 · 架构选型 · 接口清单 · 13 个关键流程 · UI · 错误码 · 测试策略 · 24 条决策记录
+2. **读目标功能文档** → `features/<功能>/{prd,design}.md`，索引在 `features/README.md`
+
+**运行时自描述**（比静态文档更准，用它代替猜字段）：
+
+```bash
+node bin/taskboard.js schema      # 等价于 MCP 工具 schema / GET /api/schema
+```
+
+返回：节点类型与各自允许的子类型、状态值域（每类节点的可用集合）、属性定义、工具清单。
+
+## 目录结构与分层（不要打破）
+
+```
+server/
+  store.mjs       ← 唯一读写核心：nodes / attrs / documents / commits / repos
+                     + 父子类型校验 / 成环检测 / 级联删除 / 同级排序 / revision
+  ops.mjs         ← 共享能力层：buildSchema / renderTreeMd / upsertByPath /
+                     parseOutline / importOutline / applyBatch
+  http.mjs        ← express 路由（只做参数装配 + 错误映射，不写业务逻辑）
+  cli.mjs         ← CLI 入口（复用 ops + store）
+  mcp.mjs         ← MCP server（复用 ops + store）
+  index.mjs       ← 启动 + 静态托管 web/dist + SPA 回退
+  import-dsh.mjs  ← dsh-charge 需求导入（唯一直接写 SQL 的地方，见「关键约束」）
+bin/taskboard.js  ← CLI 可执行 shim
+web/src/          ← Vue3 SFC：App.vue / views/ / components/ / api.js
+test/             ← node:test：store-*.test.mjs / ops.test.mjs / http.test.mjs
+features/<功能>/  ← 功能之家：只放 prd.md / design.md / commit.md（不放代码）
+docs/design.md    ← 主设计文档权威副本
+```
+
+**铁律**：HTTP / CLI / MCP 三个入口**必须复用 `store.mjs` + `ops.mjs`**。
+新增能力要三处同步暴露，否则人与 AI 看到的能力会不一致。
+
+## 提交规范（强制）
+
+1. **Conventional Commits**：`type(scope): 描述`
+   - `type` ∈ `feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `perf`
+   - **`scope` 必须用功能目录名**：`feat(entrypoints)`、`fix(tree-table-ui)`、`docs(dsh-import)`
+   - ❌ 不要用阶段名/计划号做 scope（如 `feat(plan2)`）
+2. **功能之家登记**：每次提交必须把 commit message **追加一行**到所属功能的
+   `features/<功能>/commit.md`，并与其代码在**同一次提交**入库。
+   跨功能的提交，在每个被触碰的功能里各记一行。
+3. **新功能**要同步建 `features/<slug>/` 三件套，并在 `features/README.md` 索引登记。
+
+## 文档维护规范（强制）
+
+| 变更类型 | 必须更新 |
+|---|---|
+| 新增/修改接口（REST / MCP / CLI） | `docs/design.md` §6 接口表 + 对应 `features/*/design.md` |
+| 数据模型（表 / 字段） | `docs/design.md` §4 |
+| 新增决策（选型、方案取舍） | `docs/design.md` §12 决策记录 |
+| 功能行为变化、踩过的坑 | 该功能 `features/<功能>/design.md` |
+| 架构 / 分层变化 | `docs/design.md` §5 + 本文件 |
+
+## 测试规范
+
+- 全部 `node:test`；**`npm test` 必须全绿才能提交**
+- 分组：数据层 `test/store-*.test.mjs`｜共享能力 `test/ops.test.mjs`｜HTTP `test/http.test.mjs`（进程内 express + 随机端口 + fetch）
+- 隔离靠 `TASKBOARD_HOME` 指向临时目录 —— **不要**在用例里碰真实 `~/.taskboard`
+- 改 `store` / `ops` 时补对应用例；修 bug 先写出能复现的失败用例
+
+## AI 操作入口
+
+**MCP 工具（29 个，与 REST 接口 1:1）**
+
+```
+读取  schema · tree · node_get · attr_defs · doc_list · commit_list · repo_list · config_get
+写入  node_upsert · node_update · node_delete · node_reorder
+      attr_set · attr_add · attr_update · attr_remove
+      doc_upsert · doc_create · doc_update · doc_remove · doc_reorder
+      commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
+批量  batch · import_outline
+```
+
+**CLI**（`node bin/taskboard.js <cmd>`；`npm link` 后可省前缀）
+
+```bash
+tree --format md                       # 读现状（输出可直接喂给 import）
+schema                                 # 发现能力（节点类型/状态值域/属性定义）
+node get "项目A/需求1"                  # ref 可为 id 或路径
+node upsert --path "项目A/需求1"        # get-or-create，幂等
+attr set "项目A/需求1" status=doing     # 单项属性更新
+doc upsert "项目A/需求1" --name 需求内容 --file desc.md   # 按文档名幂等
+import --file outline.md --dry-run     # 大纲导入，先预演
+batch --file ops.json                  # 多步一次调用
+node delete <ref> --confirm            # 破坏性操作必须 --confirm
+```
+
+**推荐工作流**
+
+1. `schema` 发现节点类型 / 状态值域 / 属性定义 —— **不要猜字段**
+2. `tree --format md` 读现状
+3. 先 `--dry-run` 预演，再落库
+4. 单点更新用 `node upsert` / `attr set`（幂等，可反复调用）
+5. 破坏性操作（删除 / 移动）必须带 `--confirm`（HTTP 侧为 `confirm: true`），否则 400 `CONFIRM_REQUIRED`
+
+**写操作会记录 actor**：CLI 默认 `cli`，MCP 为 `ai`，Web 为 `user`，导入为 `import`；
+可用 `--actor ai` 覆盖。UI 上有徽标区分。
+
+## 关键约束（不要做）
+
+- ❌ **不要绕过 `store.mjs` 直接写库做业务逻辑** —— `import-dsh.mjs` 是唯一例外
+  （它需要精确控制 revision 与文档预置时机；即便如此也要自行保证数据约束与 store 一致）
+- ❌ 不要给 HTTP / CLI / MCP 各写一套业务逻辑
+- ❌ 不要不加 `--confirm` 就删除 / 移动；不要跳过 `commit.md` 登记
+- ❌ 不要把大文件提交进 git（Vditor 的 21.9 MB 资源已在 `.gitignore` 的 `web/public/vditor/`）
+- ❌ 不要把 token 写进代码或数据库 —— 只存 `~/.taskboard/config.json`（600 权限），接口返回时打码
+- ❌ 不要在 `features/<功能>/` 里放代码 —— 那里只放三份文档
+
+## 已知坑（别再踩）
+
+| 坑 | 说明 |
+|---|---|
+| **改完前端却看到旧页面** | `index.html` 已设 `Cache-Control: no-cache`。若仍异常：确认跑过 `npm run build`、再让浏览器强刷（曾因启发式缓存把 Vditor 版误判成「不支持链接」的旧版）|
+| **Vditor 自动保存不触发** | Vditor 的 `input` 回调**触发时机不可靠**（实测输入后数秒仍未回调）。`DocPane.vue` 用 900ms **轮询** `getValue()` 与已存内容比对来驱动保存；轮询必须在 `after` 回调里启动（构造后立即 `getValue()` 会静默失效）；防抖定时器只能在「内容真正变化」时重置，否则会被轮询无限推迟 |
+| **Vditor 资源 404** | 路径规则是 `${cdn}/dist/js/...`，物理目录必须落在 `web/public/vditor/dist`（配 `cdn='/vditor'`）；`npm install` / `npm run build` 会自动同步 |
+| **Express 5 通配符** | 不支持 `app.get('*')`；SPA 回退用 `app.use` 中间件判断 `req.path` 前缀 |
+| **revision 语义** | 一次操作只递增 1；组合写入（建节点 + 写属性 + 预置文档）用 `withoutBump` 包裹 |
+| **路径引用歧义** | 同级存在同名节点时用路径会 409 `PATH_AMBIGUOUS`，改用 `id` |
+| **导入脚本的 attr_def 残留** | `--reset` 只清节点树，不清 `attr_defs`（属配置）；改了属性规划要手工清旧定义 |
+
+## 文档导航
+
+| 想了解 | 看 |
+|---|---|
+| 产品需求与设计全貌 | `docs/design.md` |
+| 某功能的需求 / 设计 / 提交记录 | `features/<功能>/` |
+| 功能清单与状态 | `features/README.md` |
+| 人类上手 | `README.md` |
+| 数据表结构 | `docs/design.md` §4 + `server/db.mjs` 的 `SCHEMA` |
+| 错误码清单 | `docs/design.md` §9 + `server/errors.mjs` |
+| 接口清单 | `docs/design.md` §6（或直接调 `schema`）|

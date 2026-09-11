@@ -12,3 +12,7 @@
   - 修正设计文档链接（原指向工作区 `../docs/superpowers/specs/`，clone 后不可用 → `docs/design.md`）
   - 补「提交约定」（提交时同步追加本功能 commit.md）
 - docs(features): entrypoints 补静态托管缓存策略记录
+- docs(agent): 新增 AGENTS.md（AI 编码助手项目指引）+ AGENT.md（单数名兼容转发）
+  - 内容：分层与三入口复用铁律、提交规范（scope 用功能目录名）、文档维护规范、
+    测试规范、AI 操作入口（29 个 MCP 工具 + CLI 命令 + 推荐工作流）、关键约束、7 条已知坑
+  - README 文档表登记 AGENTS.md
