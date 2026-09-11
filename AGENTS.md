@@ -25,8 +25,9 @@ npm test                       # 55 个用例（node:test）
 
 ## 动手前必做两件事
 
-1. **读设计文档** → `docs/design.md`（权威副本，727 行）
-   概念模型 · 数据模型 · 架构选型 · 接口清单 · 13 个关键流程 · UI · 错误码 · 测试策略 · 24 条决策记录
+1. **读设计文档** → `docs/design.md`（**总览 + 章节导航**，88 行）
+   它本身很短；正文按章节拆在 `docs/design/`（10 个文件）—— **按需只读你要的那节**：
+   `01-concepts` 概念模型 · `02-data-model` 数据表 · `03-architecture` 架构选型 · `04-api` 接口清单 · `05-flows` 关键流程 · `06-ui` · `07-errors` 错误码 · `08-testing` · `09-decisions` 24 条决策 · `10-glossary` 术语
 2. **读目标功能文档** → `features/<功能>/{prd,design}.md`，索引在 `features/README.md`
 
 **运行时自描述**（比静态文档更准，用它代替猜字段）：
@@ -75,11 +76,11 @@ docs/design.md    ← 主设计文档权威副本
 
 | 变更类型 | 必须更新 |
 |---|---|
-| 新增/修改接口（REST / MCP / CLI） | `docs/design.md` §6 接口表 + 对应 `features/*/design.md` |
-| 数据模型（表 / 字段） | `docs/design.md` §4 |
-| 新增决策（选型、方案取舍） | `docs/design.md` §12 决策记录 |
+| 新增/修改接口（REST / MCP / CLI） | `docs/design/04-api.md`（接口表）+ `docs/api.md`（示例）+ 对应 `features/*/design.md` |
+| 数据模型（表 / 字段） | `docs/design/02-data-model.md` |
+| 新增决策（选型、方案取舍） | `docs/design/09-decisions.md` |
 | 功能行为变化、踩过的坑 | 该功能 `features/<功能>/design.md` |
-| 架构 / 分层变化 | `docs/design.md` §5 + 本文件 |
+| 架构 / 分层变化 | `docs/design/03-architecture.md` + 本文件 |
 
 ## 测试规范
 
@@ -152,13 +153,15 @@ node delete <ref> --confirm            # 破坏性操作必须 --confirm
 
 | 想了解 | 看 |
 |---|---|
-| 产品需求与设计全貌 | `docs/design.md` |
+| 产品需求与设计全貌 | `docs/design.md`（总览 + **章节导航表**）|
+| 数据表结构 | `docs/design/02-data-model.md` + `server/db.mjs` 的 `SCHEMA` |
+| 接口清单 | `docs/design/04-api.md`（或直接调 `schema`）|
 | 接口请求 / 响应示例 | `docs/api.md` |
+| 关键流程（建树 / 合并 / 冲突…）| `docs/design/05-flows.md` |
+| 错误码清单 | `docs/design/07-errors.md` + `server/errors.mjs` |
+| 技术决策记录（24 条）| `docs/design/09-decisions.md` |
 | 文档总索引与更新规则 | `docs/README.md` |
 | 实施计划 | `docs/plans/` |
 | 某功能的需求 / 设计 / 提交记录 | `features/<功能>/` |
 | 功能清单与状态 | `features/README.md` |
 | 人类上手 | `README.md` |
-| 数据表结构 | `docs/design.md` §4 + `server/db.mjs` 的 `SCHEMA` |
-| 错误码清单 | `docs/design.md` §9 + `server/errors.mjs` |
-| 接口清单 | `docs/design.md` §6（或直接调 `schema`）|

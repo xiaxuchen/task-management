@@ -19,3 +19,8 @@
 - docs(foundation): 新增 docs/README.md 文档索引（各文档作用与权威性、设计文档关系、更新规则）
 - docs(foundation): 归档实施计划到 docs/plans/（plan1 数据层，1751 行）；设计评审存档不入库以免两份漂移
 - docs(foundation): features/README.md 索引重构（分「已完成 / 已实现但无独立目录 / 需求已定待实现」三类）
+- docs(foundation): 主设计文档按章节拆分到 `docs/design/`（10 个文件，单文件 24–231 行），
+  `design.md` 变为总览 + 章节导航表（88 行）；同步更新 AGENTS.md / README.md / docs/README.md 的引用
+  - 目的：AI 按需只读需要的章节（查表结构只读 `02-data-model.md`），不必加载 727 行全文
+  - 章节号 §3–§13 保留，`features/*` 里的「§4.9」类引用经导航表可定位，无需批量改写
+  - 接口口径统一：接口表留 `design/04-api.md`，请求/响应示例与 curl 全部归 `docs/api.md`

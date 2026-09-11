@@ -1,0 +1,60 @@
+# 6. 接口（REST，JSON）
+
+> 本文是主设计文档 [`../design.md`](../design.md) 的拆分章节；索引与章节导航见该文件。
+
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/health` | 健康检查，返回版本与数据文件路径 |
+| GET | `/api/schema` | 节点类型、状态值域、属性定义、工具清单（AI 能力发现） |
+| GET | `/api/revision` | 数据版本号（任何写入 +1），供前端轮询与 AI 判断变更 |
+| GET | `/api/tree?format=md` | 缩进 markdown 树（AI 读取用）；默认 `json` |
+| GET | `/api/tree` | 全量树数据：`[{id,type,parentId,name,status,sort,attrs:{key:value}}]`，前端组树与过滤 |
+| GET | `/api/nodes/:id` | 节点详情：核心字段 + `attrs` + `commits` + `mrs` + `children` |
+| POST | `/api/nodes` | 创建节点 `{parentId?, type, name, attrs?}`；校验父子类型 |
+| PATCH | `/api/nodes/:id` | 更新 `{name?, status?, parentId?, attrs?}`；`attrs` 为 key→value 局部更新 |
+| DELETE | `/api/nodes/:id` | 级联删除（返回删除的节点数与关联行数） |
+| POST | `/api/nodes/reorder` | `{parentId, orderedIds[]}` 一次性写入同级顺序 |
+| POST | `/api/nodes/upsert` | 按路径 get-or-create（幂等）：`{path, type?, name?, attrs?}` |
+| POST | `/api/batch` | 批量操作：`{ops:[...], dryRun?}`，一次调用执行多步 |
+| POST | `/api/import` | 大纲导入：`{format:"md", content, parentPath?, dryRun?}` |
+| GET | `/api/attr-defs?nodeType=` | 属性定义列表 |
+| POST | `/api/attr-defs` | 新增属性定义 |
+| PATCH | `/api/attr-defs/:id` | 编辑（label / data_type / options / required / sort / enabled） |
+| DELETE | `/api/attr-defs/:id` | 删除定义（连带删除其属性值） |
+| POST | `/api/nodes/:id/documents` | 新增文档 `{name, content?}` |
+| POST | `/api/nodes/:id/documents/upsert` | 按文档名 get-or-create 并写内容（幂等）：`{name, content}` |
+| PATCH | `/api/documents/:docId` | 更新文档 `{name?, content?}` |
+| DELETE | `/api/documents/:docId` | 删除文档 |
+| POST | `/api/nodes/:id/documents/reorder` | `{orderedIds[]}` 写入文档顺序 |
+| POST | `/api/nodes/:id/commits` | `{repo?, sha, note?}` 登记 commit |
+| DELETE | `/api/commits/:cid` | 删除登记 |
+| GET | `/api/commits/:cid/diff` | 单 commit 预览：文件列表 + 每文件 old / new 与 patch |
+| GET | `/api/nodes/:id/diffs?scope=self\|subtree` | 节点（含子树）聚合预览，按 commit / 仓库分组 |
+| POST | `/api/nodes/:id/merges/precheck` | 合并预检（merge-tree，不落库、不合并） |
+| POST | `/api/nodes/:id/merges` | 显式合并：`{units?, repo?, dryRun?}`，逐仓库预检并合并，返回 `{merged[], conflicts[]}` |
+| GET | `/api/merges?nodeId=&state=` | 合并记录列表（含待处理冲突） |
+| GET | `/api/merges/:mid/conflicts` | 冲突详情：文件 + 冲突块 + base / ours / theirs 三方内容 |
+| POST | `/api/merges/:mid/resolve` | 写回冲突处理结果 `{files:[{path, content}], asPatch?}` |
+| POST | `/api/merges/:mid/confirm` | 确认合并完成（本地已应用）→ 回填 `merge_sha`，置 `resolved` |
+| POST | `/api/merges/:mid/abort` | 放弃本次合并 → `aborted`（不改任何分支） |
+| GET | `/api/repos` | 仓库登记列表 |
+| POST | `/api/repos` | 新增仓库 `{name, local_path?, gitlab_project?, note?}` |
+| PATCH | `/api/repos/:rid` | 更新仓库 |
+| DELETE | `/api/repos/:rid` | 删除仓库 |
+| GET | `/api/nodes/:id/unit-repos` | 工作单元涉及的仓库（branch / worktree_path） |
+| POST | `/api/nodes/:id/unit-repos` | 新增 `{repoId, branch?, worktreePath?}` |
+| DELETE | `/api/unit-repos/:urid` | 移除工作单元仓库 |
+| POST | `/api/nodes/:id/setup` | 创建工作区：`{repoIds?, dryRun?}` → 建分支 + worktree，返回 `{branch, repos:[{repo, worktreePath}], prompt}` |
+| GET | `/api/nodes/:id/prompt` | 生成 / 刷新开发提示词 |
+| POST | `/api/nodes/:id/cleanup` | 清理工作区（移除 worktree / 删除已合并分支；需 `confirm`） |
+| GET | `/api/nodes/:id/mrs` | 该节点已拉取的 MR 列表 |
+| POST | `/api/nodes/:id/mrs/refresh` | 拉取 MR：`{pulled, created, updated, errors[]}` |
+| GET | `/api/config` | 读取配置（token 打码） |
+| PUT | `/api/config` | 保存配置 |
+| POST | `/api/config/gitlab/test` | GitLab 连通性测试（返回当前用户与项目可达性） |
+| POST | `/api/uploads` | 上传图片：请求体 JSON `{ name, data }`（`data` 为 base64，`express.json` 限额 20 MB），存入 `~/.taskboard/uploads/`，返回 `{ url: "/uploads/<name>" }` |
+| GET | `/uploads/:name` | 图片静态访问（Markdown 预览使用） |
+
+状态码：参数/父子类型/必填校验失败 → `400`；资源不存在 → `404`；唯一约束冲突 / 路径歧义 → `409`；GitLab 侧错误 → `502`（`details` 带原始信息）。破坏性操作未显式确认 → `400`，`code = CONFIRM_REQUIRED`。合并预检发现冲突不改工作区，返回 `200` + 冲突清单（`state = precheck_conflict`）；本机 git 不可用 / 失败 → `500`（`GIT_UNAVAILABLE` / `GIT_FAILED`）。
+
