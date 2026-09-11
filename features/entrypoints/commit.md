@@ -9,3 +9,5 @@
 - test(http): HTTP 集成测试 17 个（含 confirm 语义、CRUD、文档 upsert、import、错误码）
 - docs(features): features/{entrypoints,commit-registry} 功能目录（prd/design/commit.md）
 - chore(package): 加 start/smoke scripts，更新 README 计划进度
+- fix(server): index.html（含 SPA 回退路由）设 `Cache-Control: no-cache` + ETag，
+  避免前端重新构建后浏览器仍用启发式缓存的旧版本（带 content-hash 的 assets 不受影响）

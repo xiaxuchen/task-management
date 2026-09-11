@@ -27,10 +27,19 @@ export async function startServer({ port, open = true, host = '127.0.0.1' } = {}
   const app = createApp({ store })
   // 前端构建产物静态托管
   if (fs.existsSync(DIST)) {
-    app.use(express.static(DIST))
+    app.use(
+      express.static(DIST, {
+        setHeaders: (res, filePath) => {
+          // index.html 必须每次回源校验，否则前端重新构建后浏览器仍用缓存的旧版本；
+          // 带 content-hash 的 assets 不受影响
+          if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache')
+        }
+      })
+    )
     // SPA 回退：非 API 请求返回 index.html（Express 5 不支持 * 通配符，用中间件兜底）
     app.use((req, res, next) => {
       if (req.path.startsWith('/api/')) return next()
+      res.setHeader('Cache-Control', 'no-cache')
       res.sendFile(path.join(DIST, 'index.html'))
     })
   }
