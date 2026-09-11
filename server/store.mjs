@@ -551,6 +551,109 @@ export function createStore(db, options = {}) {
     return listDocuments(nodeId)
   }
 
+  // ---------- commits（手工登记关联提交） ----------
+
+  const SHA_RE = /^[0-9a-f]{7,40}$/i
+
+  function commitVO(r) {
+    return { id: r.id, nodeId: r.node_id, repo: r.repo, sha: r.sha, note: r.note, createdAt: r.created_at }
+  }
+
+  function listCommits(nodeId, { subtree = false } = {}) {
+    rawNode(nodeId)
+    const ids = subtree ? subtreeIds(nodeId) : [nodeId]
+    const ph = ids.map(() => '?').join(',')
+    return db
+      .prepare(`SELECT * FROM commits WHERE node_id IN (${ph}) ORDER BY created_at, id`)
+      .all(...ids)
+      .map(commitVO)
+  }
+
+  function addCommit(nodeId, { repo = null, sha, note = null } = {}, by = 'user') {
+    rawNode(nodeId)
+    const s = String(sha || '').trim()
+    if (!SHA_RE.test(s)) throw new AppError(CODES.VALIDATION_FAILED, 'sha 必须是 7–40 位十六进制', { sha: s })
+    if (repo) {
+      const known = db.prepare('SELECT id FROM repos WHERE name = ?').get(repo)
+      if (!known) throw new AppError(CODES.REPO_NOT_REGISTERED, `仓库 ${repo} 未登记（先 repo add）`, { repo })
+    }
+    const existing = db.prepare('SELECT * FROM commits WHERE node_id = ? AND sha = ?').get(nodeId, s)
+    if (existing) return { ...commitVO(existing), created: false }
+    const ts = now()
+    const info = db
+      .prepare('INSERT INTO commits (node_id,repo,sha,note,created_at) VALUES (?,?,?,?,?)')
+      .run(nodeId, repo, s, note, ts)
+    bumpRevision()
+    return { ...commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(Number(info.lastInsertRowid))), created: true }
+  }
+
+  function removeCommit(commitId) {
+    const cur = db.prepare('SELECT id FROM commits WHERE id = ?').get(commitId)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `提交记录 ${commitId} 不存在`, { id: commitId })
+    db.prepare('DELETE FROM commits WHERE id = ?').run(commitId)
+    bumpRevision()
+    return { id: commitId }
+  }
+
+  // ---------- repos（仓库登记） ----------
+
+  function repoVO(r) {
+    return {
+      id: r.id,
+      name: r.name,
+      localPath: r.local_path,
+      gitlabProject: r.gitlab_project,
+      note: r.note,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    }
+  }
+
+  function listRepos() {
+    return db.prepare('SELECT * FROM repos ORDER BY name').all().map(repoVO)
+  }
+
+  function addRepo({ name, localPath = null, gitlabProject = null, note = null } = {}) {
+    const n = String(name || '').trim()
+    if (!n) throw new AppError(CODES.VALIDATION_FAILED, '仓库名必填', { field: 'name' })
+    const dup = db.prepare('SELECT id FROM repos WHERE name = ?').get(n)
+    if (dup) throw new AppError(CODES.VALIDATION_FAILED, `仓库 ${n} 已登记`, { name: n })
+    const ts = now()
+    const info = db
+      .prepare('INSERT INTO repos (name,local_path,gitlab_project,note,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+      .run(n, localPath, gitlabProject, note, ts, ts)
+    bumpRevision()
+    return repoVO(db.prepare('SELECT * FROM repos WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function updateRepo(id, patch) {
+    const cur = db.prepare('SELECT * FROM repos WHERE id = ?').get(id)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `仓库 ${id} 不存在`, { id })
+    const fields = []
+    const args = []
+    const map = { localPath: 'local_path', gitlabProject: 'gitlab_project', note: 'note', name: 'name' }
+    for (const [k, col] of Object.entries(map)) {
+      if (patch[k] !== undefined) {
+        fields.push(`${col} = ?`)
+        args.push(patch[k])
+      }
+    }
+    if (fields.length === 0) return repoVO(cur)
+    fields.push('updated_at = ?')
+    args.push(now(), id)
+    db.prepare(`UPDATE repos SET ${fields.join(', ')} WHERE id = ?`).run(...args)
+    bumpRevision()
+    return repoVO(db.prepare('SELECT * FROM repos WHERE id = ?').get(id))
+  }
+
+  function deleteRepo(id) {
+    const cur = db.prepare('SELECT id FROM repos WHERE id = ?').get(id)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `仓库 ${id} 不存在`, { id })
+    db.prepare('DELETE FROM repos WHERE id = ?').run(id)
+    bumpRevision()
+    return { id }
+  }
+
   return {
     db,
     // nodes
@@ -577,6 +680,15 @@ export function createStore(db, options = {}) {
     deleteDocument,
     reorderDocuments,
     docPresetNames,
+    // commits
+    listCommits,
+    addCommit,
+    removeCommit,
+    // repos
+    listRepos,
+    addRepo,
+    updateRepo,
+    deleteRepo,
     // revision
     getRevision,
     bumpRevision
