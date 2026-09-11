@@ -16,3 +16,6 @@
   - 内容：分层与三入口复用铁律、提交规范（scope 用功能目录名）、文档维护规范、
     测试规范、AI 操作入口（29 个 MCP 工具 + CLI 命令 + 推荐工作流）、关键约束、7 条已知坑
   - README 文档表登记 AGENTS.md
+- docs(foundation): 新增 docs/README.md 文档索引（各文档作用与权威性、设计文档关系、更新规则）
+- docs(foundation): 归档实施计划到 docs/plans/（plan1 数据层，1751 行）；设计评审存档不入库以免两份漂移
+- docs(foundation): features/README.md 索引重构（分「已完成 / 已实现但无独立目录 / 需求已定待实现」三类）

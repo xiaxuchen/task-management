@@ -153,6 +153,9 @@ node delete <ref> --confirm            # 破坏性操作必须 --confirm
 | 想了解 | 看 |
 |---|---|
 | 产品需求与设计全貌 | `docs/design.md` |
+| 接口请求 / 响应示例 | `docs/api.md` |
+| 文档总索引与更新规则 | `docs/README.md` |
+| 实施计划 | `docs/plans/` |
 | 某功能的需求 / 设计 / 提交记录 | `features/<功能>/` |
 | 功能清单与状态 | `features/README.md` |
 | 人类上手 | `README.md` |

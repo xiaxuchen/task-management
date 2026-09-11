@@ -1,0 +1,265 @@
+# 接口速查（REST）
+
+> - **权威定义**见 [`design.md` §6](./design.md)；运行时能力以 `GET /api/schema` 为准。
+> - 所有错误统一为 `{ "error": { "code", "message", "details"? } }`，`code` 稳定、机器可解析。
+> - Base URL：`http://127.0.0.1:3210`
+> - MCP 工具与 CLI 命令是这些接口的 1:1 映射（见 [`../AGENTS.md`](../AGENTS.md)）。
+
+## 发现与读取
+
+### 健康检查
+
+```bash
+curl -s http://127.0.0.1:3210/api/health
+```
+
+```json
+{ "ok": true, "revision": 10 }
+```
+
+### 能力发现（**AI 首选** —— 用它代替猜字段）
+
+```bash
+curl -s http://127.0.0.1:3210/api/schema
+```
+
+```json
+{
+  "version": 1,
+  "nodeTypes": [
+    { "type": "project",     "allowedChildren": ["requirement"] },
+    { "type": "requirement", "allowedChildren": ["subreq"] },
+    { "type": "subreq",      "allowedChildren": ["group", "task"] },
+    { "type": "group",       "allowedChildren": ["group", "task", "defect"] },
+    { "type": "task",        "allowedChildren": ["defect"] },
+    { "type": "defect",      "allowedChildren": [] }
+  ],
+  "status": {
+    "labels":  { "todo": "待开始", "doing": "进行中", "testing": "提测中", "done": "已完成", "cancelled": "已取消" },
+    "allowed": { "project": ["todo","doing","done"], "requirement": ["todo","doing","testing","done","cancelled"], "subreq": ["todo","doing","done"], "group": ["todo","doing","done"], "task": ["todo","doing","done"], "defect": ["todo","doing","done","cancelled"] }
+  },
+  "docPresets": { "project": ["描述"], "requirement": ["需求内容"], "subreq": ["需求内容"], "group": [], "task": [], "defect": ["描述","复现步骤"] },
+  "branchTemplate": "{base_branch}-{slug}",
+  "attrDefs": [ { "nodeType": "requirement", "key": "start_date", "label": "开始时间", "dataType": "date", "required": false } ],
+  "tools": ["schema", "tree", "node_get", "node_upsert", "..."]
+}
+```
+
+### 数据版本号（前端每 10s 轮询）
+
+```bash
+curl -s http://127.0.0.1:3210/api/revision
+```
+
+```json
+{ "revision": 10 }
+```
+
+> 任何写入使 revision +1；**一次用户/AI 操作只递增一次**（组合写入不重复计数）。
+
+### 读整棵树
+
+```bash
+# JSON（每个节点带 docCount / childCount，供表格列直接绑定）
+curl -s http://127.0.0.1:3210/api/tree
+
+# Markdown 大纲（缩进树，可直接喂给 /api/import）
+curl -s 'http://127.0.0.1:3210/api/tree?format=md'
+```
+
+```json
+{
+  "revision": 10,
+  "nodes": [
+    { "id": 1, "type": "project", "parentId": null, "name": "充电平台", "status": "doing",
+      "sort": 10, "path": "充电平台", "docCount": 1, "childCount": 6, "children": [ /* … */ ] }
+  ]
+}
+```
+
+### 节点详情
+
+```bash
+curl -s http://127.0.0.1:3210/api/nodes/1      # 也支持路径：/api/nodes/充电平台%2F需求A
+```
+
+```json
+{
+  "id": 1, "type": "project", "parentId": null, "name": "充电平台", "status": "doing",
+  "path": "充电平台", "createdBy": "user", "updatedBy": "user",
+  "attrs": { "req_no": "26Q3" },
+  "documents": [ { "id": 4, "name": "需求内容", "content": "…", "sort": 10 } ],
+  "commits": [ { "id": 1, "repo": "xp-charge", "sha": "abc1234", "note": "修复导出" } ],
+  "children": [ { "id": 2, "type": "requirement", "name": "26Q3", "childCount": 23 } ]
+}
+```
+
+## 节点写操作
+
+### 创建节点
+
+```bash
+curl -s -X POST http://127.0.0.1:3210/api/nodes \
+  -H 'content-type: application/json' \
+  -d '{"type":"project","name":"充电平台"}'
+```
+
+```json
+{ "id": 1, "type": "project", "parentId": null, "name": "充电平台", "status": "todo", "sort": 10, "path": "充电平台" }
+```
+
+非法父子组合 → `400`：
+
+```json
+{ "error": { "code": "PARENT_TYPE_INVALID", "message": "project 下不能挂 project",
+             "details": { "type": "project", "parentType": "project", "allowedChildren": ["requirement"] } } }
+```
+
+### 更新节点（属性用局部 key→value）
+
+```bash
+curl -s -X PATCH http://127.0.0.1:3210/api/nodes/1 \
+  -H 'content-type: application/json' \
+  -d '{"name":"充电平台（改名）","status":"doing","attrs":{"req_no":"26Q3"}}'
+```
+
+### 移动 / 删除（**破坏性，必须 confirm**）
+
+```bash
+curl -s -X PATCH http://127.0.0.1:3210/api/nodes/5 \
+  -H 'content-type: application/json' -d '{"parentPath":"充电平台/26Q3","confirm":true}'
+
+curl -s -X DELETE 'http://127.0.0.1:3210/api/nodes/5?confirm=true'
+```
+
+未确认 → `400`：
+
+```json
+{ "error": { "code": "CONFIRM_REQUIRED", "message": "删除节点 充电平台/26Q3 需要 confirm" } }
+```
+
+### 同级排序
+
+```bash
+curl -s -X POST http://127.0.0.1:3210/api/nodes/reorder \
+  -H 'content-type: application/json' -d '{"parentPath":"充电平台","orderedIds":[3,2,1]}'
+```
+
+## 幂等写入（AI 首选）
+
+### 按路径 get-or-create
+
+```bash
+curl -s -X POST http://127.0.0.1:3210/api/nodes/upsert \
+  -H 'content-type: application/json' \
+  -d '{"path":"充电平台/26Q3/3.1 收发货","attrs":{"branch":"feature-send-receive"}}'
+```
+
+```json
+{
+  "node": { "id": 2, "type": "requirement", "name": "3.1 收发货", "path": "充电平台/26Q3/3.1 收发货" },
+  "steps": [ { "path": "充电平台/26Q3", "type": "requirement", "action": "create" } ]
+}
+```
+
+> 重复调用安全：已存在的层级不重建，`steps` 为空数组。
+
+### 批量（多步一次调用，单步失败不影响其余）
+
+```bash
+curl -s -X POST http://127.0.0.1:3210/api/batch \
+  -H 'content-type: application/json' \
+  -d '{"ops":[
+        {"op":"node.upsert","path":"充电平台/26Q3"},
+        {"op":"doc.upsert","ref":"充电平台/26Q3","name":"需求内容","content":"# 目标\n…"},
+        {"op":"attr.set","ref":"充电平台/26Q3","attrs":{"req_no":"26Q3"}}
+      ],"dryRun":false}'
+```
+
+```json
+{ "dryRun": false, "total": 3, "failed": 0,
+  "results": [ { "index": 0, "op": "node.upsert", "ok": true, "result": { "id": 2 } } ] }
+```
+
+### 大纲导入（markdown 缩进树）
+
+```bash
+curl -s -X POST http://127.0.0.1:3210/api/import \
+  -H 'content-type: application/json' \
+  -d '{"content":"- 项目A\n  - 需求1\n    - 子需求1\n      - [task] 子任务1","dryRun":true}'
+```
+
+```json
+{ "dryRun": true, "count": 4, "steps": [ { "path": "项目A", "type": "project", "action": "create" } ] }
+```
+
+> 规则：缩进 2 空格；`[task]` / `[defect]` 显式标注，其余按层级推导；`键: 值` 行为属性；`#` 开头行忽略。
+
+## 文档
+
+```bash
+# 列出
+curl -s http://127.0.0.1:3210/api/nodes/1/documents
+
+# 按文档名 upsert（幂等）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/documents/upsert \
+  -H 'content-type: application/json' \
+  -d '{"name":"需求内容","content":"# 目标\n\n支持子公司开票"}'
+
+# 改内容 / 改名
+curl -s -X PATCH http://127.0.0.1:3210/api/documents/4 \
+  -H 'content-type: application/json' -d '{"content":"新正文"}'
+
+# 排序 / 删除
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/documents/reorder \
+  -H 'content-type: application/json' -d '{"orderedIds":[5,4]}'
+curl -s -X DELETE http://127.0.0.1:3210/api/documents/4
+```
+
+重名 → `409`：
+
+```json
+{ "error": { "code": "DOC_NAME_EXISTS", "message": "节点下已存在文档「需求内容」" } }
+```
+
+## 提交登记 / 仓库 / 配置
+
+```bash
+# 登记 commit（同节点同 sha 幂等；repo 需先登记）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/commits \
+  -H 'content-type: application/json' -d '{"repo":"xp-charge","sha":"abc1234","note":"修复导出"}'
+
+# 子树聚合读取
+curl -s 'http://127.0.0.1:3210/api/nodes/1/commits?subtree=true'
+
+# 仓库登记
+curl -s -X POST http://127.0.0.1:3210/api/repos \
+  -H 'content-type: application/json' -d '{"name":"xp-charge","localPath":"/Users/me/charge2/xp-charge"}'
+
+# 配置读写（token 打码）
+curl -s http://127.0.0.1:3210/api/config
+curl -s -X PUT http://127.0.0.1:3210/api/config \
+  -H 'content-type: application/json' -d '{"port":3210,"gitlab":{"base_url":"https://gitlab.example.com","token":"xxx"}}'
+
+# GitLab 连通性
+curl -s -X POST http://127.0.0.1:3210/api/config/gitlab/test
+```
+
+## 错误码速查
+
+| HTTP | code | 场景 |
+|---|---|---|
+| 400 | `VALIDATION_FAILED` | 必填/类型校验失败（`details` 指向字段）|
+| 400 | `PARENT_TYPE_INVALID` | 父子类型非法 |
+| 400 | `LEAF_NODE` | 在叶子节点下建子节点 |
+| 400 | `CYCLE_DETECTED` | 移动到自身或后代 |
+| 400 | `CONFIRM_REQUIRED` | 破坏性操作未确认 |
+| 400 | `REPO_NOT_REGISTERED` / `REPO_PATH_MISSING` | 仓库未登记 / 本地路径无效 |
+| 400 | `BRANCH_NOT_FOUND` / `BRANCH_EXISTS_DIFFERENT_BASE` | 分支不存在 / 同名不同基 |
+| 400 | `GITLAB_NOT_CONFIGURED` | 未配置 GitLab |
+| 404 | `NOT_FOUND` / `PATH_NOT_FOUND` | 资源或路径不存在 |
+| 409 | `PATH_AMBIGUOUS` / `DOC_NAME_EXISTS` / `WORKTREE_PATH_EXISTS` | 路径歧义 / 文档重名 / worktree 占用 |
+| 500 | `GIT_UNAVAILABLE` / `GIT_FAILED` | 本机 git 不可用 / 命令失败（`details` 带 stderr）|
+| 502 | `GITLAB_AUTH_FAILED` / `GITLAB_PROJECT_NOT_FOUND` / `GITLAB_UNAVAILABLE` | token 无效 / 项目路径错 / 网络异常 |
+
+完整清单见 [`design.md` §9](./design.md) 与 `server/errors.mjs`。
