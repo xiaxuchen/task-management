@@ -304,7 +304,11 @@ export function createApp({ store }) {
   )
 
   // ---------- 错误处理 ----------
-  app.use((req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: `未知路由 ${req.method} ${req.path}` } }))
+  // 只对 /api/* 路由返回 404 JSON，非 API 路由放过（让上层静态托管或 SPA 回退处理）
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next()
+    res.status(404).json({ error: { code: 'NOT_FOUND', message: `未知 API 路由 ${req.method} ${req.path}` } })
+  })
   app.use((err, req, res, _next) => {
     const code = err.code || 'INTERNAL_ERROR'
     const status = STATUS_BY_CODE[code] || 500

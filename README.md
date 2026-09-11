@@ -18,7 +18,7 @@ npm run smoke   # 冒烟测试
 
 - [x] 计划 1 数据层（config / db / store：节点·属性·文档·revision，24 个用例全绿）
 - [x] 计划 2 三入口（HTTP API + CLI + MCP，ops 共享能力层 + 集成测试）
-- [ ] 计划 3 Web UI（表格式展开树 + 右侧抽屉 + 文档区）
+- [x] 计划 3 Web UI（Vite + Vue3 + Element Plus：表格式展开树 + 右侧抽屉 + 文档区 + 设置/属性定义）
 - [ ] 计划 4 Git 集成与冲突处理
 - [ ] 计划 5 MR 拉取 / 上传 / 冒烟
 

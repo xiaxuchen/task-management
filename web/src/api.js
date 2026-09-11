@@ -1,0 +1,59 @@
+const BASE = '/api'
+const headers = { 'content-type': 'application/json' }
+
+async function api(path, options = {}) {
+  const r = await fetch(`${BASE}${path}`, { headers, ...options })
+  const body = await r.json()
+  if (body.error) throw Object.assign(new Error(body.error.message), { code: body.error.code, details: body.error.details })
+  return body
+}
+
+export default {
+  // 健康 / schema / revision
+  health: () => api('/health'),
+  schema: () => api('/schema'),
+  revision: () => api('/revision'),
+
+  // 树
+  tree: (format) => api(`/tree${format === 'md' ? '?format=md' : ''}`),
+
+  // 节点
+  nodeGet: (id) => api(`/nodes/${encodeURIComponent(id)}`),
+  nodeCreate: (data) => api('/nodes', { method: 'POST', body: JSON.stringify(data) }),
+  nodeUpdate: (id, data) => api(`/nodes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  nodeDelete: (id, confirm) => api(`/nodes/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ confirm }) }),
+  nodeReorder: (data) => api('/nodes/reorder', { method: 'POST', body: JSON.stringify(data) }),
+  nodeUpsert: (data) => api('/nodes/upsert', { method: 'POST', body: JSON.stringify(data) }),
+  batch: (data) => api('/batch', { method: 'POST', body: JSON.stringify(data) }),
+  importOutline: (data) => api('/import', { method: 'POST', body: JSON.stringify(data) }),
+
+  // 属性定义
+  attrDefs: (nodeType) => api(`/attr-defs${nodeType ? `?nodeType=${nodeType}` : ''}`),
+  attrDefCreate: (data) => api('/attr-defs', { method: 'POST', body: JSON.stringify(data) }),
+  attrDefUpdate: (id, data) => api(`/attr-defs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  attrDefDelete: (id) => api(`/attr-defs/${id}`, { method: 'DELETE' }),
+
+  // 文档
+  docList: (nodeId) => api(`/nodes/${nodeId}/documents`),
+  docCreate: (nodeId, data) => api(`/nodes/${nodeId}/documents`, { method: 'POST', body: JSON.stringify(data) }),
+  docUpsert: (nodeId, data) => api(`/nodes/${nodeId}/documents/upsert`, { method: 'POST', body: JSON.stringify(data) }),
+  docUpdate: (docId, data) => api(`/documents/${docId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  docDelete: (docId) => api(`/documents/${docId}`, { method: 'DELETE' }),
+  docReorder: (nodeId, data) => api(`/nodes/${nodeId}/documents/reorder`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // commit
+  commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),
+  commitAdd: (nodeId, data) => api(`/nodes/${nodeId}/commits`, { method: 'POST', body: JSON.stringify(data) }),
+  commitDelete: (cid) => api(`/commits/${cid}`, { method: 'DELETE' }),
+
+  // 仓库
+  repos: () => api('/repos'),
+  repoCreate: (data) => api('/repos', { method: 'POST', body: JSON.stringify(data) }),
+  repoUpdate: (id, data) => api(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  repoDelete: (id) => api(`/repos/${id}`, { method: 'DELETE' }),
+
+  // 配置
+  configGet: () => api('/config'),
+  configSet: (data) => api('/config', { method: 'PUT', body: JSON.stringify(data) }),
+  configGitlabTest: () => api('/config/gitlab/test', { method: 'POST' })
+}
