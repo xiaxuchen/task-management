@@ -9,3 +9,8 @@
 - feat(web): SettingsView 配置页（GitLab 地址/Token/端口/连通性测试）
 - feat(server): index.mjs 静态托管 web/dist/ + SPA 回退
 - chore(server): http.mjs 404 handler 只拦 /api/*，放行非 API 路由
+- fix(store): listTree 返回 docCount / childCount（修复表格「文档」「子节点」列空白）
+- fix(web): 节点切换时重载抽屉详情（原 onMounted 只跑一次）
+- feat(web): 表格「📄 数量」点击直达文档区（docCount → initialTab='docs'）
+- chore(web): 删除 TreeView 无用 flattenTree 死代码
+- test(store): listTree docCount / childCount 用例

@@ -13,7 +13,7 @@
       <AttrDefsView v-if="view === 'attr-defs'" />
       <SettingsView v-if="view === 'settings'" />
     </el-main>
-    <NodeDrawer v-if="selectedNode" :node="selectedNode" :visible="drawerVisible" @close="drawerVisible = false" @updated="onNodeUpdated" />
+    <NodeDrawer v-if="selectedNode" :node="selectedNode" :visible="drawerVisible" :initial-tab="drawerTab" @close="drawerVisible = false" @updated="onNodeUpdated" />
   </el-container>
 </template>
 
@@ -26,13 +26,15 @@ import NodeDrawer from './components/NodeDrawer.vue'
 
 const view = ref('tree')
 const drawerVisible = ref(false)
+const drawerTab = ref('info')
 const selectedNode = shallowRef(null)
 const treeRef = ref(null)
 
 function onMenu(index) { view.value = index }
 
-function onNodeSelect(node) {
+function onNodeSelect(node, tab = 'info') {
   selectedNode.value = node
+  drawerTab.value = tab
   drawerVisible.value = true
 }
 

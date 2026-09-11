@@ -200,10 +200,25 @@ export function createStore(db, options = {}) {
   }
 
   function listTree() {
+    // 一次聚合查出每个节点的文档数与直接子节点数（表格列展示用，避免每行单独查询）
+    const docCounts = new Map(
+      db.prepare('SELECT node_id, COUNT(*) c FROM documents GROUP BY node_id').all().map((r) => [r.node_id, r.c])
+    )
+    const childCounts = new Map(
+      db
+        .prepare('SELECT parent_id, COUNT(*) c FROM nodes WHERE parent_id IS NOT NULL GROUP BY parent_id')
+        .all()
+        .map((r) => [r.parent_id, r.c])
+    )
     const all = db
       .prepare('SELECT * FROM nodes ORDER BY sort, id')
       .all()
-      .map((r) => ({ ...nodeVO(r), children: [] }))
+      .map((r) => ({
+        ...nodeVO(r),
+        children: [],
+        docCount: docCounts.get(r.id) || 0,
+        childCount: childCounts.get(r.id) || 0
+      }))
     const byId = new Map(all.map((n) => [n.id, n]))
     const roots = []
     for (const n of all) {

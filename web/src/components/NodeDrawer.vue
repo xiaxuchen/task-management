@@ -83,17 +83,17 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
 
-const props = defineProps({ node: Object, visible: Boolean })
+const props = defineProps({ node: Object, visible: Boolean, initialTab: { type: String, default: 'info' } })
 const emit = defineEmits(['close', 'updated'])
 
 const internalVisible = ref(props.visible)
 watch(() => props.visible, (v) => { internalVisible.value = v })
 
-const tab = ref('info')
+const tab = ref(props.initialTab)
 const drawerWidth = ref('760px')
 
 const editName = ref(props.node.name)
@@ -113,11 +113,14 @@ function toggleWidth() {
 }
 
 async function loadDetail() {
+  // 切换节点时回到请求的 tab（点「文档」列直接落在文档区）
+  tab.value = props.initialTab
   const detail = await api.nodeGet(props.node.id)
   editName.value = detail.name
   editStatus.value = detail.status || 'todo'
   attrValues.value = detail.attrs || {}
   children.value = detail.children || []
+  commits.value = detail.commits || []
   const allDefs = await api.attrDefs()
   attrDefs.value = allDefs.filter((d) => d.enabled !== false && d.nodeType === detail.type)
   const repoList = await api.repos()
@@ -154,5 +157,6 @@ function onChildClick(child) {
   // 简单方案：重新 emit select 但保持 drawer 关闭
 }
 
-onMounted(loadDetail)
+// 切换节点时重新加载（组件实例会被复用，onMounted 不会再次触发）
+watch(() => props.node?.id, loadDetail, { immediate: true })
 </script>

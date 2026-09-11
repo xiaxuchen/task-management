@@ -91,16 +91,6 @@ const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '�
 const canAddChild = (n) => !['task', 'defect'].includes(n.type)
 const canAddDefect = (n) => n.type === 'task' || n.type === 'group'
 
-// 给树加 _depth 标记用于缩进
-function flattenTree(nodes, depth = 0) {
-  const out = []
-  for (const n of nodes) {
-    out.push({ ...n, _depth: depth, children: [], docCount: n.documents?.length || 0 })
-    if (n.children?.length) out.push(...flattenTree(n.children, depth + 1))
-  }
-  return out
-}
-
 function markDepth(nodes, depth = 0) {
   for (const n of nodes) {
     n._depth = depth
@@ -181,11 +171,11 @@ function delNode(node) {
 }
 
 function onRowClick(row) {
-  emit('select', row)
+  emit('select', row, 'info')
 }
 
 function openDocs(row) {
-  emit('select', row)
+  emit('select', row, 'docs')
 }
 
 onMounted(loadTree)
