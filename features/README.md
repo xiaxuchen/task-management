@@ -23,6 +23,7 @@
 | 属性定义管理页 | `attr-defs-ui/`（合并在 tree-table-ui） | 计划 3 | 已完成 | web/src/views/AttrDefsView.vue |
 | 设置页 | `settings-ui/`（合并在 tree-table-ui） | 计划 3 | 已完成 | web/src/views/SettingsView.vue |
 | 仓库登记 | `repo-registry/`（随计划 3 建） | 计划 3 | 已完成 | web/src/api.js + server/store.mjs |
+| dsh-charge 需求同步导入 | `dsh-import/` | 计划 3 · 配套 | 已完成 | server/import-dsh.mjs |
 | commit 在线预览（含子树聚合） | `diff-preview/`（随计划 4 建） | 计划 4 | 待开始 | server/git.mjs、web DiffPane |
 | 代码集成（显式合并） | `merge-integration/`（随计划 4 建） | 计划 4 | 待开始 | server/git.mjs、merges 表 |
 | 冲突检测与处理 | `conflict-resolution/`（随计划 4 建） | 计划 4 | 待开始 | server/git.mjs、web ConflictPane |
