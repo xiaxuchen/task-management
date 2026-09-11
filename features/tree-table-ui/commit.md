@@ -14,3 +14,10 @@
 - feat(web): 表格「📄 数量」点击直达文档区（docCount → initialTab='docs'）
 - chore(web): 删除 TreeView 无用 flattenTree 死代码
 - test(store): listTree docCount / childCount 用例
+- feat(web): 文档区改用 Vditor（设计 §5 / 决策 #12），替换手写 simpleMd 简易渲染
+  - 预览走 Vditor.preview：代码块高亮+行号、表格、任务列表、mermaid、KaTeX、目录
+  - 编辑走 Vditor ir 模式：18 项工具栏，blur 即存 + 轮询自动保存（停止输入 1.2s 落库）
+  - 资源自托管：新增 scripts/copy-vditor.mjs（postinstall / prebuild / predev 自动同步到 web/public/vditor/dist，cdn='/vditor'）
+  - chore(web): NodeDrawer 补布局样式，让 tab 内容撑满抽屉高度（Vditor 需确定高度）
+  - fix(web): 自动保存改由轮询驱动（Vditor input 回调触发时机不稳定，实测数秒未回调），
+    且轮询须在 after 回调启动（构造后 getValue() 不可靠）；修复防抖定时器被轮询不断重置导致永不保存

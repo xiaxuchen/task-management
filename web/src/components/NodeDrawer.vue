@@ -160,3 +160,25 @@ function onChildClick(child) {
 // 切换节点时重新加载（组件实例会被复用，onMounted 不会再次触发）
 watch(() => props.node?.id, loadDetail, { immediate: true })
 </script>
+
+<style scoped>
+/* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
+:deep(.el-drawer__body) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+:deep(.el-tabs) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+:deep(.el-tab-pane) {
+  height: 100%;
+}
+</style>
