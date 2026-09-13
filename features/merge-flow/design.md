@@ -142,6 +142,12 @@
 - **commit 列表操作移入列表头**：左列 commit 列表上方一行 —— 「全选⇄」「反选」「仅看待审」
 - **顶栏**：左侧=导航组（退出返回/提交列表）+ 摘要；右侧=其余功能按钮组（右对齐）
 
+## 节点树增删改（右键菜单）
+
+- **右键节点树** → 「新建子节点…」（按 CHILD_TYPES 约束选类型 + 输名）/「重命名…」（带现名初值）/「删除节点…」（级联警告 + 确认）
+- Api：`renameNode`（PATCH name）/`deleteNode`（DELETE ?confirm=true）；完成后 `reloadTree()` 自动刷新
+- 类型约束与后端一致：project→requirement；requirement→[group, subreq]；subreq→[group, task]；group→[group, subreq, task, defect]；task→[defect]
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
