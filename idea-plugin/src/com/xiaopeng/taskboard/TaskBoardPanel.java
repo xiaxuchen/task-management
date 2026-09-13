@@ -1507,7 +1507,7 @@ public class TaskBoardPanel extends JPanel {
             }
         });
         group.add(Separator.getInstance());
-        addAction(group, "标记通过", "对勾选的 commit 标记审查通过", AllIcons.Actions.Checked, () -> markChecked("approved", null));
+        addAction(group, "标记通过", "对勾选的 commit 标记审查通过（存在\"有问题\"的 commit 时会被拦截）", AllIcons.Actions.Checked, this::markApproved);
         addAction(group, "标记有问题…", "对勾选的 commit 标记有问题（可填写意见）", AllIcons.Actions.Cancel, this::markCheckedWithNote);
         addAction(group, "重置待审", "对勾选的 commit 重置为待审", AllIcons.Actions.Rollback, () -> markChecked("pending", null));
         group.add(Separator.getInstance());
@@ -1778,6 +1778,37 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
+    /** 标记通过（带"有问题"拦截：需先解决并重置后再通过） */
+    private void markApproved() {
+        List<CommitItem> sel = checkedCommits();
+        if (sel.isEmpty()) {
+            reviewSummary.setText("请先勾选要操作的 commit");
+            return;
+        }
+        List<CommitItem> issues = new ArrayList<>();
+        for (CommitItem ci : sel) {
+            if ("issue".equals(ci.reviewStatus)) {
+                issues.add(ci);
+            }
+        }
+        if (!issues.isEmpty()) {
+            StringBuilder sb = new StringBuilder("<html>以下 commit 处于<font color='#D43A3A'><b>「有问题」</b></font>状态，请先解决并「重置待审」后再通过：<br><br>");
+            for (CommitItem ci : issues) {
+                String sha = ci.sha == null ? "" : ci.sha;
+                sb.append("• ").append(esc(sha.length() > 10 ? sha.substring(0, 10) : sha))
+                        .append(" ").append(esc(ci.note == null ? "" : ci.note));
+                if (ci.reviewNote != null && !ci.reviewNote.isEmpty()) {
+                    sb.append("<br>&nbsp;&nbsp;<font color='#D43A3A'>⚠ ").append(esc(ci.reviewNote)).append("</font>");
+                }
+                sb.append("<br>");
+            }
+            sb.append("</html>");
+            Messages.showWarningDialog(project, sb.toString(), "无法标记通过");
+            return;
+        }
+        markChecked("approved", null);
+    }
+
     private void markCheckedWithNote() {
         if (checkedCommits().isEmpty()) {
             reviewSummary.setText("请先在「提交列表」中勾选要操作的 commit");
@@ -1888,6 +1919,27 @@ public class TaskBoardPanel extends JPanel {
         if (infos.isEmpty()) {
             infos.add("<html><i>合并变更 · 已选 " + sel.size() + " 个 commit · 共 " + totalFiles + " 个文件</i></html>");
         }
+        // 问题汇总（"有问题"状态的 commit 与意见）——置顶
+        List<CommitItem> issueItems = new ArrayList<>();
+        for (CommitItem ci : sel) {
+            if ("issue".equals(ci.reviewStatus)) {
+                issueItems.add(ci);
+            }
+        }
+        if (!issueItems.isEmpty()) {
+            StringBuilder ib = new StringBuilder("<html><font color='#D43A3A'><b>⚠ 待解决问题（" + issueItems.size() + "）</b></font><br>");
+            for (CommitItem ci : issueItems) {
+                String sha = ci.sha == null ? "" : ci.sha;
+                ib.append("• ").append(esc(sha.length() > 10 ? sha.substring(0, 10) : sha))
+                        .append(" ").append(esc(ci.note == null ? "" : ci.note));
+                if (ci.reviewNote != null && !ci.reviewNote.isEmpty()) {
+                    ib.append("<br>&nbsp;&nbsp;<font color='#D43A3A'>").append(esc(ci.reviewNote)).append("</font>");
+                }
+                ib.append("<br>");
+            }
+            ib.append("</html>");
+            infos.add(0, ib.toString());
+        }
         setCommitInfos(infos);
     }
 
@@ -1955,8 +2007,12 @@ public class TaskBoardPanel extends JPanel {
         detailModel.reload();
         for (int i = 0; i < detailTree.getRowCount(); i++) detailTree.expandRow(i);
 
-        setCommitInfos(java.util.Collections.singletonList(
-                commitInfoHtml(ci.note, ci.sha, str(diff, "author", ""), str(diff, "date", ""), diff.getAsJsonArray("branches"))));
+        List<String> infos = new ArrayList<>();
+        infos.add(commitInfoHtml(ci.note, ci.sha, str(diff, "author", ""), str(diff, "date", ""), diff.getAsJsonArray("branches")));
+        if ("issue".equals(ci.reviewStatus) && ci.reviewNote != null && !ci.reviewNote.isEmpty()) {
+            infos.add("<html><font color='#D43A3A'><b>⚠ 问题：</b></font>" + esc(ci.reviewNote) + "</html>");
+        }
+        setCommitInfos(infos);
     }
 
     // ---------- 信息区（下方 commit 信息列表） ----------
