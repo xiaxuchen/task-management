@@ -1021,12 +1021,19 @@ public class TaskBoardPanel extends JPanel {
 
         DefaultActionGroup group = new DefaultActionGroup();
         addAction(group, "刷新", "重新加载需求树（" + api.base() + "）", AllIcons.Actions.Refresh, this::reloadTree);
+        addAction(group, "拷贝上下文", "复制选中节点的上下文（节点信息+文档+PRD）到剪贴板", AllIcons.Actions.Copy, this::copySelectContext);
+        addAction(group, "拷贝节点ID", "复制选中节点的 id 与名称（如 114 · 1.4 新增…）", AllIcons.Actions.Show, this::copySelectNodeId);
+        addAction(group, "搜索", "按名称搜索节点并定位", AllIcons.Actions.Find, this::searchSelectNode);
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardSelect", group, true);
         toolbar.setTargetComponent(this);
 
-        JPanel north = new JPanel(new BorderLayout(8, 0));
-        north.add(toolbar.getComponent(), BorderLayout.WEST);
-        north.add(selectStatus, BorderLayout.CENTER);
+        JPanel row1 = new JPanel(new BorderLayout(8, 0));
+        row1.add(toolbar.getComponent(), BorderLayout.WEST);
+        JPanel row2 = new JPanel(new BorderLayout(8, 0));
+        row2.add(selectStatus, BorderLayout.WEST);
+        JPanel north = new JPanel(new BorderLayout());
+        north.add(row1, BorderLayout.NORTH);
+        north.add(row2, BorderLayout.CENTER);
         p.add(north, BorderLayout.NORTH);
 
         selectTree.setRootVisible(false);
@@ -1042,6 +1049,103 @@ public class TaskBoardPanel extends JPanel {
         });
         p.add(ScrollPaneFactory.createScrollPane(selectTree, true), BorderLayout.CENTER);
         return p;
+    }
+
+    /** Select 视图：当前选中的节点（未选中返回 null） */
+    private NodeData selectedSelectNode() {
+        Object o = selectTree.getLastSelectedPathComponent();
+        if (o instanceof DefaultMutableTreeNode n && n.getUserObject() instanceof NodeData d) {
+            return d;
+        }
+        return null;
+    }
+
+    /** 拷贝选中节点 id（id · 名称） */
+    private void copySelectNodeId() {
+        NodeData d = selectedSelectNode();
+        if (d == null) {
+            selectStatus.setText("请先在树里选中一个节点");
+            return;
+        }
+        CopyPasteManager.getInstance().setContents(new StringSelection(d.id + " · " + d.name));
+        selectStatus.setText("已复制节点 ID：" + d.id + " · " + d.name);
+    }
+
+    /** 拷贝选中节点的上下文（节点 + 文档 + PRD） */
+    private void copySelectContext() {
+        final NodeData d = selectedSelectNode();
+        if (d == null) {
+            selectStatus.setText("请先在树里选中一个节点");
+            return;
+        }
+        selectStatus.setText("正在生成上下文…");
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonArray docs = api.nodeDocuments(d.id);
+                String prdUrl = null;
+                try {
+                    prdUrl = findPrdUrl(d.id);
+                } catch (Exception ignore) {
+                    // 无 PRD 不阻断
+                }
+                StringBuilder md = new StringBuilder();
+                md.append("## task-board 节点：").append(d.name).append("（id=").append(d.id).append("）\n");
+                if (prdUrl != null) {
+                    md.append("- PRD（飞书）：").append(prdUrl).append("\n");
+                }
+                if (docs != null) {
+                    for (JsonElement el : docs) {
+                        JsonObject doc = el.getAsJsonObject();
+                        md.append("\n### ").append(str(doc, "name", "文档")).append("\n\n");
+                        md.append(str(doc, "content", "")).append("\n");
+                    }
+                }
+                final String text = md.toString();
+                SwingUtilities.invokeLater(() -> {
+                    CopyPasteManager.getInstance().setContents(new StringSelection(text));
+                    selectStatus.setText("已复制「" + d.name + "」上下文（" + text.length() + " 字）——可直接粘贴给 Qoder");
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> selectStatus.setText("生成上下文失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 搜索节点（按名称包含，定位并展开选中） */
+    private void searchSelectNode() {
+        String kw = Messages.showInputDialog(project, "输入节点名称关键词（支持部分匹配）：", "搜索节点", null);
+        if (kw == null || kw.trim().isEmpty()) {
+            return;
+        }
+        String k = kw.trim();
+        List<TreePath> hits = new ArrayList<>();
+        collectMatches(new TreePath(selectRoot), k, hits);
+        if (hits.isEmpty()) {
+            selectStatus.setText("未找到包含「" + k + "」的节点");
+            return;
+        }
+        TreePath first = hits.get(0);
+        selectTree.setSelectionPath(first);
+        selectTree.scrollPathToVisible(first);
+        String firstName = "";
+        Object last = first.getLastPathComponent();
+        if (last instanceof DefaultMutableTreeNode n && n.getUserObject() instanceof NodeData nd) {
+            firstName = nd.name;
+        }
+        selectStatus.setText("找到 " + hits.size() + " 个匹配，已定位到：「" + firstName + "」");
+    }
+
+    /** 递归收集名称包含关键词的节点路径 */
+    private void collectMatches(TreePath path, String kw, List<TreePath> out) {
+        Object last = path.getLastPathComponent();
+        if (last instanceof DefaultMutableTreeNode n) {
+            if (n.getUserObject() instanceof NodeData d && d.name != null && d.name.contains(kw)) {
+                out.add(path);
+            }
+            for (int i = 0; i < n.getChildCount(); i++) {
+                collectMatches(path.pathByAddingChild(n.getChildAt(i)), kw, out);
+            }
+        }
     }
 
     public void reloadTree() {
