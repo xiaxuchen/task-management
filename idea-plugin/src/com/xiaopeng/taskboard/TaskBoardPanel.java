@@ -157,17 +157,20 @@ public class TaskBoardPanel extends JPanel {
             String fileName = "";
             try {
                 VirtualFile vf = editor.getVirtualFile();
-                if (vf != null) {
-                    if (vf instanceof com.intellij.diff.editor.ChainDiffVirtualFile) {
-                        // 链式 diff：取"当前显示的变更文件路径"（而非虚拟文件名）
-                        String diffPath = DiffOpener.currentDiffFilePath(vf);
-                        fileName = diffPath != null ? diffPath : "（当前 review diff）";
-                    } else if (vf instanceof com.intellij.testFramework.LightVirtualFile) {
-                        // 其它虚拟文件：不冒充真实文件名
-                        fileName = "（虚拟文件）";
-                    } else {
-                        fileName = vf.getName();
+                if (vf instanceof com.intellij.diff.editor.ChainDiffVirtualFile) {
+                    // 链式 diff 的 tab 自身：取"当前显示的变更文件路径"
+                    String diffPath = DiffOpener.currentDiffFilePath(vf);
+                    fileName = diffPath != null ? diffPath : "（当前 review diff）";
+                } else if (vf instanceof com.intellij.testFramework.LightVirtualFile) {
+                    // diff 的左右编辑器（内容 vf）或其它虚拟文件：回退到"当前链式 diff"取真实文件路径
+                    String diffPath = null;
+                    VirtualFile chainVf = DiffOpener.currentFile();
+                    if (chainVf != null && chainVf.isValid()) {
+                        diffPath = DiffOpener.currentDiffFilePath(chainVf);
                     }
+                    fileName = diffPath != null ? diffPath : "（当前 review diff）";
+                } else {
+                    fileName = vf.getName();
                 }
             } catch (Throwable ignore) {
                 // 虚拟文件时忽略
