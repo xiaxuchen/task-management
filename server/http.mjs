@@ -312,7 +312,7 @@ export function createApp({ store }) {
   )
   app.get(
     '/api/nodes/:id/tracks',
-    wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self', branches: req.query.branches === 'true' })))
+    wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self', branches: req.query.branches === 'true', light: req.query.light === 'true' })))
   )
   // ---------- 审批合并（同意 → 开发分支合入所属子需求的「需求分支」；主仓库执行） ----------
   app.post(

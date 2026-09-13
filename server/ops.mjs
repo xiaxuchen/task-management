@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -382,7 +382,7 @@ export async function getCommitTrack(store, cid) {
  * 节点（含子树）聚合分支合并状态：按 (repo, sha) 去重、回填来源节点；
  * contained=null 表示分支未配置或本地无该 ref（先 fetch）；单条失败带 error 不拖垮整体
  */
-export async function getNodeTracks(store, nodeRef, { scope = 'self', branches = false } = {}) {
+export async function getNodeTracks(store, nodeRef, { scope = 'self', branches = false, light = false } = {}) {
   const node = store.resolveRef(nodeRef)
   const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
   const repos = new Map(store.listRepos().map((r) => [r.name, r]))
@@ -411,51 +411,66 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self', branches =
       const targets = store.resolveBranchTargets(repo)
       const trackBranches = { test: targets.test, pre: targets.pre, release: targets.release }
       item.repo = { name: repo.name, ...trackBranches, targetSource: targets.source }
-      item.track = await gitCommitTrack(dir, c.sha, trackBranches)
+      // light 模式：跳过逐条 commitTrack（快 10 倍；插件 Review 不需要测试/预发追踪）
+      item.track = light ? null : await gitCommitTrack(dir, c.sha, trackBranches)
     } catch (e) {
       item.error = { code: e.code || 'ERROR', message: e.message }
     }
   }
 
-  // 分支标注（网页用）：包含该提交的分支（worktree/子分支） + 是否已合入需求分支
+  // 分支标注：批量模式（每仓库一次 git log <需求分支> → Set(sha) 比对，避免逐条 git 进程）
   if (branches) {
+    const shaSets = new Map() // key: repo||branch → Set | null
+    const getShas = async (repoName, branch) => {
+      const key = `${repoName}||${branch}`
+      if (!shaSets.has(key)) {
+        const repoRow = repos.get(repoName)
+        let set = null
+        if (repoRow) {
+          try {
+            set = await gitBranchLogShas(resolveRepoDir(repoRow), branch)
+          } catch (ignore) {
+            set = null
+          }
+        }
+        shaSets.set(key, set)
+      }
+      return shaSets.get(key)
+    }
     for (const item of items) {
       const c = item.commit
-      try {
-        const repo = c.repo ? repos.get(c.repo) : null
-        if (!repo) continue
-        const dir = resolveRepoDir(repo)
-        const branchList = await gitBranchesContaining(dir, c.sha).catch(() => [])
-        // 需求分支取值优先级：① 节点自身 branch（分支组节点）② 子需求 reqBranch ③ 需求 demandBranch
-        const selfBranch = (store.getAttrs(node.id) || {}).branch || null
-        const subreqAnc = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'subreq')
-        const subreqBranch = subreqAnc ? ((store.getAttrs(subreqAnc.id) || {}).reqBranch || null) : null
-        const ancestor = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'requirement')
-        const demandRaw = selfBranch || subreqBranch || (ancestor ? store.getAttrs(ancestor.id).demandBranch : null)
-        const demandBranches = String(demandRaw || '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-        const subBranches = branchList.filter((b) => !demandBranches.includes(b))
-        let demandContained = null
-        for (const db of demandBranches) {
-          const r = await gitBranchContains(dir, c.sha, db)
-          if (r.contained === true) {
-            demandContained = true
+      if (!c.repo) continue
+      // 需求分支取值：① 节点自身 branch（分支组）② 子需求 reqBranch ③ 需求 demandBranch
+      const selfBranch = (store.getAttrs(node.id) || {}).branch || null
+      const subreqAnc = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'subreq')
+      const subreqBranch = subreqAnc ? ((store.getAttrs(subreqAnc.id) || {}).reqBranch || null) : null
+      const ancestor = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'requirement')
+      const demandRaw = selfBranch || subreqBranch || (ancestor ? store.getAttrs(ancestor.id).demandBranch : null) || null
+      c.demandBranch = demandRaw
+      if (!demandRaw) {
+        c.mergedToReq = null
+        continue
+      }
+      const shas = await getShas(c.repo, demandRaw)
+      if (!shas) {
+        c.demandContained = null
+      } else if (shas.has(c.sha)) {
+        c.demandContained = true
+      } else {
+        // 登记的可能是短 sha → 前缀匹配
+        let found = false
+        for (const full of shas) {
+          if (full.startsWith(c.sha)) {
+            found = true
             break
           }
-          if (r.contained === false && demandContained === null) demandContained = false
         }
-        c.branches = branchList
-        c.subBranches = subBranches.slice(0, 5)
-        c.demandBranch = demandRaw || null
-        c.demandContained = demandContained
-        c.mergedToReq = demandContained  // 是否已合入需求分支（插件/前端标注"未合并"用）
-      } catch {
-        // 单条失败忽略
+        c.demandContained = found
       }
+      c.mergedToReq = c.demandContained
     }
   }
+
   return { scope, count: items.length, items }
 }
 

@@ -253,6 +253,15 @@ export async function previewMerge(dir, source, target) {
   }
 }
 
+/** 一次 git log 拿分支上的全部 sha（Set）；ref 不存在返回 null */
+export async function branchLogShas(dir, branch, maxCount = 5000) {
+  const ref = await resolveBranchRef(dir, branch)
+  if (!ref) return null
+  const r = await gitTry(dir, ['log', ref, '--format=%H', `--max-count=${maxCount}`])
+  if (!r.ok) return null
+  return new Set(r.stdout.split('\n').map((s) => s.trim()).filter(Boolean))
+}
+
 /**
  * 主仓库合并：把 source 合入 target（--no-ff）。
  * 前置安全判定：① 当前工作区无未解决冲突（UU/AA/DD 等）② 能切到 target。
