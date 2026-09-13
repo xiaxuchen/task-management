@@ -1,0 +1,28 @@
+<idea-plugin>
+    <id>com.xiaopeng.taskboard.idea</id>
+    <name>Task Board</name>
+    <vendor>xiaxuchen</vendor>
+    <description><![CDATA[
+    本地任务管理器（task-board）的 IDEA 集成：
+    <ul>
+      <li>需求树（项目 / 需求 / 子需求 / 任务组 / 任务）</li>
+      <li>节点提交列表（含子树聚合）</li>
+      <li>合并状态：测试 / 预发 / 上线（✓ 已合入 · ✗ 未合入 · — 未配置）</li>
+      <li>双击提交 → IDEA 原生 Diff 查看变更</li>
+    </ul>
+    需本机运行 task-board 服务：<code>npm start</code>（127.0.0.1:3210）。
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <!-- 可选依赖：JCEF 被禁用时插件仍可用（「网页」视图自动跳过） -->
+    <depends optional="true">com.intellij.modules.jcef</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileEditorProvider implementation="com.xiaopeng.taskboard.PrdFileEditorProvider"/>
+        <toolWindow id="TaskBoard"
+                    anchor="right"
+                    secondary="false"
+                    canCloseContents="false"
+                    icon="/icons/taskboard.svg"
+                    factoryClass="com.xiaopeng.taskboard.TaskBoardToolWindowFactory"/>
+    </extensions>
+</idea-plugin>

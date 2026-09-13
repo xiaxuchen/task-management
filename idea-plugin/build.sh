@@ -1,0 +1,35 @@
+#!/bin/bash
+# Task Board IDEA 插件构建：javac（IDEA 自带 JBR 25）直接编译，jar 打包
+# 无需 Gradle / 网络依赖；classpath 使用本地 IDEA 安装目录的 lib
+set -e
+cd "$(dirname "$0")"
+
+IDEA_APP="${IDEA_APP:-/Applications/IntelliJ IDEA.app}"
+JBR="$IDEA_APP/Contents/jbr/Contents/Home"
+LIBDIR="$IDEA_APP/Contents/lib"
+
+if [ ! -x "$JBR/bin/javac" ]; then
+  echo "未找到 IDEA 自带 JDK：$JBR" >&2
+  exit 1
+fi
+
+rm -rf out dist
+mkdir -p out dist/task-board-idea/lib
+
+CP=$(find "$LIBDIR" -name "*.jar" | tr '\n' ':')
+# JCEF 模块（内嵌网页视图用）
+CP="$CP$(find "$IDEA_APP/Contents/plugins/jcef-plugin/lib" -name '*.jar' 2>/dev/null | tr '\n' ':')"
+echo "编译（javac: $("$JBR/bin/javac" -version 2>&1)，classpath: $(find "$LIBDIR" -name '*.jar' | wc -l | tr -d ' ') 个 lib jar + jcef）..."
+
+find src -name "*.java" > /tmp/tb-idea-sources.txt
+"$JBR/bin/javac" -encoding UTF-8 --release 17 -cp "$CP" -d out @/tmp/tb-idea-sources.txt
+echo "编译通过 ✓"
+
+cp -r resources/* out/
+(cd out && jar cf "../dist/task-board-idea/lib/task-board-idea.jar" .)
+
+PLUGIN_DIR="$HOME/Library/Application Support/JetBrains/IntelliJIdea2026.2/plugins"
+echo
+echo "构建完成：dist/task-board-idea/lib/task-board-idea.jar"
+echo "安装（重启 IDEA 生效）："
+echo "  cp -r dist/task-board-idea \"$PLUGIN_DIR/\""

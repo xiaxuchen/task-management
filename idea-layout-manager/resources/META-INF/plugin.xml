@@ -1,0 +1,22 @@
+<idea-plugin>
+    <id>com.xiaopeng.layout-manager</id>
+    <name>Layout Manager</name>
+    <vendor>xiaxuchen</vendor>
+    <description><![CDATA[
+    窗口布局管理（类似 Cocos 的 Window → Layout）：
+    <ul>
+      <li>把当前的工具窗布局（位置 / 显示 / 尺寸）保存为命名预设</li>
+      <li>Window 菜单 → 布局管理 → 点击任意预设一键切换</li>
+      <li>支持管理（删除）已保存的布局</li>
+    </ul>
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+
+    <actions>
+        <group id="XpLayoutManager.Menu"
+               class="com.xiaopeng.layouts.LayoutsActionGroup"
+               popup="true">
+            <add-to-group group-id="WindowMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>

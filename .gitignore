@@ -3,3 +3,7 @@ node_modules/
 *.log
 web/public/vditor/
 web/dist/
+idea-plugin/out/
+idea-plugin/dist/
+idea-layout-manager/out/
+idea-layout-manager/dist/

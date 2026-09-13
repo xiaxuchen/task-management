@@ -1,0 +1,177 @@
+package com.xiaopeng.taskboard;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+
+/** task-board 本地服务 HTTP 客户端（127.0.0.1:3210） */
+public class TaskBoardApi {
+    public static final String DEFAULT_BASE = "http://127.0.0.1:3210";
+
+    private final String base;
+    private final HttpClient http;
+
+    public TaskBoardApi(String base) {
+        this.base = base;
+        this.http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+    }
+
+    public String base() {
+        return base;
+    }
+
+    private JsonObject getJson(String path) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + path))
+                .timeout(Duration.ofSeconds(180))
+                .GET()
+                .build();
+        return send(req);
+    }
+
+    /** 更新 commit 审查结果（pending / approved / issue） */
+    public JsonObject updateCommitReview(long cid, String reviewStatus, String note) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("reviewStatus", reviewStatus);
+        if (note != null) body.addProperty("note", note);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/commits/" + cid))
+                .timeout(Duration.ofSeconds(30))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    private JsonElement sendAny(HttpRequest req) throws Exception {
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() >= 400) {
+            String msg = "HTTP " + resp.statusCode();
+            try {
+                JsonObject err = JsonParser.parseString(resp.body()).getAsJsonObject().getAsJsonObject("error");
+                if (err != null && err.has("message")) msg += ": " + err.get("message").getAsString();
+            } catch (Exception ignore) {
+                // 保持原始状态码
+            }
+            throw new IllegalStateException(msg);
+        }
+        return JsonParser.parseString(resp.body());
+    }
+
+    private JsonObject send(HttpRequest req) throws Exception {
+        return sendAny(req).getAsJsonObject();
+    }
+
+    /** 触发 agent 运行（异步；默认 qodercli + DeepSeek-Flash） */
+    public JsonObject startAgentRun(long nodeId, String prompt) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("prompt", prompt);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-runs"))
+                .timeout(Duration.ofSeconds(30))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /** 节点 agent 运行历史（倒序） */
+    public JsonArray listAgentRuns(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-runs"))
+                .timeout(Duration.ofSeconds(30))
+                .GET()
+                .build();
+        return sendAny(req).getAsJsonArray();
+    }
+
+    /** 多 commit 合并变更（MR 式）：按仓库分组、文件并集、净 old/new */
+    public JsonObject combinedDiff(long[] cids) throws Exception {
+        JsonArray arr = new JsonArray();
+        for (long c : cids) arr.add(c);
+        JsonObject body = new JsonObject();
+        body.add("cids", arr);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/commits/combined-diff"))
+                .timeout(Duration.ofSeconds(180))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /** 单个节点（含 attrs / parentId） */
+    public JsonObject nodeGet(long nodeId) throws Exception {
+        return getJson("/api/nodes/" + nodeId);
+    }
+
+    /** 节点文档列表（含正文） */
+    public JsonArray nodeDocuments(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/documents"))
+                .timeout(Duration.ofSeconds(30))
+                .GET()
+                .build();
+        return sendAny(req).getAsJsonArray();
+    }
+
+    /** 轮询领取下一个 IDE 打开请求（无则返回 null） */
+    public JsonObject getNextIdeRequest() throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/ide/requests/next"))
+                .timeout(Duration.ofSeconds(15))
+                .GET()
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() == 204 || resp.body() == null || resp.body().isBlank()) return null;
+        if (resp.statusCode() >= 400) throw new IllegalStateException("HTTP " + resp.statusCode());
+        JsonElement el = JsonParser.parseString(resp.body());
+        return el.isJsonObject() ? el.getAsJsonObject() : null;
+    }
+
+    /** 回报 IDE 请求完成 */
+    public void completeIdeRequest(long id) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("status", "done");
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/ide/requests/" + id + "/complete"))
+                .timeout(Duration.ofSeconds(15))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        send(req);
+    }
+
+    /** 单条 agent 运行（轮询用） */
+    public JsonObject getAgentRun(long runId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/agent-runs/" + runId))
+                .timeout(Duration.ofSeconds(30))
+                .GET()
+                .build();
+        return send(req);
+    }
+
+    /** 树：{revision, nodes:[...]} */
+    public JsonObject tree() throws Exception {
+        return getJson("/api/tree");
+    }
+
+    /** 节点提交聚合（含合并状态）：{scope, count, items:[{commit, repo, track, error}]} */
+    public JsonObject nodeTracks(long nodeId, String scope) throws Exception {
+        return getJson("/api/nodes/" + nodeId + "/tracks?scope=" + scope);
+    }
+
+    /** 单 commit diff：{commit, repo, sha, subject, files:[{path, old, new, patch, ...}]} */
+    public JsonObject commitDiff(long cid) throws Exception {
+        return getJson("/api/commits/" + cid + "/diff");
+    }
+
+    public JsonObject health() throws Exception {
+        return getJson("/api/health");
+    }
+}
