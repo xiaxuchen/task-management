@@ -1827,12 +1827,14 @@ public class TaskBoardPanel extends JPanel {
         if (d == null || d.id == selectDetailLoadedId) {
             return;
         }
+        diag("loadSelectDetail 开始 id=" + d.id + " name=" + d.name);
         selectDetailLoadedId = d.id;
         selectDetailLoadedName = d.name;
         selectDetailPane.setText("<html><body style='padding:10px;color:#888'>加载中…（" + esc(d.name) + "）</body></html>");
         final long id = d.id;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
+                long t0 = System.currentTimeMillis();
                 JsonArray docs = api.nodeDocuments(id);
                 String prdUrl = null;
                 try {
@@ -1840,10 +1842,12 @@ public class TaskBoardPanel extends JPanel {
                 } catch (Exception ignore) {
                     // 无 PRD 不阻断
                 }
+                diag("loadSelectDetail 数据到达 id=" + id + " " + (System.currentTimeMillis() - t0) + "ms docs=" + (docs == null ? 0 : docs.size()));
                 final JsonArray finalDocs = docs;
                 final String finalPrdUrl = prdUrl;
                 SwingUtilities.invokeLater(() -> {
                     if (id != selectDetailLoadedId) {
+                        diag("loadSelectDetail 丢弃（已切到 " + selectDetailLoadedId + "）id=" + id);
                         return;
                     }
                     StringBuilder h = new StringBuilder();
@@ -1867,8 +1871,10 @@ public class TaskBoardPanel extends JPanel {
                         h.append("<p style='color:#aaa'>（该节点暂无文档）</p>");
                     }
                     h.append("</body></html>");
+                    long t1 = System.currentTimeMillis();
                     selectDetailPane.setText(h.toString());
                     selectDetailPane.setCaretPosition(0);
+                    diag("loadSelectDetail 已 setText id=" + id + " 渲染 " + (System.currentTimeMillis() - t1) + "ms htmlLen=" + h.length());
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> selectDetailPane.setText(
