@@ -70,6 +70,69 @@ public class TaskBoardApi {
         return sendAny(req).getAsJsonObject();
     }
 
+    // ---------- comments（diff 行级评论） ----------
+
+    /** 添加 diff 行级评论 */
+    public JsonObject addComment(long nodeId, String filePath, String commitSha,
+                                 int lineStart, int lineEnd, String snippet, String content) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("filePath", filePath);
+        if (commitSha != null && !commitSha.isEmpty()) {
+            body.addProperty("commitSha", commitSha);
+        }
+        body.addProperty("lineStart", lineStart);
+        body.addProperty("lineEnd", lineEnd);
+        if (snippet != null && !snippet.isEmpty()) {
+            body.addProperty("snippet", snippet);
+        }
+        body.addProperty("content", content);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/comments"))
+                .timeout(Duration.ofSeconds(15))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /** 列出某节点的评论 */
+    public JsonArray listComments(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/comments"))
+                .timeout(Duration.ofSeconds(15))
+                .header("x-taskboard-actor", "idea")
+                .GET()
+                .build();
+        return sendAny(req).getAsJsonArray();
+    }
+
+    /** 按文件（可选 sha）查评论 */
+    public JsonArray listCommentsByFile(String filePath, String commitSha) throws Exception {
+        String url = base + "/api/comments?filePath="
+                + java.net.URLEncoder.encode(filePath, java.nio.charset.StandardCharsets.UTF_8);
+        if (commitSha != null && !commitSha.isEmpty()) {
+            url += "&commitSha=" + commitSha;
+        }
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(15))
+                .header("x-taskboard-actor", "idea")
+                .GET()
+                .build();
+        return sendAny(req).getAsJsonArray();
+    }
+
+    /** 更新评论状态（open/resolved） */
+    public JsonObject updateComment(long id, String status) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("status", status);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/comments/" + id))
+                .timeout(Duration.ofSeconds(15))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
     /** 触发 agent 运行（异步；默认 qodercli + DeepSeek-Flash） */
     public JsonObject startAgentRun(long nodeId, String prompt) throws Exception {
         return startAgentRun(nodeId, prompt, false);

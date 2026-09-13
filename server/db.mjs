@@ -181,6 +181,22 @@ CREATE TABLE IF NOT EXISTS unit_repos (
   UNIQUE(node_id, repo_id)
 );
 
+CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  repo TEXT,
+  file_path TEXT NOT NULL,
+  commit_sha TEXT,
+  line_start INTEGER NOT NULL DEFAULT 0,
+  line_end INTEGER NOT NULL DEFAULT 0,
+  snippet TEXT,
+  content TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT 'user',
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comments_node ON comments(node_id, file_path);
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

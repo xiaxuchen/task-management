@@ -701,7 +701,78 @@ export function createStore(db, options = {}) {
     return commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(cur.id))
   }
 
-  // ---------- agent 运行记录（测试节点：写提示词触发 agent） ----------
+  // ---------- comments（diff 行级评论） ----------
+
+  function commentVO(r) {
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      repo: r.repo,
+      filePath: r.file_path,
+      commitSha: r.commit_sha,
+      lineStart: r.line_start,
+      lineEnd: r.line_end,
+      snippet: r.snippet,
+      content: r.content,
+      author: r.author,
+      status: r.status,
+      createdAt: r.created_at
+    }
+  }
+
+  function createComment(nodeId, { repo = null, filePath, commitSha = null, lineStart = 0, lineEnd = 0, snippet = null, content }, by = 'user') {
+    rawNode(nodeId)
+    if (!content || !content.trim()) {
+      throw new AppError(CODES.VALIDATION_FAILED, '评论内容不能为空', {})
+    }
+    const info = db
+      .prepare('INSERT INTO comments (node_id,repo,file_path,commit_sha,line_start,line_end,snippet,content,author,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(nodeId, repo, filePath || '', commitSha, Number(lineStart) || 0, Number(lineEnd) || 0, snippet, content.trim(), actor(by), 'open', now())
+    bumpRevision()
+    return commentVO(db.prepare('SELECT * FROM comments WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function listComments(nodeId, { filePath = null } = {}) {
+    rawNode(nodeId)
+    if (filePath) {
+      return db.prepare('SELECT * FROM comments WHERE node_id = ? AND file_path = ? ORDER BY line_start, id')
+        .all(nodeId, filePath)
+        .map(commentVO)
+    }
+    return db.prepare('SELECT * FROM comments WHERE node_id = ? ORDER BY file_path, line_start, id')
+      .all(nodeId)
+      .map(commentVO)
+  }
+
+  /** 按文件（可选 commit）全库查——插件在 diff 里展示时用 */
+  function listCommentsByFile(filePath, { commitSha = null } = {}) {
+    if (commitSha) {
+      return db.prepare('SELECT * FROM comments WHERE file_path = ? AND commit_sha = ? ORDER BY line_start, id')
+        .all(filePath, commitSha)
+        .map(commentVO)
+    }
+    return db.prepare('SELECT * FROM comments WHERE file_path = ? ORDER BY line_start, id')
+      .all(filePath)
+      .map(commentVO)
+  }
+
+  function updateComment(id, { status = null, content = null } = {}) {
+    const r = db.prepare('SELECT * FROM comments WHERE id = ?').get(Number(id))
+    if (!r) {
+      throw new AppError(CODES.NOT_FOUND, `评论 ${id} 不存在`, { id })
+    }
+    db.prepare('UPDATE comments SET status = ?, content = ? WHERE id = ?')
+      .run(status || r.status, content != null ? content : r.content, Number(id))
+    bumpRevision()
+    return commentVO(db.prepare('SELECT * FROM comments WHERE id = ?').get(Number(id)))
+  }
+
+  function deleteComment(id) {
+    db.prepare('DELETE FROM comments WHERE id = ?').run(Number(id))
+    bumpRevision()
+  }
+
+  // agent 运行记录（测试节点：写提示词触发 agent）
 
   function agentRunVO(r) {
     return {
@@ -1004,6 +1075,12 @@ export function createStore(db, options = {}) {
     listCommitsWithNode,
     findAncestorOfType,
     dedupeCommits,
+    // comments（diff 行级评论）
+    createComment,
+    listComments,
+    listCommentsByFile,
+    updateComment,
+    deleteComment,
     // agent runs（测试节点）
     createAgentRun,
     appendAgentRunOutput,

@@ -420,6 +420,53 @@ export function createMcpServer({ store }) {
   })
 
   server.tool(
+    'comment_add',
+    '添加 diff 行级评论（文件路径必填；行号/片段可选）',
+    {
+      node: z.union([z.number(), z.string()]),
+      filePath: z.string(),
+      content: z.string(),
+      repo: z.string().optional(),
+      commitSha: z.string().optional(),
+      lineStart: z.number().optional(),
+      lineEnd: z.number().optional(),
+      snippet: z.string().optional()
+    },
+    async ({ node, filePath, content, repo, commitSha, lineStart, lineEnd, snippet }) => {
+      const n = store.resolveRef(String(node))
+      const c = store.createComment(n.id, { repo, filePath, commitSha, lineStart, lineEnd, snippet, content }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(c, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'comment_list',
+    '列出评论（给 node 按节点查；或给 filePath 按文件全库查）',
+    { node: z.union([z.number(), z.string()]).optional(), filePath: z.string().optional(), commitSha: z.string().optional() },
+    async ({ node, filePath, commitSha }) => {
+      const list = node != null
+        ? store.listComments(store.resolveRef(String(node)).id, { filePath: filePath || null })
+        : store.listCommentsByFile(filePath || '', { commitSha: commitSha || null })
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'comment_update',
+    '更新评论（状态 open/resolved 或修改内容）',
+    { id: z.number(), status: z.enum(['open', 'resolved']).optional(), content: z.string().optional() },
+    async ({ id, status, content }) => {
+      const c = store.updateComment(id, { status, content })
+      return { content: [{ type: 'text', text: JSON.stringify(c, null, 2) }] }
+    }
+  )
+
+  server.tool('comment_remove', '删除评论', { id: z.number() }, async ({ id }) => {
+    store.deleteComment(id)
+    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, id }, null, 2) }] }
+  })
+
+  server.tool(
     'agent_run_update',
     '回写 agent 运行结果（Qoder IDE 完成任务后调用：追加输出 + 置为 success/failed/timeout）',
     { id: z.number(), status: z.enum(['success', 'failed', 'timeout']), output: z.string().optional() },

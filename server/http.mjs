@@ -302,6 +302,96 @@ export function createApp({ store }) {
     wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self', branches: req.query.branches === 'true' })))
   )
 
+  // ---------- comments（diff 行级评论） ----------
+  app.post(
+    '/api/nodes/:id/comments',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(store.createComment(node.id, {
+        repo: b.repo,
+        filePath: b.filePath,
+        commitSha: b.commitSha,
+        lineStart: b.lineStart,
+        lineEnd: b.lineEnd,
+        snippet: b.snippet,
+        content: b.content
+      }, actorOf(req)))
+    })
+  )
+  app.get(
+    '/api/nodes/:id/comments',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(store.listComments(node.id, { filePath: req.query.filePath || null }))
+    })
+  )
+  app.get(
+    '/api/comments',
+    wrap((req, res) => {
+      res.json(store.listCommentsByFile(req.query.filePath || '', { commitSha: req.query.commitSha || null }))
+    })
+  )
+  app.patch(
+    '/api/comments/:cid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(store.updateComment(Number(req.params.cid), { status: b.status, content: b.content }))
+    })
+  )
+  app.delete(
+    '/api/comments/:cid',
+    wrap((req, res) => {
+      store.deleteComment(Number(req.params.cid))
+      res.json({ ok: true })
+    })
+  )
+
+  // ---------- comments（diff 行级评论） ----------
+  app.post(
+    '/api/nodes/:id/comments',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(store.createComment(node.id, {
+        repo: b.repo,
+        filePath: b.filePath,
+        commitSha: b.commitSha,
+        lineStart: b.lineStart,
+        lineEnd: b.lineEnd,
+        snippet: b.snippet,
+        content: b.content
+      }, actorOf(req)))
+    })
+  )
+  app.get(
+    '/api/nodes/:id/comments',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(store.listComments(node.id, { filePath: req.query.filePath || null }))
+    })
+  )
+  app.get(
+    '/api/comments',
+    wrap((req, res) => {
+      res.json(store.listCommentsByFile(req.query.filePath || '', { commitSha: req.query.commitSha || null }))
+    })
+  )
+  app.patch(
+    '/api/comments/:cid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(store.updateComment(Number(req.params.cid), { status: b.status, content: b.content }))
+    })
+  )
+  app.delete(
+    '/api/comments/:cid',
+    wrap((req, res) => {
+      store.deleteComment(Number(req.params.cid))
+      res.json({ ok: true })
+    })
+  )
+
   // ---------- agent 运行（测试节点：写提示词触发 agent） ----------
 
   app.post(

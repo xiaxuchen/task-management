@@ -409,6 +409,119 @@ public class TaskBoardPanel extends JPanel {
         return md.toString();
     }
 
+    // ---------- diff 行级评论 ----------
+
+    /** 取"当前 diff 编辑器的文件路径 + 选中行范围 + 片段"（非 diff 编辑或取不到返回 null） */
+    private String[] diffFileAndLines(com.intellij.openapi.editor.Editor editor) {
+        try {
+            VirtualFile vf = editor.getVirtualFile();
+            String path = null;
+            if (vf instanceof com.intellij.diff.editor.ChainDiffVirtualFile) {
+                path = DiffOpener.currentDiffFilePath(vf);
+            } else if (vf instanceof com.intellij.testFramework.LightVirtualFile) {
+                VirtualFile chainVf = DiffOpener.currentFile();
+                if (chainVf != null && chainVf.isValid()) {
+                    path = DiffOpener.currentDiffFilePath(chainVf);
+                }
+            } else if (vf != null) {
+                path = vf.getPath();
+            }
+            if (path == null) {
+                return null;
+            }
+            int startLine = editor.getSelectionModel().getSelectionStartPosition() != null
+                    ? editor.getSelectionModel().getSelectionStartPosition().line + 1 : 1;
+            int endLine = editor.getSelectionModel().getSelectionEndPosition() != null
+                    ? editor.getSelectionModel().getSelectionEndPosition().line + 1 : startLine;
+            String snippet = editor.getSelectionModel().hasSelection()
+                    ? editor.getSelectionModel().getSelectedText() : "";
+            if (snippet != null && snippet.length() > 500) {
+                snippet = snippet.substring(0, 500);
+            }
+            return new String[]{path, String.valueOf(startLine), String.valueOf(endLine), snippet == null ? "" : snippet};
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 在当前 diff 选中处添加评论（文件 + 行号 + 片段 → task-board） */
+    private void addCommentOnDiff() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个节点");
+            return;
+        }
+        com.intellij.openapi.editor.Editor editor =
+                FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+        if (editor == null) {
+            reviewSummary.setText("请在 diff 编辑器里选中要评论的行");
+            return;
+        }
+        String[] info = diffFileAndLines(editor);
+        if (info == null) {
+            reviewSummary.setText("当前编辑器不是 task-board 的 diff 视图");
+            return;
+        }
+        String content = Messages.showMultilineInputDialog(project,
+                "评论内容（" + info[0] + " 第 " + info[1] + "-" + info[2] + " 行）：",
+                "添加评论", "", null, null);
+        if (content == null || content.trim().isEmpty()) {
+            return;
+        }
+        final long nodeId = currentNodeId;
+        final String[] finfo = info;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                String sha = null;
+                List<CommitItem> sel = checkedCommits();
+                if (sel.size() == 1) {
+                    sha = sel.get(0).sha;
+                }
+                api.addComment(nodeId, finfo[0], sha, Integer.parseInt(finfo[1]), Integer.parseInt(finfo[2]), finfo[3], content.trim());
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("评论已保存：" + finfo[0] + " 第 " + finfo[1] + " 行"));
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("保存评论失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 查看本节点的全部评论（弹窗列表） */
+    private void showComments() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个节点");
+            return;
+        }
+        final long nodeId = currentNodeId;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonArray list = api.listComments(nodeId);
+                StringBuilder sb = new StringBuilder();
+                int open = 0;
+                for (JsonElement el : list) {
+                    JsonObject c = el.getAsJsonObject();
+                    String st = str(c, "status", "open");
+                    if ("open".equals(st)) {
+                        open++;
+                    }
+                    sb.append("open".equals(st) ? "●" : "✓").append(" ")
+                            .append(str(c, "filePath", "")).append(" L")
+                            .append(c.get("lineStart").getAsInt());
+                    if (c.get("lineEnd").getAsInt() > c.get("lineStart").getAsInt()) {
+                        sb.append("-").append(c.get("lineEnd").getAsInt());
+                    }
+                    sb.append("  ").append(str(c, "content", "")).append("\n");
+                }
+                final String text = sb.length() == 0 ? "（暂无评论——在 diff 里选中行后点「评论」添加）" : sb.toString();
+                final int openCount = open;
+                final int total = list.size();
+                SwingUtilities.invokeLater(() -> Messages.showMultilineInputDialog(project,
+                        "本节点评论（待处理 " + openCount + " / 共 " + total + "）：",
+                        "评论列表", text, null, null));
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("加载评论失败：" + ex.getMessage()));
+            }
+        });
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -1432,6 +1545,9 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
         addAction(group, "派给 Qoder", "生成任务提示词并打开 Qoder IDE 面板（提示词已复制，粘贴+回车即发送）", AllIcons.Actions.RunAll, this::dispatchToQoder);
+        group.add(Separator.getInstance());
+        addAction(group, "评论", "在 diff 选中处添加评论（记录文件+行号，存入 task-board）", AllIcons.General.Note, this::addCommentOnDiff);
+        addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         ActionToolbar toolbar = reviewToolbar;
