@@ -79,6 +79,11 @@ public class DiffOpener {
         showChain(project, title, files, focusPath);
     }
 
+    /** 当前链 diff 虚拟文件（未打开时为 null；供显隐按钮判断） */
+    public static VirtualFile currentFile() {
+        return lastDiffFile;
+    }
+
     /** 关闭上次由本插件打开的链 diff（对照布局重铺前清场用） */
     public static void closeCurrent(Project project) {
         try {

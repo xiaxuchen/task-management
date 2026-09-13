@@ -363,6 +363,24 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
+    /** 显示/隐藏 diff 栏：隐藏=关 diff tab（主区空后平台自动收起该分屏，文档全宽）；显示=重铺对照布局恢复 */
+    private void toggleDiffPane() {
+        try {
+            FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+            VirtualFile diffVf = DiffOpener.currentFile();
+            boolean hasDiff = diffVf != null && diffVf.isValid() && fem.getEditors(diffVf).length > 0;
+            if (hasDiff) {
+                DiffOpener.closeCurrent(project);
+                reviewSummary.setText("已隐藏 diff 栏——再点「diff 窗口」恢复（重铺对照布局）");
+            } else {
+                reviewSummary.setText("正在恢复对照布局（diff 栏）…");
+                openReviewLayout();
+            }
+        } catch (Exception ex) {
+            reviewSummary.setText("切换 diff 栏失败：" + ex.getMessage());
+        }
+    }
+
     /** 显示/隐藏右侧文档窗口（需求概设/PRD）：隐藏=关掉右列 tab（空组自动收起，diff 全宽）；再点=重建右列 */
     private void toggleDocsPane() {
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
@@ -889,6 +907,7 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "对照布局", "一键铺排：左 diff + 右列（需求概设⇄PRD） + TaskBoard底部（比例可在「布局设置」中调整）", AllIcons.Actions.SplitVertically, this::openReviewLayout);
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
         addAction(group, "文档窗口", "显示/隐藏右侧文档窗口（需求概设与 PRD；隐藏后 diff 全宽）", AllIcons.Actions.Preview, this::toggleDocsPane);
+        addAction(group, "diff 窗口", "显示/隐藏左侧 diff 栏（隐藏=关 diff；显示=重铺对照布局）", AllIcons.Actions.SplitVertically, this::toggleDiffPane);
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
         addAction(group, "派给 Qoder", "生成任务提示词并打开 Qoder IDE 面板（提示词已复制，粘贴+回车即发送）", AllIcons.Actions.RunAll, this::dispatchToQoder);
