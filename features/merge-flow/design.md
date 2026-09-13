@@ -32,6 +32,17 @@
   失败/冲突弹「无法标记通过」+ 明细
 - 「合入状态」按钮：弹窗（需求分支 / 已合入 N/M / 逐任务 ✓✗ 逐分支明细）
 
+## MR 式合并预览与分支展示（已交付）
+
+- **需求分支展示**：进节点时状态栏显示 `【4.1】xxx　🌿 需求分支：feature-transfer`
+  （`findReqBranch`：沿父链找 subreq.attrs.reqBranch）
+- **合并预览**（「合并预览」按钮）：对每个待合并 (repo, source→target)：
+  - 已合入 → `✓ …（已合入，无需合并）`
+  - `git diff --stat <target>...<source>` → 将引入的变更文件与 +/- 统计
+  - `git merge-tree --write-tree <target> <source>` → **冲突预判**（⚠ 冲突文件清单）
+  - 越权/无本地路径 → ✗ 原因
+  - API：`POST /api/nodes/:id/merge-preview`（ops.previewMerges / git.previewMerge）
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
