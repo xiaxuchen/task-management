@@ -76,11 +76,11 @@
           <el-table-column prop="sha" label="SHA" width="84" />
           <el-table-column prop="repo" label="仓库" width="96" />
           <el-table-column prop="note" label="说明" min-width="100" />
-          <el-table-column label="合并" width="168">
+          <el-table-column label="合并" width="190">
             <template #default="{ row }">
-              <el-tag size="small" :type="tagType(trackOf(row).test)" :effect="tagEffect(trackOf(row).test)" :title="badgeTitle(trackOf(row).test, '测试')">测试</el-tag>
-              <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).pre)" :effect="tagEffect(trackOf(row).pre)" :title="badgeTitle(trackOf(row).pre, '预发')">预发</el-tag>
-              <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).release)" :effect="tagEffect(trackOf(row).release)" :title="badgeTitle(trackOf(row).release, '上线')">上线</el-tag>
+              <el-tag size="small" :type="tagType(trackOf(row).test)" :effect="tagEffect(trackOf(row).test)" :title="badgeTitle(trackOf(row).test, '测试')">{{ statusSymbol(trackOf(row).test) }}测试</el-tag>
+              <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).pre)" :effect="tagEffect(trackOf(row).pre)" :title="badgeTitle(trackOf(row).pre, '预发')">{{ statusSymbol(trackOf(row).pre) }}预发</el-tag>
+              <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).release)" :effect="tagEffect(trackOf(row).release)" :title="badgeTitle(trackOf(row).release, '上线')">{{ statusSymbol(trackOf(row).release) }}上线</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="64">
@@ -155,6 +155,12 @@ function tagType(t) {
 
 function tagEffect(t) {
   return !t || t.contained === null ? 'plain' : 'light'
+}
+
+/** 状态符号：✓ 已合入 / ✗ 未合入 / 空（未配置，靠灰色描边区分） */
+function statusSymbol(t) {
+  if (!t || t.contained === null) return ''
+  return t.contained ? '✓ ' : '✗ '
 }
 
 async function loadTracks() {
