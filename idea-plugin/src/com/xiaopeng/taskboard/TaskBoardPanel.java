@@ -1001,6 +1001,65 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
+    /** 上跳合并：子需求「需求分支」→ feature-merge（可增量重复合：已合入跳过，有新内容再合） */
+    private void mergeToFeatureMerge() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个子需求节点");
+            return;
+        }
+        final long nodeId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonObject res = api.mergeUpstream(nodeId, "feature-merge");
+                JsonArray results = res.getAsJsonArray("results");
+                StringBuilder sb = new StringBuilder();
+                boolean anyFail = false;
+                boolean anyMerged = false;
+                if (results != null) {
+                    for (JsonElement el : results) {
+                        JsonObject r = el.getAsJsonObject();
+                        String repo = str(r, "repo", "");
+                        boolean ok = r.has("ok") && r.get("ok").getAsBoolean();
+                        if (ok && r.has("alreadyMerged") && r.get("alreadyMerged").getAsBoolean()) {
+                            sb.append("✓ ").append(repo).append("（已合入，跳过）\n");
+                        } else if (ok) {
+                            anyMerged = true;
+                            sb.append("✓ ").append(repo).append(" 已合并（mergeSha ")
+                                    .append(str(r, "mergeSha", "").length() > 9 ? str(r, "mergeSha", "").substring(0, 9) : str(r, "mergeSha", ""))
+                                    .append("）\n");
+                        } else {
+                            anyFail = true;
+                            sb.append("✗ ").append(repo).append("：").append(str(r, "reason", ""));
+                            if (r.has("message")) {
+                                sb.append(" ").append(str(r, "message", "").split("\n")[0]);
+                            }
+                            sb.append("\n");
+                        }
+                    }
+                }
+                final String text = "上跳合并（" + str(res, "sourceBranch", "") + " → " + str(res, "targetBranch", "") + "）：\n\n" + sb;
+                final boolean fail = anyFail;
+                final boolean merged = anyMerged;
+                SwingUtilities.invokeLater(() -> {
+                    if (fail) {
+                        Messages.showWarningDialog(project, text + "\n有冲突/失败——请先在终端解决后重试。", "合并到 feature-merge");
+                        return;
+                    }
+                    if (!merged) {
+                        reviewSummary.setText("已是最新（无新增内容需合并）：" + nodeName);
+                        Messages.showInfoMessage(project, text + "\n无新增内容，无需重复合并。", "合并到 feature-merge");
+                        return;
+                    }
+                    reviewSummary.setText("已合并到 feature-merge：" + nodeName);
+                    Messages.showInfoMessage(project, text, "合并到 feature-merge 完成");
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("上跳合并失败：" + ex.getMessage()));
+            }
+        });
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -2031,6 +2090,7 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
         addAction(group, "合入状态", "查看子任务开发分支是否已合入需求分支（组/子需求级）", AllIcons.Actions.Diff, this::showMergeStatus);
         addAction(group, "合并预览", "MR 式预览：将合入的变更文件/增删统计 + 冲突预判（同意前先看）", AllIcons.Actions.Preview, this::showMergePreview);
+        addAction(group, "合并到 feature-merge", "子需求：把需求分支合入集成分支（已合入跳过；有新内容可再次合并）", AllIcons.Actions.Upload, this::mergeToFeatureMerge);
         addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.General.InspectionsError, this::reportDefect);
         addAction(group, "分析根因", "缺陷节点：派 Qoder 做根因分析与修复方案（结果回写文档）", AllIcons.Actions.Find, this::analyzeDefectWithQoder);
         addAction(group, "批准修复", "缺陷节点：批准「根因与修复方案」（批准后才允许派单修复）", AllIcons.Actions.Checked, this::approveDefectFix);

@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -336,6 +336,15 @@ export function createApp({ store }) {
     wrap(async (req, res) => {
       const node = store.resolveRef(refOf(req))
       res.json(await previewMerges(store, node.id))
+    })
+  )
+
+  app.post(
+    '/api/nodes/:id/merge-upstream',
+    wrap(async (req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const { targetBranch } = req.body || {}
+      res.json(await mergeUpstream(store, node.id, { targetBranch: targetBranch || 'feature-merge' }))
     })
   )
 

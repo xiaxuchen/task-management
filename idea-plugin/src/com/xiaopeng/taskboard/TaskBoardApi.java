@@ -86,6 +86,24 @@ public class TaskBoardApi {
         return send(req);
     }
 
+    /**
+     * 上跳合并：子需求「需求分支」→ 集成分支（默认 feature-merge）。
+     * 可增量重复合：已合入跳过；有新内容→再 merge。
+     */
+    public JsonObject mergeUpstream(long nodeId, String targetBranch) throws Exception {
+        JsonObject body = new JsonObject();
+        if (targetBranch != null && !targetBranch.isEmpty()) {
+            body.addProperty("targetBranch", targetBranch);
+        }
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/merge-upstream"))
+                .timeout(Duration.ofSeconds(180))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
     /** 合并预览（MR 式）：将合入的变更统计 + 冲突预判 */
     public JsonObject mergePreview(long nodeId) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/merge-preview"))

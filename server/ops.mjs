@@ -698,6 +698,38 @@ export async function getMergeStatus(store, nodeRef) {
 }
 
 /**
+ * 上跳合并：把子需求的「需求分支」合并到集成分支（默认 feature-merge）。
+ * 支持增量重复合：首次全量、后续只合新增（is-ancestor 已合入→跳过；有新内容→再 merge）。
+ */
+export async function mergeUpstream(store, nodeRef, { targetBranch = 'feature-merge' } = {}) {
+  const node = store.resolveRef(String(nodeRef))
+  const subreq = node.type === 'subreq' ? node : store.findAncestorOfType(node.id, 'subreq')
+  const sourceBranch = subreq ? ((store.getAttrs(subreq.id) || {}).reqBranch || null) : null
+  if (!sourceBranch) {
+    throw new AppError(CODES.VALIDATION_FAILED, '未配置需求分支（subreq.attrs.reqBranch）', {})
+  }
+  // 收集子树提交出现过的仓库
+  const commits = store.listCommits(node.id, { subtree: true })
+  const repos = [...new Set(commits.map((c) => c.repo).filter(Boolean))]
+  const results = []
+  for (const repo of repos) {
+    const repoRow = store.listRepos().find((r) => r.name === repo)
+    if (!repoRow || !repoRow.localPath) {
+      results.push({ repo, source: sourceBranch, target: targetBranch, ok: false, reason: 'no_local_path' })
+      continue
+    }
+    try {
+      const dir = resolveRepoDir(repoRow)
+      const r = await gitMergeBranch(dir, sourceBranch, targetBranch, `merge: ${sourceBranch} -> ${targetBranch}（task-board 上跳合并）`)
+      results.push({ repo, source: sourceBranch, target: targetBranch, ...r })
+    } catch (e) {
+      results.push({ repo, source: sourceBranch, target: targetBranch, ok: false, reason: 'error', message: String((e && e.message) || e).slice(0, 500) })
+    }
+  }
+  return { node: { id: node.id, name: node.name }, subreq: subreq ? { id: subreq.id, name: subreq.name } : null, sourceBranch, targetBranch, results }
+}
+
+/**
  * 审批合并：把子任务（含子树）的提交所在开发分支，合并到所属子需求的「需求分支」（主仓库执行）。
  * 安全判定：① 已合入→跳过（防重复 merge）② 未解决冲突→拒绝（防带冲突 merge）。
  */
