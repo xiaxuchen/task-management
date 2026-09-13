@@ -363,6 +363,79 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
+    /** 显示/隐藏右侧文档窗口（需求概设/PRD）：隐藏=关掉右列 tab（空组自动收起，diff 全宽）；再点=重建右列 */
+    private void toggleDocsPane() {
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonArray docs = currentNodeId >= 0 ? api.nodeDocuments(currentNodeId) : null;
+                String prdUrl = null;
+                try {
+                    prdUrl = currentNodeId >= 0 ? findPrdUrl(currentNodeId) : null;
+                } catch (Exception ignore) {
+                    // 无 PRD 不阻断
+                }
+                final JsonArray finalDocs = docs;
+                final String finalPrdUrl = prdUrl;
+                SwingUtilities.invokeLater(() -> {
+                    try {
+                        FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+                        String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
+                                "taskboard-docs", "taskboard-需求概设.md").toString();
+                        VirtualFile docsVf = LocalFileSystem.getInstance().findFileByPath(docsPath);
+                        boolean hasDocs = docsVf != null && fem.getEditors(docsVf).length > 0;
+                        VirtualFile prdVf = PrdOpener.currentFile();
+                        boolean hasPrd = prdVf != null && prdVf.isValid() && fem.getEditors(prdVf).length > 0;
+                        if (hasDocs || hasPrd) {
+                            // 隐藏：关闭文档/PRD tab（右列空后平台会自动收起该分屏，diff 变全宽）
+                            if (docsVf != null) {
+                                fem.closeFile(docsVf);
+                            }
+                            PrdOpener.closeCurrent(project);
+                            reviewSummary.setText("已隐藏文档窗口（diff 全宽）——再点「文档窗口」恢复");
+                            return;
+                        }
+                        // 显示：重建右列（文档 + PRD tab）
+                        if ((finalDocs == null || finalDocs.size() == 0) && finalPrdUrl == null) {
+                            reviewSummary.setText("该节点暂无文档且未配置 PRD 链接");
+                            return;
+                        }
+                        EditorWindow main = fem.getCurrentWindow();
+                        EditorWindow docWin = null;
+                        if (finalDocs != null && finalDocs.size() > 0 && main != null) {
+                            VirtualFile vf = buildDocsFile(finalDocs, finalPrdUrl);
+                            if (vf != null) {
+                                docWin = main.split(JSplitPane.HORIZONTAL_SPLIT, true, vf, true);
+                            }
+                        }
+                        if (finalPrdUrl != null) {
+                            PrdVirtualFile prd = PrdOpener.prepare(project, finalPrdUrl, currentNodeName);
+                            if (prd != null) {
+                                if (docWin != null) {
+                                    fem.openFile(prd, false);
+                                } else {
+                                    fem.openFile(prd, true);
+                                }
+                            }
+                        }
+                        // 宽度与「布局设置」一致
+                        final EditorWindow mainRef = main;
+                        Timer t = new Timer(400, ev -> {
+                            ((Timer) ev.getSource()).stop();
+                            applyTopSplitterProportion(mainRef, LayoutPrefs.diffRatio());
+                        });
+                        t.setRepeats(false);
+                        t.start();
+                        reviewSummary.setText("已显示文档窗口（需求概设/PRD，用「文档/PRD」切换）");
+                    } catch (Exception ex) {
+                        reviewSummary.setText("切换文档窗口失败：" + ex.getMessage());
+                    }
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("切换文档窗口失败：" + ex.getMessage()));
+            }
+        });
+    }
+
     /** 在「需求概设」与「飞书 PRD」之间切换（右列同一组内的两个 tab） */
     private void toggleDocsPrd() {
         if (currentNodeId < 0) {
@@ -815,6 +888,7 @@ public class TaskBoardPanel extends JPanel {
         group.add(Separator.getInstance());
         addAction(group, "对照布局", "一键铺排：左 diff + 右列（需求概设⇄PRD） + TaskBoard底部（比例可在「布局设置」中调整）", AllIcons.Actions.SplitVertically, this::openReviewLayout);
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
+        addAction(group, "文档窗口", "显示/隐藏右侧文档窗口（需求概设与 PRD；隐藏后 diff 全宽）", AllIcons.Actions.Preview, this::toggleDocsPane);
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
         addAction(group, "派给 Qoder", "生成任务提示词并打开 Qoder IDE 面板（提示词已复制，粘贴+回车即发送）", AllIcons.Actions.RunAll, this::dispatchToQoder);
