@@ -381,6 +381,13 @@ public class TaskBoardPanel extends JPanel {
     private void showDiffPane() {
         try {
             FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+            // 已有实例：直接激活，避免在新组再开一份副本
+            VirtualFile existing = DiffOpener.currentFile();
+            if (existing != null && existing.isValid() && fem.getEditors(existing).length > 0) {
+                fem.openFile(existing, true);
+                reviewSummary.setText("已显示 diff 栏");
+                return;
+            }
             if (fem.getWindows().length <= 1) {
                 reviewSummary.setText("正在恢复对照布局（diff 栏）…");
                 openReviewLayout();
@@ -416,10 +423,49 @@ public class TaskBoardPanel extends JPanel {
             String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                     "taskboard-docs", "taskboard-需求概设.md").toString();
             VirtualFile docsVf = LocalFileSystem.getInstance().findFileByPath(docsPath);
+            // 先定位"文档所在的编辑器组"（关内容前）
+            EditorWindow docWin = null;
+            VirtualFile prdBef = PrdOpener.currentFile();
+            for (EditorWindow w : fem.getWindows()) {
+                for (VirtualFile f : w.getFiles()) {
+                    if ((docsVf != null && f.equals(docsVf))
+                            || (prdBef != null && prdBef.isValid() && f.equals(prdBef))) {
+                        docWin = w;
+                        break;
+                    }
+                }
+                if (docWin != null) {
+                    break;
+                }
+            }
             if (docsVf != null) {
                 fem.closeFile(docsVf);
             }
             PrdOpener.closeCurrent(project);
+            // 清理：若该组里残留"我们的 diff 副本"，关掉它（避免收起文档后露出重复 diff）
+            VirtualFile diff = DiffOpener.currentFile();
+            if (docWin != null && diff != null && diff.isValid()) {
+                try {
+                    for (VirtualFile f : docWin.getFiles()) {
+                        if (f.equals(diff)) {
+                            fem.closeFile(diff, docWin);
+                            break;
+                        }
+                    }
+                } catch (Throwable ignore) {
+                    // 组已失效等情况忽略
+                }
+            }
+            // 该组已空则移除空分屏
+            if (docWin != null) {
+                try {
+                    if (docWin.getFiles().length == 0) {
+                        docWin.removeFromSplitter();
+                    }
+                } catch (Throwable ignore) {
+                    // 平台可能已自动移除
+                }
+            }
             reviewSummary.setText("已隐藏文档窗口（勾选「文档」可恢复）");
         } catch (Exception ex) {
             reviewSummary.setText("隐藏文档窗口失败：" + ex.getMessage());
