@@ -363,26 +363,71 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
-    /** 显示/隐藏 diff 栏：隐藏=关 diff tab（主区空后平台自动收起该分屏，文档全宽）；显示=重铺对照布局恢复 */
-    private void toggleDiffPane() {
+    /** diff 栏显隐（开关回调）：勾选=显示 */
+    private void setDiffPaneVisible(boolean visible) {
         try {
-            FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
-            VirtualFile diffVf = DiffOpener.currentFile();
-            boolean hasDiff = diffVf != null && diffVf.isValid() && fem.getEditors(diffVf).length > 0;
-            if (hasDiff) {
-                DiffOpener.closeCurrent(project);
-                reviewSummary.setText("已隐藏 diff 栏——再点「diff 窗口」恢复（重铺对照布局）");
+            if (visible) {
+                showDiffPane();
             } else {
-                reviewSummary.setText("正在恢复对照布局（diff 栏）…");
-                openReviewLayout();
+                DiffOpener.closeCurrent(project);
+                reviewSummary.setText("已隐藏 diff 栏（勾选「diff」可恢复）");
             }
         } catch (Exception ex) {
             reviewSummary.setText("切换 diff 栏失败：" + ex.getMessage());
         }
     }
 
+    /** 显示 diff 栏：无并排布局时重铺对照布局；否则打开当前聚合变更 */
+    private void showDiffPane() {
+        try {
+            FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+            if (fem.getWindows().length <= 1) {
+                reviewSummary.setText("正在恢复对照布局（diff 栏）…");
+                openReviewLayout();
+                return;
+            }
+            List<DiffOpener.FileDiff> files = aggregateFiles;
+            if (files != null && !files.isEmpty()) {
+                DiffOpener.openCombined(project, aggregateTitle, files, null);
+            } else {
+                CommitItem sel = selectedCommit();
+                if (sel != null) {
+                    DiffOpener.open(project, api, sel.cid, sel.sha, null);
+                } else {
+                    reviewSummary.setText("当前没有可展示的变更（先选节点/勾选提交）");
+                    return;
+                }
+            }
+            reviewSummary.setText("已显示 diff 栏");
+        } catch (Exception ex) {
+            reviewSummary.setText("显示 diff 失败：" + ex.getMessage());
+        }
+    }
+
     /** 显示/隐藏右侧文档窗口（需求概设/PRD）：隐藏=关掉右列 tab（空组自动收起，diff 全宽）；再点=重建右列 */
-    private void toggleDocsPane() {
+    /** 文档窗口显隐（开关回调）：勾选=显示 */
+    private void setDocsPaneVisible(boolean visible) {
+        if (visible) {
+            showDocsPane();
+            return;
+        }
+        try {
+            FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+            String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
+                    "taskboard-docs", "taskboard-需求概设.md").toString();
+            VirtualFile docsVf = LocalFileSystem.getInstance().findFileByPath(docsPath);
+            if (docsVf != null) {
+                fem.closeFile(docsVf);
+            }
+            PrdOpener.closeCurrent(project);
+            reviewSummary.setText("已隐藏文档窗口（勾选「文档」可恢复）");
+        } catch (Exception ex) {
+            reviewSummary.setText("隐藏文档窗口失败：" + ex.getMessage());
+        }
+    }
+
+    /** 显示文档窗口：重建右列（需求概设 + PRD 两个 tab，点 tab 切换） */
+    private void showDocsPane() {
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 JsonArray docs = currentNodeId >= 0 ? api.nodeDocuments(currentNodeId) : null;
@@ -396,27 +441,14 @@ public class TaskBoardPanel extends JPanel {
                 final String finalPrdUrl = prdUrl;
                 SwingUtilities.invokeLater(() -> {
                     try {
-                        FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
-                        String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
-                                "taskboard-docs", "taskboard-需求概设.md").toString();
-                        VirtualFile docsVf = LocalFileSystem.getInstance().findFileByPath(docsPath);
-                        boolean hasDocs = docsVf != null && fem.getEditors(docsVf).length > 0;
-                        VirtualFile prdVf = PrdOpener.currentFile();
-                        boolean hasPrd = prdVf != null && prdVf.isValid() && fem.getEditors(prdVf).length > 0;
-                        if (hasDocs || hasPrd) {
-                            // 隐藏：关闭文档/PRD tab（右列空后平台会自动收起该分屏，diff 变全宽）
-                            if (docsVf != null) {
-                                fem.closeFile(docsVf);
-                            }
-                            PrdOpener.closeCurrent(project);
-                            reviewSummary.setText("已隐藏文档窗口（diff 全宽）——再点「文档窗口」恢复");
-                            return;
-                        }
-                        // 显示：重建右列（文档 + PRD tab）
                         if ((finalDocs == null || finalDocs.size() == 0) && finalPrdUrl == null) {
                             reviewSummary.setText("该节点暂无文档且未配置 PRD 链接");
+                            if (reviewToolbar != null) {
+                                reviewToolbar.updateActionsImmediately();
+                            }
                             return;
                         }
+                        FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
                         EditorWindow main = fem.getCurrentWindow();
                         EditorWindow docWin = null;
                         if (finalDocs != null && finalDocs.size() > 0 && main != null) {
@@ -443,13 +475,13 @@ public class TaskBoardPanel extends JPanel {
                         });
                         t.setRepeats(false);
                         t.start();
-                        reviewSummary.setText("已显示文档窗口（需求概设/PRD，用「文档/PRD」切换）");
+                        reviewSummary.setText("已显示文档窗口（需求概设/PRD 两个 tab，点 tab 切换）");
                     } catch (Exception ex) {
-                        reviewSummary.setText("切换文档窗口失败：" + ex.getMessage());
+                        reviewSummary.setText("显示文档窗口失败：" + ex.getMessage());
                     }
                 });
             } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> reviewSummary.setText("切换文档窗口失败：" + ex.getMessage()));
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("显示文档窗口失败：" + ex.getMessage()));
             }
         });
     }
@@ -771,6 +803,8 @@ public class TaskBoardPanel extends JPanel {
 
     /** 上次铺设的顶层 Splitter（供实时应用/记忆比例用） */
     private static com.intellij.openapi.ui.Splitter lastTopSplitter;
+    /** Review 工具条（开关点击后刷新勾选状态） */
+    private ActionToolbar reviewToolbar;
     /** 用户拖动分隔条时自动记住 diff 宽度比例 */
     private static final java.beans.PropertyChangeListener RATIO_SAVER = evt -> {
         if ("proportion".equals(evt.getPropertyName()) && evt.getSource() == lastTopSplitter
@@ -778,6 +812,30 @@ public class TaskBoardPanel extends JPanel {
             LayoutPrefs.setDiffRatio(f);
         }
     };
+
+    /** 便捷：往动作组加一个带图标的开关（勾选=显示；点击后立即刷新工具条状态） */
+    private void addToggle(DefaultActionGroup group, String text, String desc, Icon icon,
+                           java.util.function.BooleanSupplier isOn,
+                           java.util.function.Consumer<Boolean> setOn) {
+        group.add(new ToggleAction(text, desc, icon) {
+            @Override
+            public boolean isSelected(@NotNull AnActionEvent e) {
+                try {
+                    return isOn.getAsBoolean();
+                } catch (Throwable t) {
+                    return false;
+                }
+            }
+
+            @Override
+            public void setSelected(@NotNull AnActionEvent e, boolean state) {
+                setOn.accept(state);
+                if (reviewToolbar != null) {
+                    reviewToolbar.updateActionsImmediately();
+                }
+            }
+        });
+    }
 
     /** 便捷：往动作组加一个带图标动作 */
     private void addAction(DefaultActionGroup group, String text, String desc, Icon icon, Runnable runnable) {
@@ -905,14 +963,34 @@ public class TaskBoardPanel extends JPanel {
         });
         group.add(Separator.getInstance());
         addAction(group, "对照布局", "一键铺排：左 diff + 右列（需求概设⇄PRD） + TaskBoard底部（比例可在「布局设置」中调整）", AllIcons.Actions.SplitVertically, this::openReviewLayout);
-        addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
-        addAction(group, "文档窗口", "显示/隐藏右侧文档窗口（需求概设与 PRD；隐藏后 diff 全宽）", AllIcons.Actions.Preview, this::toggleDocsPane);
-        addAction(group, "diff 窗口", "显示/隐藏左侧 diff 栏（隐藏=关 diff；显示=重铺对照布局）", AllIcons.Actions.SplitVertically, this::toggleDiffPane);
+        group.add(Separator.getInstance());
+        addToggle(group, "diff", "勾选显示左侧 diff 栏；取消勾选则隐藏", AllIcons.Actions.Diff,
+                () -> {
+                    VirtualFile vf = DiffOpener.currentFile();
+                    return vf != null && vf.isValid()
+                            && FileEditorManagerEx.getInstanceEx(project).getEditors(vf).length > 0;
+                },
+                this::setDiffPaneVisible);
+        addToggle(group, "文档", "勾选显示右侧文档窗口（需求概设/飞书 PRD）；取消勾选则隐藏", AllIcons.Actions.Preview,
+                () -> {
+                    FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+                    String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
+                            "taskboard-docs", "taskboard-需求概设.md").toString();
+                    VirtualFile docsVf = LocalFileSystem.getInstance().findFileByPath(docsPath);
+                    if (docsVf != null && fem.getEditors(docsVf).length > 0) {
+                        return true;
+                    }
+                    VirtualFile prdVf = PrdOpener.currentFile();
+                    return prdVf != null && prdVf.isValid() && fem.getEditors(prdVf).length > 0;
+                },
+                this::setDocsPaneVisible);
+        group.add(Separator.getInstance());
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
         addAction(group, "派给 Qoder", "生成任务提示词并打开 Qoder IDE 面板（提示词已复制，粘贴+回车即发送）", AllIcons.Actions.RunAll, this::dispatchToQoder);
 
-        ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
+        reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
+        ActionToolbar toolbar = reviewToolbar;
         toolbar.setTargetComponent(this);
 
         onlyPending = new JBCheckBox("仅看待审");
