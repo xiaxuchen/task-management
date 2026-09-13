@@ -58,6 +58,8 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 
 **多选累积**：每次快捷键 → 追加一条到 `selected-snippets.md`（含来源 + 时间）——**支持多个文档/文件同时选中**，池内可累积多条
 
+**高亮与解除（toggle）**：编辑器选中加入后 **高亮标注**（`MarkupModel.addRangeHighlighter` + `EditorColors.SEARCH_RESULT_ATTRIBUTES`，层次 `SELECTION-1`）；**再按一次同选区 → 解除**（移高亮 + `removeFromContextPool` 重写池文件）；内存索引 `textHash(文本) → AddedMark{editor, highlighter}`；JCEF 来源仅入池（无编辑器高亮）
+
 **注入策略**：池 **30 分钟内新鲜 → 无条件注入**（用户"挑了就是要用"）；旧池（≤2h）仅在触发词命中时带
 
 **类结构**：`PrdFileEditor.last()`（静态最近实例）+ `captureJcefSelection(cb)`；`TaskBoardPanel.lastInstance()` + `addSelectionToContextGlobal()` / `appendToContextPool()` / `sourceLabelOf()`
