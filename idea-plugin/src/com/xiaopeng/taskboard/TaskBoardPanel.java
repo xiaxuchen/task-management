@@ -964,6 +964,10 @@ public class TaskBoardPanel extends JPanel {
     private static com.intellij.openapi.ui.Splitter lastTopSplitter;
     /** Review 工具条（开关点击后刷新勾选状态） */
     private ActionToolbar reviewToolbar;
+    /** Select 视图右侧详情面板 */
+    private final javax.swing.JEditorPane selectDetailPane = new javax.swing.JEditorPane();
+    /** 详情已加载的节点 id（避免重复拉取） */
+    private long selectDetailLoadedId = -1;
     /** 选区捕获防抖定时器 */
     private Timer selectionTimer;
     /** 用户拖动分隔条时自动记住 diff 宽度比例 */
@@ -1043,15 +1047,90 @@ public class TaskBoardPanel extends JPanel {
         selectTree.setShowsRootHandles(true);
         selectTree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
         selectTree.setCellRenderer(new SelectTreeRenderer());
-        selectTree.setToolTipText("双击节点进入 Review");
+        selectTree.setToolTipText("单击查看详情，双击进入 Review");
         selectTree.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) enterReviewOnSelection();
             }
         });
-        p.add(ScrollPaneFactory.createScrollPane(selectTree, true), BorderLayout.CENTER);
+        // 单击选中 → 右侧详情（需求/设计/文档/PRD）
+        selectTree.getSelectionModel().addTreeSelectionListener(e -> loadSelectDetail());
+        // 布局：左树右详情
+        selectDetailPane.setEditable(false);
+        selectDetailPane.setContentType("text/html");
+        selectDetailPane.setText("<html><body style='padding:10px;color:#888'>单击节点查看详情（需求 / 设计 / 文档 / PRD）<br><br>双击进入 Review</body></html>");
+        selectDetailPane.addHyperlinkListener(ev -> {
+            if (ev.getEventType() == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
+                try {
+                    BrowserUtil.browse(ev.getURL());
+                } catch (Throwable ignore) {
+                    // 链接打开失败忽略
+                }
+            }
+        });
+        JSplitPane selectSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                ScrollPaneFactory.createScrollPane(selectTree, true),
+                ScrollPaneFactory.createScrollPane(selectDetailPane, true));
+        selectSplit.setDividerLocation(420);
+        selectSplit.setResizeWeight(0.45);
+        p.add(selectSplit, BorderLayout.CENTER);
         return p;
+    }
+
+    /** 单击节点 → 加载详情（需求 / 设计 / 文档 / PRD）到右侧面板 */
+    private void loadSelectDetail() {
+        NodeData d = selectedSelectNode();
+        if (d == null || d.id == selectDetailLoadedId) {
+            return;
+        }
+        selectDetailLoadedId = d.id;
+        selectDetailPane.setText("<html><body style='padding:10px;color:#888'>加载中…（" + esc(d.name) + "）</body></html>");
+        final long id = d.id;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonArray docs = api.nodeDocuments(id);
+                String prdUrl = null;
+                try {
+                    prdUrl = findPrdUrl(id);
+                } catch (Exception ignore) {
+                    // 无 PRD 不阻断
+                }
+                final JsonArray finalDocs = docs;
+                final String finalPrdUrl = prdUrl;
+                SwingUtilities.invokeLater(() -> {
+                    if (id != selectDetailLoadedId) {
+                        return;
+                    }
+                    StringBuilder h = new StringBuilder();
+                    h.append("<html><body style='font-family:sans-serif;padding:10px'>");
+                    h.append("<h2 style='margin:0 0 4px 0'>").append(esc(d.name)).append("</h2>");
+                    h.append("<div style='color:#888;font-size:11px'>id=").append(d.id)
+                            .append(" · ").append(esc(d.type)).append("</div>");
+                    if (finalPrdUrl != null) {
+                        h.append("<p>📄 <a href='").append(esc(finalPrdUrl)).append("'>飞书 PRD</a></p>");
+                    }
+                    h.append("<p style='color:#888;font-size:11px'>双击节点进入 Review（diff / 审查 / 对照布局）</p>");
+                    if (finalDocs != null && finalDocs.size() > 0) {
+                        for (JsonElement el : finalDocs) {
+                            JsonObject doc = el.getAsJsonObject();
+                            h.append("<h3 style='margin:12px 0 4px 0'>")
+                                    .append(esc(str(doc, "name", "文档"))).append("</h3>");
+                            h.append("<pre style='white-space:pre-wrap;word-wrap:break-word;font-size:11px;background:#fafafa;padding:6px;border:1px solid #eee'>")
+                                    .append(esc(str(doc, "content", ""))).append("</pre>");
+                        }
+                    } else {
+                        h.append("<p style='color:#aaa'>（该节点暂无文档）</p>");
+                    }
+                    h.append("</body></html>");
+                    selectDetailPane.setText(h.toString());
+                    selectDetailPane.setCaretPosition(0);
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> selectDetailPane.setText(
+                        "<html><body style='padding:10px;color:#c00'>加载详情失败：" + esc(ex.getMessage()) + "</body></html>"));
+            }
+        });
     }
 
     /** Select 视图：当前选中的节点（未选中返回 null） */
