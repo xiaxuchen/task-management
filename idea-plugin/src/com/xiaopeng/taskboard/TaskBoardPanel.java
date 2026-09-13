@@ -349,7 +349,13 @@ public class TaskBoardPanel extends JPanel {
             if (tw instanceof com.intellij.openapi.wm.ex.ToolWindowEx twEx) {
                 java.awt.Window win = SwingUtilities.getWindowAncestor(tw.getComponent());
                 int frameH = win != null ? win.getHeight() : 900;
-                twEx.stretchHeight(Math.max(200, (int) (frameH * LayoutPrefs.toolWindowRatio())));
+                int target = Math.max(200, (int) (frameH * LayoutPrefs.toolWindowRatio()));
+                // 平台语义：stretchHeight 是「增量」（当前高度 + value）——因此传目标与当前的差值
+                int current = tw.getComponent() != null ? tw.getComponent().getHeight() : 0;
+                int delta = target - current;
+                if (delta != 0) {
+                    twEx.stretchHeight(delta);
+                }
             }
         } catch (Throwable ignore) {
             // 忽略

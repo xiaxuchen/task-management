@@ -28,6 +28,11 @@ public class PrdFileEditor extends UserDataHolderBase implements FileEditor {
     }
 
     @Override
+    public @NotNull VirtualFile getFile() {
+        return file;
+    }
+
+    @Override
     public @NotNull JComponent getComponent() {
         return component;
     }
