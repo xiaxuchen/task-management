@@ -125,10 +125,12 @@ async function buildTaskContext(prompt) {
       const trigger = REVIEW_TRIGGER.test(prompt)
       const sameNode =
         keywords.length > 0 && !!review.nodeName && keywords.some((k) => review.nodeName.includes(k))
-      if (trigger || sameNode) {
+      // 布局新鲜（刚点过对照布局 ≤30 分钟）→ 无条件注入
+      const layoutFresh = review.layoutFresh === true
+      if (trigger || sameNode || layoutFresh) {
         parts.push(review.md)
         reviewPushed = true
-        log(`review ctx attached (trigger=${trigger} sameNode=${sameNode})`)
+        log(`review ctx attached (trigger=${trigger} sameNode=${sameNode} layoutFresh=${layoutFresh})`)
       }
     }
 
@@ -278,6 +280,9 @@ function loadReviewContext() {
       lines.push(`- **当前展示文件**：${o.currentFile}`)
     }
     const commits = Array.isArray(o.checkedCommits) ? o.checkedCommits : []
+    // 布局新鲜度：用户点过「对照布局」后 30 分钟内，review 上下文无条件注入（不被触发词门控）
+    const layoutAgeMin = o.layoutOpenedAt ? Math.max(0, Math.round((Date.now() - Number(o.layoutOpenedAt)) / 60000)) : null
+    const layoutFresh = layoutAgeMin != null && layoutAgeMin <= 30
     if (commits.length > 0) {
       lines.push(`- **勾选提交（${commits.length}）**：`)
       for (const c of commits.slice(0, 10)) {
@@ -291,7 +296,7 @@ function loadReviewContext() {
       for (const f of files.slice(0, 30)) lines.push(`  - ${f}`)
       if (files.length > 30) lines.push(`  - …共 ${files.length} 个`)
     }
-    return { md: lines.join('\n'), brief: renderReviewBrief(o, commits, files), nodeName: String(o.nodeName) }
+    return { md: lines.join('\n'), brief: renderReviewBrief(o, commits, files), nodeName: String(o.nodeName), layoutFresh }
   } catch (e) {
     log('loadReviewContext error: ' + (e && e.message ? e.message : e))
     return null

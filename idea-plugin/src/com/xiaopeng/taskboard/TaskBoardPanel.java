@@ -3,6 +3,7 @@ package com.xiaopeng.taskboard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.intellij.ide.BrowserUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.actionSystem.ActionManager;
@@ -303,7 +304,7 @@ public class TaskBoardPanel extends JPanel {
                     t.start();
                     reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件，宽70%） + 右列（需求概设⇄PRD 用顶栏按钮切） + TaskBoard底部（高30%）");
                     // 打开布局即注入当前上下文（任务/编号/当前+勾选 commit/文件/当前文件）给 Qoder
-                    writeReviewContext();
+                    writeReviewContext(true);
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
@@ -315,9 +316,29 @@ public class TaskBoardPanel extends JPanel {
 
     /** 把"当前 review 上下文"（节点/编号/当前+勾选提交/文件/当前展示文件）写到固定文件，供 Qoder hook 桥注入 */
     private void writeReviewContext() {
+        writeReviewContext(false);
+    }
+
+    /** layoutOpened=true 时额外记录 layoutOpenedAt（打开布局后 hook 无条件注入） */
+    private void writeReviewContext(boolean layoutOpened) {
         try {
             JsonObject o = new JsonObject();
             o.addProperty("updatedAt", System.currentTimeMillis());
+            if (layoutOpened) {
+                o.addProperty("layoutOpenedAt", System.currentTimeMillis());
+            } else {
+                // 保留上一次的 layoutOpenedAt（非布局写入不覆盖）
+                try {
+                    JsonObject old = JsonParser.parseString(
+                            Files.readString(java.nio.file.Paths.get(System.getProperty("user.home"),
+                                    ".taskboard", "current-review.json"))).getAsJsonObject();
+                    if (old.has("layoutOpenedAt")) {
+                        o.addProperty("layoutOpenedAt", old.get("layoutOpenedAt").getAsLong());
+                    }
+                } catch (Throwable ignore) {
+                    // 读旧失败不阻断
+                }
+            }
             o.addProperty("nodeId", currentNodeId);
             o.addProperty("nodeName", currentNodeName);
             o.addProperty("nodeNo", currentNodeNo());
