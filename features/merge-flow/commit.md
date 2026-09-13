@@ -8,3 +8,4 @@
 - feat(subreq-view): 子需求 Review 以需求分支视角呈现——branches 标注优先取 subreq.reqBranch（回退 demandBranch）、新增 mergedToReq；插件状态栏显示「🌿 需求分支 + ⚠ 未合并 N / ✓ 全部已合入」、列表未合并项标「⚠未合并」
 - feat(branch-group): 分支组层落地——26Q3 下建 3 个分支组节点并挂入 7 个子需求；CHILD_TYPES 放开 requirement→group / group→subreq；需求分支取值优先节点自身 branch；插件支持分支组双击视图
 - perf(node-tracks): 分支组视图 20.7s→0.6s（33倍）——分支标注批量化（每仓库一次 git log + 前缀匹配）+ light 模式（跳过逐条 commitTrack）+ 修短 sha 匹配 bug
+- perf(combined-diff): 合并变更加载大提速——提交元信息批量化（一次 git log 替代 192 次）+ 文件 old/new 并发 8（≈1.5s）

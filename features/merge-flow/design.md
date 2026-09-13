@@ -90,6 +90,14 @@
   3. **bug 修复**：短 sha 直接 `Set.has(40位sha)` 永不命中 → 改为前缀匹配
 - 实测：分支组 158 → 20.7s → **0.62s**（48 已合入 / 16 未合并）
 
+## 合并变更（combined diff）性能优化
+
+- **问题**：64 条 × 3 次 git（stat/time/meta）≈192 次 + 53 文件 × 2 次（old/new）≈106 次 ≈ **300 次 git 进程**
+- **修复**：
+  1. `commitMetasBatch`：一次 `git log --no-walk=unsorted --numstat --format=...` 拿全部提交的 stat/作者/时间
+  2. 文件 old/new 串行 → **并发 8**
+- 实测：64 条合并变更 → **≈1.5s**
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
