@@ -35,6 +35,8 @@ const MAX_CTX_CHARS = 6000
 const REVIEW_FILE = path.join(os.homedir(), '.taskboard', 'current-review.json')
 /** IDEA TaskBoard 插件写出的"选中代码片段"文件（「记入上下文」按钮追加） */
 const SNIPPETS_FILE = path.join(os.homedir(), '.taskboard', 'selected-snippets.md')
+/** IDEA TaskBoard 插件自动捕获的"最近选中"（选区变化防抖写入） */
+const LAST_SELECTION_FILE = path.join(os.homedir(), '.taskboard', 'last-selection.md')
 /** snippets 触发词：命中则附带选中代码片段 */
 const SNIPPET_TRIGGER = /这段|这些|选中|该代码|这个代码|snippet|@选/i
 /** review 触发词：命中则附带当前 review 上下文 */
@@ -269,16 +271,29 @@ function loadReviewContext() {
   }
 }
 
-/** 读取"记入的选中代码片段"（~/.taskboard/selected-snippets.md；超 2 小时未更新则忽略） */
+/** 读取选中代码：自动捕获的"最近选中" + 手动记入的片段池（各自 2 小时内有效） */
 function loadSelectedSnippets() {
   try {
-    if (!fs.existsSync(SNIPPETS_FILE)) return null
-    const st = fs.statSync(SNIPPETS_FILE)
-    if (Date.now() - st.mtimeMs > 2 * 60 * 60 * 1000) return null
-    let content = fs.readFileSync(SNIPPETS_FILE, 'utf8')
-    if (!content.trim()) return null
-    if (content.length > 3000) content = '…（较早片段省略）\n' + content.slice(-3000)
-    return '## 你在 IDEA 里记入的选中代码片段（最近）\n' + content
+    const parts = []
+    const fresh = (p) => {
+      try {
+        if (!fs.existsSync(p)) return null
+        const st = fs.statSync(p)
+        if (Date.now() - st.mtimeMs > 2 * 60 * 60 * 1000) return null
+        const c = fs.readFileSync(p, 'utf8')
+        return c.trim() ? c : null
+      } catch {
+        return null
+      }
+    }
+    const last = fresh(LAST_SELECTION_FILE)
+    if (last) parts.push('## 你最近在 IDEA 中选中的代码（自动捕获）\n' + last)
+    let pool = fresh(SNIPPETS_FILE)
+    if (pool) {
+      if (pool.length > 3000) pool = '…（较早片段省略）\n' + pool.slice(-3000)
+      parts.push('## 你在 IDEA 里记入的选中代码片段（最近）\n' + pool)
+    }
+    return parts.length ? parts.join('\n\n') : null
   } catch (e) {
     log('loadSelectedSnippets error: ' + (e && e.message ? e.message : e))
     return null
