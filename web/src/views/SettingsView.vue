@@ -18,26 +18,26 @@
     </el-form>
     <el-alert v-if="testResult" :title="testResult" :type="testOk ? 'success' : 'error'" show-icon style="margin-top:12px" />
 
-    <el-divider content-position="left">仓库分支追踪</el-divider>
+    <el-divider content-position="left">仓库分支 / Tag 追踪</el-divider>
     <p class="branch-tip">
-      为每个仓库配置「测试 / 预发 / 上线」分支，提交列表会检测各提交是否已合入对应分支
-      （读取本机 git 的 origin/&lt;分支&gt;，分支有更新时请先 git fetch）。
+      为每个仓库配置「测试 / 预发 / 上线」的追踪目标，值可以是分支名或 tag 名（如上线常用发布 tag），
+      提交列表会检测各提交是否已合入 / 包含在该目标中（读取本机 git，目标有更新时请先 git fetch）。
     </p>
     <el-table :data="repos" size="small">
-      <el-table-column prop="name" label="仓库" width="190" />
-      <el-table-column label="测试分支">
+      <el-table-column prop="name" label="仓库" width="170" />
+      <el-table-column label="测试分支 / Tag">
         <template #default="{ row }">
           <el-input v-model="row.testBranch" size="small" placeholder="如 develop" />
         </template>
       </el-table-column>
-      <el-table-column label="预发分支">
+      <el-table-column label="预发分支 / Tag">
         <template #default="{ row }">
           <el-input v-model="row.preBranch" size="small" placeholder="如 pre" />
         </template>
       </el-table-column>
-      <el-table-column label="上线分支">
+      <el-table-column label="上线分支 / Tag">
         <template #default="{ row }">
-          <el-input v-model="row.releaseBranch" size="small" placeholder="如 master" />
+          <el-input v-model="row.releaseBranch" size="small" placeholder="如 master 或 v1.2.0" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="80">

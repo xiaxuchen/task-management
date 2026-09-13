@@ -67,6 +67,26 @@ test('branchContains：未合并 false → merge 后 true；分支缺失 ref-not
   assert.equal(empty.reason, 'not-configured')
 })
 
+test('branchContains 支持 tag 目标', async (t) => {
+  const { tmp, git } = await setup()
+  const { dir, g, featureSha } = makeRepo()
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  // 指向 feature 提交的 tag → 包含
+  g(['tag', 'v-test-1', featureSha])
+  const r = await git.branchContains(dir, featureSha, 'v-test-1')
+  assert.equal(r.contained, true)
+  assert.equal(r.ref, 'refs/tags/v-test-1')
+  // 指向 main HEAD（不含 feature 提交）的 tag → 不包含
+  const mainHead = g(['rev-parse', 'main']).trim()
+  g(['tag', 'v-main-0', mainHead])
+  const r2 = await git.branchContains(dir, featureSha, 'v-main-0')
+  assert.equal(r2.contained, false)
+  assert.equal(r2.ref, 'refs/tags/v-main-0')
+})
+
 test('getCommitTrack：读出仓库三分支配置并检测', async (t) => {
   const { tmp, store, ops } = await setup()
   const { dir, featureSha } = makeRepo()

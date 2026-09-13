@@ -76,11 +76,11 @@
           <el-table-column prop="sha" label="SHA" width="84" />
           <el-table-column prop="repo" label="仓库" width="96" />
           <el-table-column prop="note" label="说明" min-width="100" />
-          <el-table-column label="合并" width="96">
+          <el-table-column label="合并" width="168">
             <template #default="{ row }">
-              <span class="merge-badge" :class="badgeClass(trackOf(row).test)" :title="badgeTitle(trackOf(row).test, '测试')">测</span>
-              <span class="merge-badge" :class="badgeClass(trackOf(row).pre)" :title="badgeTitle(trackOf(row).pre, '预发')">预</span>
-              <span class="merge-badge" :class="badgeClass(trackOf(row).release)" :title="badgeTitle(trackOf(row).release, '上线')">上</span>
+              <el-tag size="small" :type="tagType(trackOf(row).test)" :effect="tagEffect(trackOf(row).test)" :title="badgeTitle(trackOf(row).test, '测试')">测试</el-tag>
+              <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).pre)" :effect="tagEffect(trackOf(row).pre)" :title="badgeTitle(trackOf(row).pre, '预发')">预发</el-tag>
+              <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).release)" :effect="tagEffect(trackOf(row).release)" :title="badgeTitle(trackOf(row).release, '上线')">上线</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="64">
@@ -143,9 +143,18 @@ function badgeClass(t) {
 function badgeTitle(t, label) {
   if (!t) return `${label}：未检测`
   if (t.contained === null) {
-    return `${label}：${t.reason === 'ref-not-found' ? '本地无该分支（先 git fetch）' : '未配置分支'}`
+    return `${label}：${t.reason === 'ref-not-found' ? '本地无该分支/Tag（先 git fetch）' : '未配置'}`
   }
   return `${label}（${t.branch}）：${t.contained ? '已合入' : '未合入'}`
+}
+
+function tagType(t) {
+  if (!t || t.contained === null) return 'info'
+  return t.contained ? 'success' : 'warning'
+}
+
+function tagEffect(t) {
+  return !t || t.contained === null ? 'plain' : 'light'
 }
 
 async function loadTracks() {
@@ -215,28 +224,8 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
 </script>
 
 <style scoped>
-.merge-badge {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  line-height: 18px;
-  text-align: center;
-  border-radius: 9px;
-  font-size: 11px;
-  margin-right: 6px;
-  cursor: default;
-}
-.badge-ok {
-  background: #e1f3d8;
-  color: #529b2e;
-}
-.badge-no {
-  background: #f4f4f5;
-  color: #909399;
-}
-.badge-unknown {
-  background: #fafafa;
-  color: #c0c4cc;
+.tag-gap {
+  margin-left: 4px;
 }
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {

@@ -130,9 +130,9 @@ export async function commitStat(dir, sha) {
   return parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))
 }
 
-/** 解析分支 ref：优先 origin/<branch>，其次本地分支，最后按原样交给 git 解析 */
+/** 解析追踪目标 ref：优先 origin/<name>，其次本地分支，再次 tag，最后按原样交给 git（name 可为分支名或 tag 名） */
 async function resolveBranchRef(dir, branch) {
-  for (const ref of [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`, branch]) {
+  for (const ref of [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`, `refs/tags/${branch}`, branch]) {
     const r = await gitTry(dir, ['rev-parse', '--verify', '--quiet', ref])
     if (r.ok && r.stdout.trim()) return ref
   }
@@ -140,8 +140,8 @@ async function resolveBranchRef(dir, branch) {
 }
 
 /**
- * 检测 commit 是否已合并（包含）到指定分支：
- * - 未配置分支 → { contained: null, reason: 'not-configured' }
+ * 检测 commit 是否已合并/包含在指定目标（分支或 tag）中：
+ * - 未配置 → { contained: null, reason: 'not-configured' }
  * - 本地无该 ref（未 fetch）→ { contained: null, reason: 'ref-not-found' }
  * - 是/否包含 → { contained: true|false, ref }
  */
@@ -155,7 +155,7 @@ export async function branchContains(dir, sha, branch) {
   return { branch, ref, contained: null, reason: 'git-error' }
 }
 
-/** 检测 commit 对三个分支的合并状态；branches: { test, pre, release }（值为分支名或空） */
+/** 检测 commit 对三个目标（测试/预发/上线，可为分支或 tag）的包含状态 */
 export async function commitTrack(dir, sha, branches) {
   const out = {}
   for (const [key, branch] of Object.entries(branches || {})) {

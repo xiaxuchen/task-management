@@ -6,9 +6,9 @@
 
 ## 需求
 
-- 仓库级配置三个分支：测试分支（`testBranch`）、预发分支（`preBranch`）、上线分支（`releaseBranch`）
-- 对任意已登记的 commit，检测其是否已合入上述三个分支
-- 展示：节点抽屉「提交」列表每行显示 测 / 预 / 上 合入状态徽标（悬停说明分支与结果）；设置页配置分支
+- 仓库级配置三个追踪目标：测试（`testBranch`）、预发（`preBranch`）、上线（`releaseBranch`）——值可为**分支名或 tag 名**（如上线常用发布 tag）
+- 对任意已登记的 commit，检测其是否已合入 / 包含在上述目标中
+- 展示：节点抽屉「提交」列表每行用 **el-tag** 显示 测试/预发/上线 状态（绿=已包含、橙=未包含、浅灰=未配置或本地无该 ref，悬停说明目标名与结果）；设置页配置目标
 
 ## 接口
 
@@ -23,8 +23,8 @@ MCP：`commit_track`、`node_tracks`（`repo_update` 支持分支字段）。
 
 ## 检测口径
 
-- ref 解析优先级：`origin/<branch>` → `refs/heads/<branch>` → `<branch>`（原样交给 git）
-- 判定：`git merge-base --is-ancestor <sha> <ref>`（exit 0 = 已合入）
+- ref 解析优先级：`origin/<name>` → `refs/heads/<name>` → `refs/tags/<name>` → `<name>`（原样交给 git）
+- 判定：`git merge-base --is-ancestor <sha> <ref>`（exit 0 = 已合入/包含）
 - `contained` 三态：`true` 已合入 / `false` 未合入 / `null`（`reason: not-configured` 未配置分支 | `ref-not-found` 本地无该 ref（先 fetch））
 - 只读本地已有 ref，**不自动 fetch**（避免网络/权限副作用）
 
