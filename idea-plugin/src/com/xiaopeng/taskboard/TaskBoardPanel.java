@@ -889,6 +889,46 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
+    /** 查看合入状态（组/子需求：各子任务开发分支是否已合入需求分支） */
+    private void showMergeStatus() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个节点");
+            return;
+        }
+        final long nodeId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonObject d = api.mergeStatus(nodeId);
+                JsonArray items = d.getAsJsonArray("items");
+                StringBuilder sb = new StringBuilder();
+                sb.append("需求分支：").append(str(d, "reqBranch", "(未配置)")).append("\n");
+                sb.append("已合入：").append(d.get("mergedCount").getAsInt()).append("/").append(d.get("total").getAsInt()).append("\n\n");
+                if (items != null) {
+                    for (JsonElement el : items) {
+                        JsonObject it = el.getAsJsonObject();
+                        boolean ok = it.has("allMerged") && it.get("allMerged").getAsBoolean();
+                        sb.append(ok ? "✓ " : "✗ ").append(str(it, "name", "")).append("\n");
+                        JsonArray details = it.getAsJsonArray("details");
+                        if (details != null) {
+                            for (JsonElement de : details) {
+                                JsonObject dt = de.getAsJsonObject();
+                                boolean m = dt.has("merged") && dt.get("merged").getAsBoolean();
+                                sb.append("    ").append(m ? "已合入" : "未合入").append("  ")
+                                        .append(str(dt, "repo", "")).append(" / ").append(str(dt, "branch", "")).append("\n");
+                            }
+                        }
+                    }
+                }
+                final String text = sb.toString();
+                SwingUtilities.invokeLater(() -> Messages.showMultilineInputDialog(project,
+                        "合入状态（" + nodeName + "）：", "合入状态", text, null, null));
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("加载合入状态失败：" + ex.getMessage()));
+            }
+        });
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -1917,6 +1957,7 @@ public class TaskBoardPanel extends JPanel {
         group.add(Separator.getInstance());
         addAction(group, "评论", "在 diff 选中处添加评论（记录文件+行号，存入 task-board）", AllIcons.General.Note, this::addCommentOnDiff);
         addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
+        addAction(group, "合入状态", "查看子任务开发分支是否已合入需求分支（组/子需求级）", AllIcons.Actions.Diff, this::showMergeStatus);
         addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.General.InspectionsError, this::reportDefect);
         addAction(group, "分析根因", "缺陷节点：派 Qoder 做根因分析与修复方案（结果回写文档）", AllIcons.Actions.Find, this::analyzeDefectWithQoder);
         addAction(group, "批准修复", "缺陷节点：批准「根因与修复方案」（批准后才允许派单修复）", AllIcons.Actions.Checked, this::approveDefectFix);

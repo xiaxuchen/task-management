@@ -597,6 +597,64 @@ export async function getNodeDuplicates(store, nodeRef, { scope = 'self' } = {})
 }
 
 /**
+ * 合入状态（组/子需求级）：列出该节点子树下每个子任务的开发分支是否已合入所属子需求的「需求分支」。
+ */
+export async function getMergeStatus(store, nodeRef) {
+  const node = store.resolveRef(String(nodeRef))
+  const subreq = node.type === 'subreq' ? node : store.findAncestorOfType(node.id, 'subreq')
+  const reqBranch = subreq ? ((store.getAttrs(subreq.id) || {}).reqBranch || null) : null
+  const commits = store.listCommits(node.id, { subtree: true })
+  const byNode = new Map()
+  for (const c of commits) {
+    if (!c.repo || !c.branch) continue
+    if (!byNode.has(c.nodeId)) byNode.set(c.nodeId, new Set())
+    byNode.get(c.nodeId).add(`${c.repo}||${c.branch}`)
+  }
+  const cache = new Map()
+  const items = []
+  for (const [nid, pairs] of byNode) {
+    let name = `#${nid}`
+    try { name = store.resolveRef(String(nid)).name } catch (ignore) { /* keep */ }
+    const details = []
+    let allMerged = true
+    for (const key of pairs) {
+      const [repo, branch] = key.split('||')
+      let merged = false
+      if (reqBranch && branch === reqBranch) {
+        merged = true
+      } else if (reqBranch) {
+        const ck = `${repo}||${branch}||${reqBranch}`
+        if (cache.has(ck)) {
+          merged = cache.get(ck)
+        } else {
+          try {
+            const repoRow = store.listRepos().find((r) => r.name === repo)
+            if (repoRow && repoRow.localPath) {
+              const r = await gitBranchContains(resolveRepoDir(repoRow), branch, reqBranch)
+              merged = r.contained === true
+            }
+          } catch (ignore) {
+            merged = false
+          }
+          cache.set(ck, merged)
+        }
+      }
+      if (!merged) allMerged = false
+      details.push({ repo, branch, merged })
+    }
+    items.push({ nodeId: nid, name, allMerged, details })
+  }
+  return {
+    node: { id: node.id, name: node.name },
+    subreq: subreq ? { id: subreq.id, name: subreq.name } : null,
+    reqBranch,
+    mergedCount: items.filter((i) => i.allMerged).length,
+    total: items.length,
+    items
+  }
+}
+
+/**
  * 审批合并：把子任务（含子树）的提交所在开发分支，合并到所属子需求的「需求分支」（主仓库执行）。
  * 安全判定：① 已合入→跳过（防重复 merge）② 未解决冲突→拒绝（防带冲突 merge）。
  */

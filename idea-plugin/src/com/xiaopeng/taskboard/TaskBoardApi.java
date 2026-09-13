@@ -86,6 +86,16 @@ public class TaskBoardApi {
         return send(req);
     }
 
+    /** 合入状态（组/子需求级）：子任务的开发分支是否已合入需求分支 */
+    public JsonObject mergeStatus(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/merge-status"))
+                .timeout(Duration.ofSeconds(90))
+                .header("x-taskboard-actor", "idea")
+                .GET()
+                .build();
+        return send(req);
+    }
+
     /** 创建节点（如缺陷：type=defect） */
     public JsonObject createNode(long parentId, String type, String name) throws Exception {
         JsonObject body = new JsonObject();
