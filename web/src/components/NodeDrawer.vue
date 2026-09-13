@@ -77,6 +77,11 @@
           <el-table-column prop="repo" label="仓库" width="96" />
           <el-table-column prop="note" label="说明" min-width="100" />
           <el-table-column label="合并" width="190">
+            <template #header>
+              <el-tooltip placement="top" content="✓ 已合入 / ✗ 未合入 / — 未配置或本地无该分支（先 git fetch）">
+                <span style="cursor:help">合并</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <el-tag size="small" :type="tagType(trackOf(row).test)" :effect="tagEffect(trackOf(row).test)" :title="badgeTitle(trackOf(row).test, '测试')">{{ statusSymbol(trackOf(row).test) }}测试</el-tag>
               <el-tag size="small" class="tag-gap" :type="tagType(trackOf(row).pre)" :effect="tagEffect(trackOf(row).pre)" :title="badgeTitle(trackOf(row).pre, '预发')">{{ statusSymbol(trackOf(row).pre) }}预发</el-tag>
@@ -157,9 +162,9 @@ function tagEffect(t) {
   return !t || t.contained === null ? 'plain' : 'light'
 }
 
-/** 状态符号：✓ 已合入 / ✗ 未合入 / 空（未配置，靠灰色描边区分） */
+/** 状态符号：✓ 已合入 / ✗ 未合入 / — 未配置或本地无该 ref */
 function statusSymbol(t) {
-  if (!t || t.contained === null) return ''
+  if (!t || t.contained === null) return '— '
   return t.contained ? '✓ ' : '✗ '
 }
 
