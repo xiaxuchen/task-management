@@ -15,6 +15,28 @@ public class PrdOpener {
 
     private static VirtualFile current;
 
+    /** 准备 PRD 虚拟文件（先关掉上次的，避免堆积）；不负责打开 */
+    public static PrdVirtualFile prepare(Project project, String url, String nodeName) {
+        try {
+            if (!JBCefApp.isSupported()) {
+                return null;
+            }
+            FileEditorManager fem = FileEditorManager.getInstance(project);
+            if (current != null && current.isValid()) {
+                try {
+                    fem.closeFile(current);
+                } catch (Throwable ignore) {
+                    // 已关闭则忽略
+                }
+            }
+            PrdVirtualFile vf = new PrdVirtualFile(url, "PRD · " + nodeName);
+            current = vf;
+            return vf;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     public static void open(Project project, String url, String nodeName) {
         open(project, url, nodeName, false);
     }
@@ -22,17 +44,9 @@ public class PrdOpener {
     /** splitRight=true 时在右侧分屏中打开（与左侧 diff 并排对照） */
     public static void open(Project project, String url, String nodeName, boolean splitRight) {
         try {
-            if (JBCefApp.isSupported()) {
+            PrdVirtualFile vf = prepare(project, url, nodeName);
+            if (vf != null) {
                 FileEditorManager fem = FileEditorManager.getInstance(project);
-                if (current != null && current.isValid()) {
-                    try {
-                        fem.closeFile(current);
-                    } catch (Throwable ignore) {
-                        // 已关闭则忽略
-                    }
-                }
-                PrdVirtualFile vf = new PrdVirtualFile(url, "PRD · " + nodeName);
-                current = vf;
                 if (splitRight) {
                     try {
                         FileEditorManagerEx femEx = FileEditorManagerEx.getInstanceEx(project);

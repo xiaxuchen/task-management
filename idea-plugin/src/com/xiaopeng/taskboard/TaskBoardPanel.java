@@ -109,7 +109,7 @@ public class TaskBoardPanel extends JPanel {
 
     // ---------- 需求 + 概设 / PRD ----------
 
-    /** 一键对照布局：左侧 diff（当前聚合或选中提交） + 右侧 需求+概设文档（含 PRD 链接）分屏 */
+    /** 一键对照布局：左 diff + 中 需求+概设 + 右 PRD（飞书），并调整宽度比例 */
     private void openReviewLayout() {
         if (currentNodeId < 0) {
             reviewSummary.setText("请先从节点树进入一个节点");
@@ -135,13 +135,62 @@ public class TaskBoardPanel extends JPanel {
                         CommitItem sel = selectedCommit();
                         if (sel != null) DiffOpener.open(project, api, sel.cid, sel.sha, null);
                     }
-                    // 2) 右侧：需求+概设文档（含 PRD 链接）分屏
-                    openDocsBesideWith(finalDocs, finalPrdUrl);
+                    // 2) 中间：需求+概设文档（右分屏）
+                    FileEditorManagerEx femEx = FileEditorManagerEx.getInstanceEx(project);
+                    EditorWindow main = femEx.getCurrentWindow();
+                    VirtualFile docsVf = (finalDocs != null && finalDocs.size() > 0)
+                            ? buildDocsFile(finalDocs, finalPrdUrl) : null;
+                    EditorWindow docWin = null;
+                    if (docsVf != null && main != null) {
+                        docWin = main.split(JSplitPane.HORIZONTAL_SPLIT, true, docsVf, true);
+                    }
+                    // 3) 右侧：PRD（飞书，再右分屏）
+                    if (finalPrdUrl != null) {
+                        try {
+                            PrdVirtualFile prdVf = PrdOpener.prepare(project, finalPrdUrl, currentNodeName);
+                            EditorWindow base = docWin != null ? docWin : femEx.getCurrentWindow();
+                            if (prdVf != null && base != null) {
+                                base.split(JSplitPane.HORIZONTAL_SPLIT, true, prdVf, true);
+                            }
+                        } catch (Throwable ignore) {
+                            // PRD 分屏失败不阻断
+                        }
+                    }
+                    // 4) 宽度：diff 主组约 58%（延迟等布局完成后设置）
+                    final EditorWindow mainRef = main;
+                    Timer t = new Timer(500, ev -> {
+                        ((Timer) ev.getSource()).stop();
+                        applyTopSplitterProportion(mainRef, 0.58f);
+                    });
+                    t.setRepeats(false);
+                    t.start();
+                    reviewSummary.setText("已铺对照布局：diff + 需求概设" + (finalPrdUrl != null ? " + PRD" : "")
+                            + "（可拖分隔条调整宽度）");
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
             }
         });
+    }
+
+    /** 把窗口所在最外层 Splitter 的比例设为 p（调整分屏宽度分配），失败静默 */
+    private static void applyTopSplitterProportion(EditorWindow window, float p) {
+        try {
+            if (window == null) return;
+            java.awt.Component c = window.getComponent$intellij_platform_ide_impl();
+            com.intellij.openapi.ui.Splitter top = null;
+            while (c != null) {
+                if (c instanceof com.intellij.openapi.ui.Splitter s) {
+                    top = s;
+                }
+                c = c.getParent();
+            }
+            if (top != null) {
+                top.setProportion(p);
+            }
+        } catch (Throwable ignore) {
+            // 平台差异时忽略
+        }
     }
 
     /** 打开需求 PRD：编辑器区新开一个 JCEF tab（形如普通文件），首次需在 tab 内登录飞书，登录态持久 */
@@ -235,12 +284,11 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
-    /** 构建合并 markdown（含 PRD 链接行）并在右侧分屏打开（EDT 调用） */
-    private void openDocsBesideWith(JsonArray docs, String prdUrl) {
+    /** 构建合并 markdown（固定单文件，含 PRD 链接行与节点标题）并返回 VirtualFile；失败返回 null */
+    private VirtualFile buildDocsFile(JsonArray docs, String prdUrl) {
         try {
             if (docs == null || docs.size() == 0) {
-                Messages.showInfoMessage(project, "该节点暂无文档（需求内容 / 设计方案）", "需求+概设");
-                return;
+                return null;
             }
             StringBuilder md = new StringBuilder();
             md.append("# ").append(currentNodeName).append("\n\n");
@@ -258,7 +306,21 @@ public class TaskBoardPanel extends JPanel {
             Files.createDirectories(dir);
             Path file = dir.resolve("taskboard-需求概设.md");
             Files.writeString(file, md.toString());
-            VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(file.toString());
+            return LocalFileSystem.getInstance().refreshAndFindFileByPath(file.toString());
+        } catch (Exception ex) {
+            reviewSummary.setText("构建文档失败：" + ex.getMessage());
+            return null;
+        }
+    }
+
+    /** 构建合并 markdown（含 PRD 链接行）并在右侧分屏打开（EDT 调用） */
+    private void openDocsBesideWith(JsonArray docs, String prdUrl) {
+        try {
+            if (docs == null || docs.size() == 0) {
+                Messages.showInfoMessage(project, "该节点暂无文档（需求内容 / 设计方案）", "需求+概设");
+                return;
+            }
+            VirtualFile vf = buildDocsFile(docs, prdUrl);
             if (vf == null) {
                 reviewSummary.setText("打开文档失败（临时文件未刷新）");
                 return;
