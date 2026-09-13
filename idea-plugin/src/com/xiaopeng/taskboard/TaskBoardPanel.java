@@ -158,7 +158,16 @@ public class TaskBoardPanel extends JPanel {
             try {
                 VirtualFile vf = editor.getVirtualFile();
                 if (vf != null) {
-                    fileName = vf.getName();
+                    if (vf instanceof com.intellij.diff.editor.ChainDiffVirtualFile) {
+                        // 链式 diff：取"当前显示的变更文件路径"（而非虚拟文件名）
+                        String diffPath = DiffOpener.currentDiffFilePath(vf);
+                        fileName = diffPath != null ? diffPath : "（当前 review diff）";
+                    } else if (vf instanceof com.intellij.testFramework.LightVirtualFile) {
+                        // 其它虚拟文件：不冒充真实文件名
+                        fileName = "（虚拟文件）";
+                    } else {
+                        fileName = vf.getName();
+                    }
                 }
             } catch (Throwable ignore) {
                 // 虚拟文件时忽略

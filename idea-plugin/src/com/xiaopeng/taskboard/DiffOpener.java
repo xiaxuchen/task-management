@@ -135,6 +135,42 @@ public class DiffOpener {
         );
     }
 
+    /** 从链式 diff 虚拟文件取"当前显示的真实文件路径"；取不到返回 null */
+    public static String currentDiffFilePath(VirtualFile vf) {
+        try {
+            if (!(vf instanceof com.intellij.diff.editor.ChainDiffVirtualFile cdf)) {
+                return null;
+            }
+            com.intellij.diff.chains.DiffRequestChain chain = cdf.getChain();
+            @SuppressWarnings("rawtypes")
+            java.util.List reqs = chain.getRequests();
+            if (reqs == null || reqs.isEmpty()) {
+                return null;
+            }
+            int idx = 0;
+            if (chain instanceof com.intellij.diff.chains.SimpleDiffRequestChain sdrc) {
+                @SuppressWarnings("rawtypes")
+                com.intellij.openapi.ListSelection sel = sdrc.getListSelection();
+                if (sel != null) {
+                    idx = sel.getSelectedIndex();
+                }
+            }
+            if (idx < 0 || idx >= reqs.size()) {
+                idx = 0;
+            }
+            // 我们的 request title = "<链标题> · <文件路径>"
+            com.intellij.diff.requests.DiffRequest req =
+                    (com.intellij.diff.requests.DiffRequest) reqs.get(idx);
+            String t = req.getTitle();
+            if (t != null && t.contains(" · ")) {
+                return t.substring(t.lastIndexOf(" · ") + 3);
+            }
+            return null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     private static String str(JsonObject o, String key) {
         return o.has(key) && !o.get(key).isJsonNull() ? o.get(key).getAsString() : "";
     }
