@@ -929,6 +929,78 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
+    /** 合并预览（MR 式）：待合并分支将引入的变更文件/增删统计 + 冲突预判 */
+    private void showMergePreview() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个子任务");
+            return;
+        }
+        final long nodeId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonObject d = api.mergePreview(nodeId);
+                JsonArray items = d.getAsJsonArray("items");
+                StringBuilder sb = new StringBuilder();
+                sb.append("需求分支（target）：").append(str(d, "reqBranch", "")).append("\n\n");
+                if (items == null || items.size() == 0) {
+                    sb.append("（无待合并的提交/分支）\n");
+                } else {
+                    for (JsonElement el : items) {
+                        JsonObject it = el.getAsJsonObject();
+                        String repo = str(it, "repo", "");
+                        String src = str(it, "source", "");
+                        if (it.has("alreadyMerged") && it.get("alreadyMerged").getAsBoolean()) {
+                            sb.append("✓ ").append(repo).append("  ").append(src).append("  （已合入，无需合并）\n");
+                            continue;
+                        }
+                        if (!it.has("ok") || !it.get("ok").getAsBoolean()) {
+                            sb.append("✗ ").append(repo).append("  ").append(src).append("  ：")
+                                    .append(str(it, "reason", ""));
+                            if (it.has("message")) {
+                                sb.append(" ").append(str(it, "message", "").split("\n")[0]);
+                            }
+                            sb.append("\n");
+                            continue;
+                        }
+                        boolean conflicted = it.has("conflicted") && it.get("conflicted").getAsBoolean();
+                        sb.append(conflicted ? "⚠ " : "→ ").append(repo).append("  ").append(src)
+                                .append(" → ").append(str(it, "target", "")).append("\n");
+                        if (conflicted) {
+                            sb.append("    ⚠ 有冲突（需先解决）：\n");
+                            JsonArray cf = it.getAsJsonArray("conflictFiles");
+                            if (cf != null) {
+                                for (JsonElement ce : cf) {
+                                    sb.append("      - ").append(ce.getAsString()).append("\n");
+                                }
+                            }
+                        }
+                        JsonArray wi = it.getAsJsonArray("willIntroduce");
+                        if (wi != null && wi.size() > 0) {
+                            sb.append("    将引入变更（").append(wi.size()).append("）：\n");
+                            int cnt = 0;
+                            for (JsonElement we : wi) {
+                                if (cnt++ >= 20) {
+                                    sb.append("      …\n");
+                                    break;
+                                }
+                                JsonObject w = we.getAsJsonObject();
+                                sb.append("      ").append(str(w, "file", ""))
+                                        .append("  +" ).append(w.get("add").getAsInt())
+                                        .append(" -").append(w.get("del").getAsInt()).append("\n");
+                            }
+                        }
+                    }
+                }
+                final String text = sb.toString();
+                SwingUtilities.invokeLater(() -> Messages.showMultilineInputDialog(project,
+                        "合并预览（" + nodeName + "）：", "合并预览（将合入的变更与冲突预判）", text, null, null));
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("合并预览失败：" + ex.getMessage()));
+            }
+        });
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -1958,6 +2030,7 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "评论", "在 diff 选中处添加评论（记录文件+行号，存入 task-board）", AllIcons.General.Note, this::addCommentOnDiff);
         addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
         addAction(group, "合入状态", "查看子任务开发分支是否已合入需求分支（组/子需求级）", AllIcons.Actions.Diff, this::showMergeStatus);
+        addAction(group, "合并预览", "MR 式预览：将合入的变更文件/增删统计 + 冲突预判（同意前先看）", AllIcons.Actions.Preview, this::showMergePreview);
         addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.General.InspectionsError, this::reportDefect);
         addAction(group, "分析根因", "缺陷节点：派 Qoder 做根因分析与修复方案（结果回写文档）", AllIcons.Actions.Find, this::analyzeDefectWithQoder);
         addAction(group, "批准修复", "缺陷节点：批准「根因与修复方案」（批准后才允许派单修复）", AllIcons.Actions.Checked, this::approveDefectFix);
@@ -2062,6 +2135,29 @@ public class TaskBoardPanel extends JPanel {
         reviewSplit.repaint();
     }
 
+    /** 沿父链找所属子需求的「需求分支」（subreq.attrs.reqBranch；无则 null） */
+    private String findReqBranch(long startId) {
+        try {
+            long id = startId;
+            for (int depth = 0; depth < 10 && id > 0; depth++) {
+                JsonObject node = api.nodeGet(id);
+                if ("subreq".equals(str(node, "type", ""))) {
+                    if (node.has("attrs") && node.get("attrs").isJsonObject()) {
+                        return attrOf(node.getAsJsonObject("attrs"), "reqBranch");
+                    }
+                    return null;
+                }
+                if (!node.has("parentId") || node.get("parentId").isJsonNull()) {
+                    return null;
+                }
+                id = node.get("parentId").getAsLong();
+            }
+        } catch (Exception ignore) {
+            // 忽略
+        }
+        return null;
+    }
+
     private void enterReview(NodeData d) {
         currentNodeId = d.id;
         currentNodeName = d.name;
@@ -2080,6 +2176,8 @@ public class TaskBoardPanel extends JPanel {
         long token = ++requestToken;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
+                // 所属子需求的「需求分支」（subreq/自己的属性），拼到状态栏
+                String reqBranch = findReqBranch(d.id);
                 JsonObject res = api.nodeTracks(d.id, "subtree");
                 JsonArray items = res.getAsJsonArray("items");
                 SwingUtilities.invokeLater(() -> {
@@ -2089,6 +2187,11 @@ public class TaskBoardPanel extends JPanel {
                         for (JsonElement el : items) commitItems.add(CommitItem.from(el.getAsJsonObject()));
                     }
                     rebuildReviewTree();
+                    if (reqBranch != null && !reqBranch.isEmpty()) {
+                        reviewSummary.setText("【" + currentNodeNo() + "】" + d.name + "　🌿 需求分支：" + reqBranch);
+                    } else {
+                        reviewSummary.setText("【" + currentNodeNo() + "】" + d.name);
+                    }
                 });
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> {

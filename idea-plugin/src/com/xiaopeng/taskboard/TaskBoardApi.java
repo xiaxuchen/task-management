@@ -86,6 +86,17 @@ public class TaskBoardApi {
         return send(req);
     }
 
+    /** 合并预览（MR 式）：将合入的变更统计 + 冲突预判 */
+    public JsonObject mergePreview(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/merge-preview"))
+                .timeout(Duration.ofSeconds(120))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        return send(req);
+    }
+
     /** 合入状态（组/子需求级）：子任务的开发分支是否已合入需求分支 */
     public JsonObject mergeStatus(long nodeId) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/merge-status"))

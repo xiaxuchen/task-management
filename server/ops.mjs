@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -594,6 +594,49 @@ export async function getNodeDuplicates(store, nodeRef, { scope = 'self' } = {})
     })
   }
   return { scope, groupCount: groupKeys.size, itemCount: items.length, items }
+}
+
+/**
+ * 合并预览（MR 式）：对每个待合并的 (repo, source→target) 给出将引入的变更统计与冲突预判。
+ */
+export async function previewMerges(store, nodeRef) {
+  const node = store.resolveRef(String(nodeRef))
+  const subreq = node.type === 'subreq' ? node : store.findAncestorOfType(node.id, 'subreq')
+  const reqBranch = subreq ? ((store.getAttrs(subreq.id) || {}).reqBranch || null) : null
+  if (!reqBranch) {
+    throw new AppError(CODES.VALIDATION_FAILED, '未配置需求分支（subreq.attrs.reqBranch）', {})
+  }
+  const commits = store.listCommits(node.id, { subtree: true })
+  const pairs = new Map()
+  for (const c of commits) {
+    if (!c.repo || !c.branch) continue
+    pairs.set(`${c.repo}||${c.branch}`, { repo: c.repo, branch: c.branch })
+  }
+  const items = []
+  for (const { repo, branch } of pairs.values()) {
+    const repoRow = store.listRepos().find((r) => r.name === repo)
+    if (!repoRow || !repoRow.localPath) {
+      items.push({ repo, source: branch, target: reqBranch, ok: false, reason: 'no_local_path' })
+      continue
+    }
+    try {
+      const dir = resolveRepoDir(repoRow)
+      if (branch === reqBranch) {
+        items.push({ repo, source: branch, target: reqBranch, ok: true, alreadyMerged: true })
+        continue
+      }
+      const anc = await gitBranchContains(dir, branch, reqBranch)
+      if (anc.contained === true) {
+        items.push({ repo, source: branch, target: reqBranch, ok: true, alreadyMerged: true })
+        continue
+      }
+      const pv = await gitPreviewMerge(dir, branch, reqBranch)
+      items.push({ repo, source: branch, target: reqBranch, ok: true, ...pv })
+    } catch (e) {
+      items.push({ repo, source: branch, target: reqBranch, ok: false, reason: 'error', message: String((e && e.message) || e).slice(0, 300) })
+    }
+  }
+  return { node: { id: node.id, name: node.name }, subreq: subreq ? { id: subreq.id, name: subreq.name } : null, reqBranch, items }
 }
 
 /**

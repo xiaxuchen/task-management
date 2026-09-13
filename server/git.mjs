@@ -219,6 +219,41 @@ export async function pickBranchForCommit(dir, sha) {
 }
 
 /**
+ * 合并预览（MR 式）：将合入的变更统计 + 冲突预判（git merge-tree --write-tree）。
+ * 返回：{ willIntroduce: [{file,add,del}], conflictFiles: [..], conflicted: bool, stat: string }
+ */
+export async function previewMerge(dir, source, target) {
+  const stat = await gitTry(dir, ['diff', '--stat', `${target}...${source}`])
+  const files = []
+  if (stat.ok) {
+    for (const line of stat.stdout.split('\n')) {
+      const m = line.match(/^ (.+?)\s+\|\s+(\d+)\s*([+-]*)$/)
+      if (m) {
+        const plus = (m[3].match(/\+/g) || []).length
+        const minus = (m[3].match(/-/g) || []).length
+        files.push({ file: m[1].trim(), add: plus, del: minus })
+      }
+    }
+  }
+  const mt = await gitTry(dir, ['merge-tree', '--write-tree', target, source])
+  let conflicted = false
+  const conflictFiles = []
+  if (mt.ok && mt.code !== 0) {
+    conflicted = true
+    for (const line of String(mt.stdout || '').split('\n').slice(1)) {
+      const t = line.trim()
+      if (t) conflictFiles.push(t.replace(/\x00.*$/, ''))
+    }
+  }
+  return {
+    willIntroduce: files.slice(0, 80),
+    conflicted,
+    conflictFiles: conflictFiles.slice(0, 30),
+    stat: String(stat.ok ? stat.stdout : '').slice(-3000)
+  }
+}
+
+/**
  * 主仓库合并：把 source 合入 target（--no-ff）。
  * 前置安全判定：① 当前工作区无未解决冲突（UU/AA/DD 等）② 能切到 target。
  * 返回：{ ok, alreadyMerged?, conflict?, reason?, unmerged?, mergeSha?, message? }
