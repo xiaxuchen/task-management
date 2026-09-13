@@ -1712,6 +1712,16 @@ public class TaskBoardPanel extends JPanel {
             public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) enterReviewOnSelection();
             }
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+                maybeShowNodeMenu(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                maybeShowNodeMenu(e);
+            }
         });
         // 单击选中 → 右侧详情（需求/设计/文档/PRD）
         selectTree.getSelectionModel().addTreeSelectionListener(e -> loadSelectDetail());
@@ -2043,6 +2053,141 @@ public class TaskBoardPanel extends JPanel {
         if (o.has("children") && !o.get("children").isJsonNull()) {
             for (JsonElement c : o.getAsJsonArray("children")) buildSelectNode(n, c.getAsJsonObject());
         }
+    }
+
+    /** 节点树右键菜单：新建子节点 / 重命名 / 删除 */
+    private void maybeShowNodeMenu(MouseEvent e) {
+        if (!e.isPopupTrigger()) {
+            return;
+        }
+        TreePath path = selectTree.getPathForLocation(e.getX(), e.getY());
+        if (path == null) {
+            return;
+        }
+        selectTree.setSelectionPath(path);
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem addItem = new JMenuItem("新建子节点…", AllIcons.General.Add);
+        addItem.addActionListener(a -> addChildNodeDialog());
+        menu.add(addItem);
+        JMenuItem renameItem = new JMenuItem("重命名…", AllIcons.Actions.Edit);
+        renameItem.addActionListener(a -> renameNodeDialog());
+        menu.add(renameItem);
+        menu.addSeparator();
+        JMenuItem delItem = new JMenuItem("删除节点…", AllIcons.Actions.GC);
+        delItem.addActionListener(a -> deleteNodeDialog());
+        menu.add(delItem);
+        menu.show(selectTree, e.getX(), e.getY());
+    }
+
+    /** 子节点类型约束（与后端 CHILD_TYPES 对齐） */
+    private static String[] childTypesOf(String type) {
+        return switch (type) {
+            case "project" -> new String[]{"requirement"};
+            case "requirement" -> new String[]{"group", "subreq"};
+            case "subreq" -> new String[]{"group", "task"};
+            case "group" -> new String[]{"group", "task", "defect"};
+            case "task" -> new String[]{"defect"};
+            default -> new String[0];
+        };
+    }
+
+    /** 新建子节点（类型选择 + 名称输入） */
+    private void addChildNodeDialog() {
+        NodeData d = selectedSelectNode();
+        if (d == null) {
+            selectStatus.setText("请先选中一个节点");
+            return;
+        }
+        String[] types = childTypesOf(d.type);
+        if (types.length == 0) {
+            selectStatus.setText("「" + d.type + "」是叶子节点，不能再挂子节点");
+            return;
+        }
+        String type = types[0];
+        if (types.length > 1) {
+            Object sel = JOptionPane.showInputDialog(selectTree, "子节点类型：", "新建子节点",
+                    JOptionPane.PLAIN_MESSAGE, null, types, types[0]);
+            if (sel == null) {
+                return;
+            }
+            type = sel.toString();
+        }
+        String name = Messages.showInputDialog(project, "节点名称：", "新建 " + type, null);
+        if (name == null || name.trim().isEmpty()) {
+            return;
+        }
+        final String fType = type;
+        final String fName = name.trim();
+        final long pid = d.id;
+        final String pname = d.name;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                api.createNode(pid, fType, fName);
+                SwingUtilities.invokeLater(() -> {
+                    selectStatus.setText("已新建 " + fType + "「" + fName + "」（父：" + pname + "）");
+                    reloadTree();
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> selectStatus.setText("新建失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 重命名节点 */
+    private void renameNodeDialog() {
+        NodeData d = selectedSelectNode();
+        if (d == null) {
+            selectStatus.setText("请先选中一个节点");
+            return;
+        }
+        String name = Messages.showInputDialog(project, "新名称：", "重命名「" + d.name + "」", null, d.name, null);
+        if (name == null || name.trim().isEmpty() || name.trim().equals(d.name)) {
+            return;
+        }
+        final String fName = name.trim();
+        final long nid = d.id;
+        final String oldName = d.name;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                api.renameNode(nid, fName);
+                SwingUtilities.invokeLater(() -> {
+                    selectStatus.setText("已重命名：「" + oldName + "」→「" + fName + "」");
+                    reloadTree();
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> selectStatus.setText("重命名失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 删除节点（级联警告 + 确认） */
+    private void deleteNodeDialog() {
+        NodeData d = selectedSelectNode();
+        if (d == null) {
+            selectStatus.setText("请先选中一个节点");
+            return;
+        }
+        int r = Messages.showYesNoDialog(project,
+                "确认删除节点「" + d.name + "」（" + d.type + " · id=" + d.id + "）？\n\n"
+                        + "⚠ 其下所有子节点与提交登记将一并删除（级联），不可恢复。",
+                "删除节点", Messages.getWarningIcon());
+        if (r != Messages.YES) {
+            return;
+        }
+        final long nid = d.id;
+        final String name = d.name;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                api.deleteNode(nid);
+                SwingUtilities.invokeLater(() -> {
+                    selectStatus.setText("已删除节点：「" + name + "」");
+                    selectDetailLoadedId = -1; // 让详情可重新加载
+                    reloadTree();
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> selectStatus.setText("删除失败：" + ex.getMessage()));
+            }
+        });
     }
 
     private void enterReviewOnSelection() {

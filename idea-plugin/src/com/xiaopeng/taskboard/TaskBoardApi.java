@@ -154,6 +154,29 @@ public class TaskBoardApi {
                 ? cfg.getAsJsonObject("promptTemplates") : new JsonObject();
     }
 
+    /** 重命名节点 */
+    public JsonObject renameNode(long nodeId, String name) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("name", name);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId))
+                .timeout(Duration.ofSeconds(15))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /** 删除节点（级联子节点；带 confirm） */
+    public void deleteNode(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "?confirm=true"))
+                .timeout(Duration.ofSeconds(20))
+                .header("x-taskboard-actor", "idea")
+                .DELETE()
+                .build();
+        sendAny(req);
+    }
+
     /** 写入/覆盖节点文档 */
     public JsonObject upsertDocument(long nodeId, String name, String content) throws Exception {
         JsonObject body = new JsonObject();
