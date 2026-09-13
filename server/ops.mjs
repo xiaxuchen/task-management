@@ -426,11 +426,12 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self', branches =
         if (!repo) continue
         const dir = resolveRepoDir(repo)
         const branchList = await gitBranchesContaining(dir, c.sha).catch(() => [])
-        // 需求分支：优先子需求 reqBranch，回退需求的 demandBranch
+        // 需求分支取值优先级：① 节点自身 branch（分支组节点）② 子需求 reqBranch ③ 需求 demandBranch
+        const selfBranch = (store.getAttrs(node.id) || {}).branch || null
         const subreqAnc = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'subreq')
         const subreqBranch = subreqAnc ? ((store.getAttrs(subreqAnc.id) || {}).reqBranch || null) : null
         const ancestor = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'requirement')
-        const demandRaw = subreqBranch || (ancestor ? store.getAttrs(ancestor.id).demandBranch : null)
+        const demandRaw = selfBranch || subreqBranch || (ancestor ? store.getAttrs(ancestor.id).demandBranch : null)
         const demandBranches = String(demandRaw || '')
           .split(',')
           .map((s) => s.trim())

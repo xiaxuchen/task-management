@@ -9,9 +9,9 @@ import { DB_PATH } from './config.mjs'
  */
 export const CHILD_TYPES = {
   project: ['requirement'],
-  requirement: ['subreq'],
+  requirement: ['group', 'subreq'],
   subreq: ['group', 'task'],
-  group: ['group', 'task', 'defect'],
+  group: ['group', 'subreq', 'task', 'defect'],
   task: ['defect'],
   defect: []
 }

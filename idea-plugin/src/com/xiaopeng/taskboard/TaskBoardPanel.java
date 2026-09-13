@@ -2195,12 +2195,19 @@ public class TaskBoardPanel extends JPanel {
         reviewSplit.repaint();
     }
 
-    /** 沿父链找所属子需求的「需求分支」（subreq.attrs.reqBranch；无则 null） */
+    /** 沿父链找「需求分支」：① 节点自身 branch（分支组）② 子需求 reqBranch */
     private String findReqBranch(long startId) {
         try {
             long id = startId;
             for (int depth = 0; depth < 10 && id > 0; depth++) {
                 JsonObject node = api.nodeGet(id);
+                // 节点自身带 branch 属性（分支组节点）→ 直接用
+                if (node.has("attrs") && node.get("attrs").isJsonObject()) {
+                    String own = attrOf(node.getAsJsonObject("attrs"), "branch");
+                    if (depth == 0 && own != null && !own.isEmpty()) {
+                        return own;
+                    }
+                }
                 if ("subreq".equals(str(node, "type", ""))) {
                     if (node.has("attrs") && node.get("attrs").isJsonObject()) {
                         return attrOf(node.getAsJsonObject("attrs"), "reqBranch");
