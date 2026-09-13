@@ -75,13 +75,50 @@
         <div v-if="commits.length" style="display:flex;justify-content:flex-end;margin:4px 0">
           <el-button size="small" @click="openAllInIdea">在 IDEA 查看全部变更（{{ commits.length }}）</el-button>
         </div>
+        <el-alert v-if="dupGroupCount" type="warning" :closable="false" style="margin:4px 0;padding:6px 10px">
+          <template #title>
+            <span>检测到 {{ dupGroupCount }} 组重复提交（worktree / 需求分支重复登记）</span>
+            <el-button link type="primary" size="small" style="margin-left:8px" @click="dedupeAll">一键去重</el-button>
+          </template>
+        </el-alert>
         <div v-if="commits.length" class="merge-legend">
           合并状态：<span class="legend-ok">✓ 已合入</span> · <span class="legend-no">✗ 未合入</span> · <span class="legend-unknown">— 未配置追踪目标（在顶部「设置」中配置）</span>
         </div>
         <el-table v-if="commits.length" :data="commits" size="small" max-height="300">
-          <el-table-column prop="sha" label="SHA" width="84" />
+          <el-table-column prop="sha" label="SHA" width="108">
+            <template #default="{ row }">
+              <span>{{ row.sha }}</span>
+              <el-tooltip v-if="dupOf(row)" placement="top">
+                <template #content>
+                  <div v-for="r in dupOf(row)" :key="r.cid" style="line-height:1.8">
+                    [{{ relLabel(r.relation) }}] {{ r.sha.slice(0, 9) }} @ {{ shortPath(r.nodePath) }}
+                  </div>
+                  <div style="color:#bbb;margin-top:4px">同 sha / 同内容 可用上方「一键去重」；merge 覆盖仅作关联展示</div>
+                </template>
+                <span style="color:#E6A23C;cursor:help;margin-left:3px">⇄</span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column prop="repo" label="仓库" width="96" />
           <el-table-column prop="note" label="说明" min-width="100" />
+          <el-table-column label="分支" width="122">
+            <template #default="{ row }">
+              <template v-if="branchOf(row) && branchOf(row).subBranches && branchOf(row).subBranches.length">
+                <el-tooltip placement="top" :content="branchOf(row).subBranches.join('\n')">
+                  <el-tag size="small" type="info" effect="plain">{{ shortBranch(branchOf(row).subBranches[0]) }}</el-tag>
+                </el-tooltip>
+                <el-tag v-if="branchOf(row).subBranches.length > 1" size="small" type="info" effect="plain" style="margin-left:2px">+{{ branchOf(row).subBranches.length - 1 }}</el-tag>
+              </template>
+              <span v-else style="color:#999">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="需求分支" width="84">
+            <template #default="{ row }">
+              <el-tooltip placement="top" :content="demandTitle(row)">
+                <el-tag size="small" :type="demandTagType(row)" :effect="demandEffect(row)">{{ demandSymbol(row) }}</el-tag>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column label="合并" width="190">
             <template #header>
               <el-tooltip placement="top" content="✓ 已合入 / ✗ 未合入 / — 未配置或本地无该分支（先 git fetch）">
@@ -109,7 +146,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
 import DiffPane from './DiffPane.vue'
@@ -148,6 +185,54 @@ async function openAllInIdea() {
   }
 }
 const trackMap = ref({})
+const branchMap = ref({})
+const dupMap = ref({})
+const dupItems = ref([])
+const dupGroupCount = ref(0)
+
+function relLabel(rel) {
+  return { 'same-sha': '同 sha 重复', 'patch-id': '同内容(不同sha)', 'merge-covers': 'merge 覆盖', 'covered-by': '被 merge 覆盖' }[rel] || rel
+}
+
+function shortPath(p) {
+  return (p || '').split('/').slice(-2).join('/')
+}
+
+function branchOf(row) {
+  return branchMap.value[row.id] || null
+}
+
+function shortBranch(b) {
+  return b.length > 13 ? b.slice(0, 13) + '…' : b
+}
+
+function demandSymbol(row) {
+  const b = branchOf(row)
+  if (!b || !b.demandBranch) return '—'
+  return b.demandContained ? '✓' : '✗'
+}
+
+function demandTagType(row) {
+  const b = branchOf(row)
+  if (!b || !b.demandBranch || b.demandContained === null) return 'info'
+  return b.demandContained ? 'success' : 'warning'
+}
+
+function demandEffect(row) {
+  const b = branchOf(row)
+  return !b || !b.demandBranch || b.demandContained === null ? 'plain' : 'light'
+}
+
+function demandTitle(row) {
+  const b = branchOf(row)
+  if (!b || !b.demandBranch) return '需求分支：未配置（在需求节点属性「需求分支」中填写）'
+  const st = b.demandContained === null ? '本地无该分支（先 git fetch）' : b.demandContained ? '已合入' : '未合入'
+  return `需求分支（${b.demandBranch}）：${st}`
+}
+
+function dupOf(row) {
+  return dupMap.value[row.id] || null
+}
 
 function openDiff(row) {
   diffCommit.value = row
@@ -188,13 +273,78 @@ function statusSymbol(t) {
 
 async function loadTracks() {
   try {
-    const r = await api.nodeTracks(props.node.id)
+    const r = await api.nodeTracks(props.node.id, 'self', { branches: true })
     const m = {}
-    for (const it of r.items) m[`${it.commit.repo || ''}@${it.commit.sha}`] = it.track
+    const bm = {}
+    for (const it of r.items) {
+      m[`${it.commit.repo || ''}@${it.commit.sha}`] = it.track
+      bm[it.commit.id] = {
+        subBranches: it.commit.subBranches || [],
+        demandBranch: it.commit.demandBranch || null,
+        demandContained: it.commit.demandContained
+      }
+    }
     trackMap.value = m
+    branchMap.value = bm
   } catch {
     trackMap.value = {}
+    branchMap.value = {}
   }
+}
+
+async function loadDuplicates() {
+  try {
+    const r = await api.commitDuplicates(props.node.id, 'self')
+    const m = {}
+    for (const it of r.items || []) m[it.cid] = it.related
+    dupMap.value = m
+    dupItems.value = r.items || []
+    dupGroupCount.value = r.groupCount || 0
+  } catch {
+    dupMap.value = {}
+    dupItems.value = []
+    dupGroupCount.value = 0
+  }
+}
+
+/** 一键去重：同 sha / patch-id 组保留最早一条，删除其余；merge 覆盖关系保留 */
+async function dedupeAll() {
+  const plan = new Map() // keepCid -> Set(removeCid)
+  for (const item of dupItems.value) {
+    for (const r of item.related) {
+      if (r.relation !== 'same-sha' && r.relation !== 'patch-id') continue
+      const keep = Math.min(item.cid, r.cid)
+      const remove = Math.max(item.cid, r.cid)
+      if (!plan.has(keep)) plan.set(keep, new Set())
+      plan.get(keep).add(remove)
+    }
+  }
+  if (!plan.size) {
+    ElMessage.info('没有可自动去重的条目（merge 覆盖关系仅作关联展示，不自动删除）')
+    return
+  }
+  const total = [...plan.values()].reduce((n, s) => n + s.size, 0)
+  try {
+    await ElMessageBox.confirm(`将删除 ${total} 条重复登记（每组保留最早一条；merge 覆盖关系保留）`, '一键去重', {
+      confirmButtonText: '去重', cancelButtonText: '取消', type: 'warning'
+    })
+  } catch {
+    return
+  }
+  let ok = 0
+  let fail = 0
+  for (const [keep, removes] of plan) {
+    try {
+      await api.commitDedupe({ keepId: keep, removeIds: [...removes] })
+      ok += removes.size
+    } catch {
+      fail += 1
+    }
+  }
+  ElMessage.success(`已去重 ${ok} 条${fail ? `，${fail} 组失败` : ''}`)
+  commits.value = await api.commitList(props.node.id)
+  await Promise.all([loadTracks(), loadDuplicates()])
+  emit('updated')
 }
 
 function toggleWidth() {
@@ -215,6 +365,7 @@ async function loadDetail() {
   const repoList = await api.repos()
   repos.value = repoList
   loadTracks()
+  loadDuplicates()
 }
 
 async function saveName() {
@@ -240,6 +391,7 @@ async function addCommit() {
   commitForm.value = { sha: '', repo: '', note: '' }
   commits.value = await api.commitList(props.node.id)
   loadTracks()
+  loadDuplicates()
 }
 
 function onChildClick(child) {

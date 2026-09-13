@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -31,6 +31,8 @@ export const TOOLS = [
   'commit_remove',
   'commit_review',
   'commit_combined_diff',
+  'commit_duplicates',
+  'commit_dedupe',
   'agent_run',
   'agent_runs_list',
   'repo_list',
@@ -380,7 +382,7 @@ export async function getCommitTrack(store, cid) {
  * 节点（含子树）聚合分支合并状态：按 (repo, sha) 去重、回填来源节点；
  * contained=null 表示分支未配置或本地无该 ref（先 fetch）；单条失败带 error 不拖垮整体
  */
-export async function getNodeTracks(store, nodeRef, { scope = 'self' } = {}) {
+export async function getNodeTracks(store, nodeRef, { scope = 'self', branches = false } = {}) {
   const node = store.resolveRef(nodeRef)
   const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
   const repos = new Map(store.listRepos().map((r) => [r.name, r]))
@@ -407,14 +409,191 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self' } = {}) {
       }
       const dir = resolveRepoDir(repo)
       const targets = store.resolveBranchTargets(repo)
-      const branches = { test: targets.test, pre: targets.pre, release: targets.release }
-      item.repo = { name: repo.name, ...branches, targetSource: targets.source }
-      item.track = await gitCommitTrack(dir, c.sha, branches)
+      const trackBranches = { test: targets.test, pre: targets.pre, release: targets.release }
+      item.repo = { name: repo.name, ...trackBranches, targetSource: targets.source }
+      item.track = await gitCommitTrack(dir, c.sha, trackBranches)
     } catch (e) {
       item.error = { code: e.code || 'ERROR', message: e.message }
     }
   }
+
+  // 分支标注（网页用）：包含该提交的分支（worktree/子分支） + 是否已合入需求分支
+  if (branches) {
+    for (const item of items) {
+      const c = item.commit
+      try {
+        const repo = c.repo ? repos.get(c.repo) : null
+        if (!repo) continue
+        const dir = resolveRepoDir(repo)
+        const branchList = await gitBranchesContaining(dir, c.sha).catch(() => [])
+        const ancestor = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'requirement')
+        const demandRaw = ancestor ? store.getAttrs(ancestor.id).demandBranch : null
+        const demandBranches = String(demandRaw || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        const subBranches = branchList.filter((b) => !demandBranches.includes(b))
+        let demandContained = null
+        for (const db of demandBranches) {
+          const r = await gitBranchContains(dir, c.sha, db)
+          if (r.contained === true) {
+            demandContained = true
+            break
+          }
+          if (r.contained === false && demandContained === null) demandContained = false
+        }
+        c.branches = branchList
+        c.subBranches = subBranches.slice(0, 5)
+        c.demandBranch = demandRaw || null
+        c.demandContained = demandContained
+      } catch {
+        // 单条失败忽略
+      }
+    }
+  }
   return { scope, count: items.length, items }
+}
+
+/** 批量补齐 patch-id（merge 提交标记为 __merge__；写入 DB 缓存与内存对象） */
+async function ensurePatchIds(store, commits, repos) {
+  for (const c of commits) {
+    if (c.patchId) continue
+    const repo = c.repo ? repos.get(c.repo) : null
+    if (!repo) continue
+    let dir
+    try {
+      dir = resolveRepoDir(repo)
+    } catch {
+      continue
+    }
+    try {
+      const parents = await gitCommitParents(dir, c.sha)
+      const pid = parents.length >= 2 ? '__merge__' : await gitPatchId(dir, c.sha)
+      if (pid) {
+        store.setCommitPatchId(c.id, pid)
+        c.patchId = pid
+      }
+    } catch {
+      // 单条失败跳过
+    }
+  }
+}
+
+/**
+ * 重复检测（节点子树内），三类关系：
+ * - same-sha：同 repo 同 sha 重复登记（worktree 与需求分支都登了同一条）
+ * - patch-id：同 repo 同内容不同 sha（rebase / cherry-pick）
+ * - merge-covers / covered-by：merge 提交覆盖了库中已登记的其他提交（worktree 提交被合入需求分支）
+ * 返回有关系的提交 items（related 含对端 sha/节点路径/关系）
+ */
+export async function getNodeDuplicates(store, nodeRef, { scope = 'self' } = {}) {
+  const node = store.resolveRef(nodeRef)
+  const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
+  const repos = new Map(store.listRepos().map((r) => [r.name, r]))
+  if (commits.length === 0) return { scope, groupCount: 0, itemCount: 0, items: [] }
+
+  // 全库（涉及 repo）索引：patch-id 补齐 + sha / patch-id 索引（另一半可能在别的节点）
+  const repoNames = new Set(commits.map((c) => c.repo).filter(Boolean))
+  const libCommits = []
+  for (const repoName of repoNames) libCommits.push(...store.listCommitsWithNode({ repo: repoName }))
+  await ensurePatchIds(store, libCommits, repos)
+  const libById = new Map(libCommits.map((c) => [c.id, c]))
+  const libBySha = new Map()
+  const libByPatch = new Map()
+  const pushIdx = (map, key, c) => {
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(c)
+  }
+  for (const c of libCommits) {
+    pushIdx(libBySha, `${c.repo}@${c.sha}`, c)
+    if (c.patchId && c.patchId !== '__merge__') pushIdx(libByPatch, `${c.repo}@${c.patchId}`, c)
+  }
+  // 范围内提交统一用全库对象（含 nodePath / patchId）
+  const scopeCommits = commits.map((c) => {
+    const lib = libById.get(c.id)
+    if (lib) return lib
+    c.nodePath = store.getNode(c.nodeId).path
+    return c
+  })
+
+  const rel = new Map() // cid -> Map(otherCid -> related)
+  const seenPair = new Set()
+  const groupKeys = new Set()
+  const addRel = (a, b, relation) => {
+    if (a.id === b.id) return
+    const pk = `${relation}|${a.id}|${b.id}`
+    if (seenPair.has(pk)) return
+    seenPair.add(pk)
+    const push = (from, to, r) => {
+      if (!rel.has(from.id)) rel.set(from.id, new Map())
+      rel.get(from.id).set(to.id, {
+        cid: to.id,
+        sha: to.sha,
+        repo: to.repo,
+        note: to.note,
+        nodeId: to.nodeId,
+        nodePath: to.nodePath,
+        relation: r
+      })
+    }
+    push(a, b, relation)
+    push(b, a, relation === 'merge-covers' ? 'covered-by' : relation)
+  }
+
+  // 1) same-sha：范围内提交 ↔ 全库同 (repo, sha) 的其他登记
+  for (const c of scopeCommits) {
+    const others = (libBySha.get(`${c.repo}@${c.sha}`) || []).filter((o) => o.id !== c.id)
+    if (others.length > 0) {
+      groupKeys.add(`sha:${c.repo}@${c.sha}`)
+      for (const o of others) addRel(c, o, 'same-sha')
+    }
+  }
+
+  // 2) patch-id：范围内提交 ↔ 全库同 (repo, patch-id) 的其他登记（排除同 sha 对）
+  for (const c of scopeCommits) {
+    if (!c.patchId || c.patchId === '__merge__') continue
+    const others = (libByPatch.get(`${c.repo}@${c.patchId}`) || []).filter((o) => o.id !== c.id && o.sha !== c.sha)
+    if (others.length > 0) {
+      groupKeys.add(`patch:${c.repo}@${c.patchId}`)
+      for (const o of others) addRel(c, o, 'patch-id')
+    }
+  }
+
+  // 3) merge 覆盖：范围内 merge 提交的第二父分支独有提交 ∩ 全库已登记（同 repo）
+  const mergeCommits = scopeCommits.filter((c) => c.patchId === '__merge__')
+  for (const m of mergeCommits) {
+    const repo = repos.get(m.repo)
+    if (!repo) continue
+    let dir
+    try {
+      dir = resolveRepoDir(repo)
+    } catch {
+      continue
+    }
+    const parents = await gitCommitParents(dir, m.sha).catch(() => [])
+    const inner = await gitMergedInCommits(dir, parents)
+    for (const sha of inner) {
+      const others = (libBySha.get(`${m.repo}@${sha}`) || []).filter((o) => o.id !== m.id)
+      for (const o of others) addRel(m, o, 'merge-covers')
+    }
+  }
+
+  const items = []
+  for (const c of scopeCommits) {
+    const m = rel.get(c.id)
+    if (!m || m.size === 0) continue
+    items.push({
+      cid: c.id,
+      sha: c.sha,
+      repo: c.repo,
+      note: c.note,
+      nodeId: c.nodeId,
+      nodePath: c.nodePath,
+      patchId: c.patchId,
+      related: Array.from(m.values())
+    })
+  }
+  return { scope, groupCount: groupKeys.size, itemCount: items.length, items }
 }
 
 /**

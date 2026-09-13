@@ -582,8 +582,60 @@ export function createStore(db, options = {}) {
       reviewNote: r.review_note,
       reviewedBy: r.reviewed_by,
       reviewedAt: r.reviewed_at,
+      patchId: r.patch_id || null,
       createdAt: r.created_at
     }
+  }
+
+  /** 缓存 patch-id（重复检测用） */
+  function setCommitPatchId(commitId, patchIdValue) {
+    db.prepare('UPDATE commits SET patch_id = ? WHERE id = ?').run(patchIdValue, Number(commitId))
+  }
+
+  /** 全库提交（可限定 repo），带节点路径（用于跨节点重复关联） */
+  function listCommitsWithNode({ repo = null } = {}) {
+    const rows = repo
+      ? db.prepare('SELECT * FROM commits WHERE repo = ? ORDER BY id').all(repo)
+      : db.prepare('SELECT * FROM commits ORDER BY id').all()
+    return rows.map((r) => ({ ...commitVO(r), nodePath: buildPath(r.node_id) }))
+  }
+
+  /** 沿 parent 链上溯，找第一个指定类型的祖先节点 */
+  function findAncestorOfType(nodeId, type) {
+    let cur = rawNode(nodeId)
+    while (cur) {
+      if (cur.type === type) return cur
+      if (!cur.parent_id) return null
+      cur = db.prepare('SELECT * FROM nodes WHERE id = ?').get(cur.parent_id)
+    }
+    return null
+  }
+
+  /**
+   * 一键去重：删除重复登记（保留 keepId）。
+   * 安全校验：removeIds 必须与 keep 同 repo，且 sha 相同或（非 merge 的）patch_id 相同
+   */
+  function dedupeCommits({ keepId, removeIds } = {}, by = 'user') {
+    const keep = getCommit(Number(keepId))
+    const ids = (Array.isArray(removeIds) ? removeIds : []).map((n) => Number(n)).filter(Number.isFinite)
+    if (ids.length === 0) throw new AppError(CODES.VALIDATION_FAILED, 'removeIds 不能为空', {})
+    const removed = []
+    for (const id of ids) {
+      if (id === keep.id) continue
+      const c = getCommit(id)
+      if (c.repo !== keep.repo) {
+        throw new AppError(CODES.VALIDATION_FAILED, `提交 ${id} 与保留项仓库不同，不允许去重`, { id })
+      }
+      const sameSha = c.sha === keep.sha
+      const samePatch = keep.patchId && c.patchId && keep.patchId !== '__merge__' && keep.patchId === c.patchId
+      if (!sameSha && !samePatch) {
+        throw new AppError(CODES.VALIDATION_FAILED, `提交 ${id} 与保留项不是重复关系（sha/patch-id 均不同），拒绝删除`, { id })
+      }
+      db.prepare('DELETE FROM commits WHERE id = ?').run(id)
+      removed.push(id)
+    }
+    bumpRevision()
+    return { kept: keep.id, removed }
   }
 
   function getCommit(id) {
@@ -948,6 +1000,10 @@ export function createStore(db, options = {}) {
     addCommit,
     removeCommit,
     updateCommitReview,
+    setCommitPatchId,
+    listCommitsWithNode,
+    findAncestorOfType,
+    dedupeCommits,
     // agent runs（测试节点）
     createAgentRun,
     appendAgentRunOutput,

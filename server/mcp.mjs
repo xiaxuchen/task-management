@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 
 export function createMcpServer({ store }) {
@@ -266,10 +266,10 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'node_tracks',
-    '节点（含子树）合并状态聚合：按 (repo, sha) 去重；contained=null 表示未配置或本地无该 ref',
-    { ref: z.string(), scope: z.enum(['self', 'subtree']).optional() },
-    async ({ ref, scope }) => {
-      const data = await getNodeTracks(store, ref, { scope: scope || 'self' })
+    '节点（含子树）合并状态聚合：按 (repo, sha) 去重；contained=null 表示未配置或本地无该 ref；branches=true 附分支标注与需求分支合入状态',
+    { ref: z.string(), scope: z.enum(['self', 'subtree']).optional(), branches: z.boolean().optional() },
+    async ({ ref, scope, branches }) => {
+      const data = await getNodeTracks(store, ref, { scope: scope || 'self', branches: !!branches })
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
     }
   )
@@ -281,6 +281,24 @@ export function createMcpServer({ store }) {
     async ({ ref, sha, repo, note }) => {
       const node = store.resolveRef(ref)
       return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note }, 'ai'), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'commit_duplicates',
+    '重复提交检测：same-sha（同 sha 重复登记）/ patch-id（同内容不同 sha）/ merge 覆盖（worktree 提交被合入需求分支）',
+    { ref: z.string(), scope: z.enum(['self', 'subtree']).optional() },
+    async ({ ref, scope }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(await getNodeDuplicates(store, ref, { scope: scope || 'self' }), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'commit_dedupe',
+    '一键去重：保留 keepId，删除重复登记的 removeIds（校验同 repo 且 sha/patch-id 相同）',
+    { keepId: z.number(), removeIds: z.array(z.number()) },
+    async ({ keepId, removeIds }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.dedupeCommits({ keepId, removeIds }, 'ai'), null, 2) }] }
     }
   )
 

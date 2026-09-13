@@ -6,7 +6,7 @@
  * 零新增依赖，保持"纯本地"定位。GitLab API 兜底分支留待计划 5
  * （当前 local_path 缺失即报 REPO_PATH_MISSING，见 features/diff-preview/prd.md）。
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -135,6 +135,57 @@ export async function commitDiff(dir, sha) {
 export async function commitTime(dir, sha) {
   const r = await git(dir, ['show', '-s', '--format=%at', sha])
   return Number(r.trim())
+}
+
+/** 提交的父提交列表 */
+export async function commitParents(dir, sha) {
+  const r = await git(dir, ['show', '-s', '--format=%P', sha])
+  const t = r.trim()
+  return t ? t.split(/\s+/) : []
+}
+
+/**
+ * patch-id（--stable）：同一内容不同 sha（rebase / cherry-pick）得到相同值；
+ * merge 提交无意义（调用方先判断 parents 数量跳过）。实现为 git show | git patch-id 管道（不经 shell）。
+ */
+export function patchId(dir, sha) {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (v) => {
+      if (!settled) {
+        settled = true
+        resolve(v)
+      }
+    }
+    try {
+      const show = spawn('git', ['-C', dir, 'show', sha, '--no-color', '--no-renames', '--format='], {
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      const pid = spawn('git', ['-C', dir, 'patch-id', '--stable'], { stdio: ['pipe', 'pipe', 'ignore'] })
+      show.stdout.pipe(pid.stdin)
+      let out = ''
+      pid.stdout.on('data', (d) => {
+        out += d.toString()
+      })
+      pid.on('close', () => done(out.trim().split(/\s+/)[0] || null))
+      pid.on('error', () => done(null))
+      show.on('error', () => done(null))
+      setTimeout(() => done(null), 30000)
+    } catch {
+      done(null)
+    }
+  })
+}
+
+/** merge 提交的第二父分支独有提交（被合入的提交集）：rev-list <sha>^2 --not <sha>^1 */
+export async function mergedInCommits(dir, parents) {
+  if (!parents || parents.length < 2) return []
+  const r = await gitTry(dir, ['rev-list', parents[1], '--not', parents[0]])
+  if (!r.ok) return []
+  return r.stdout
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 /** 包含该提交的分支（本地 + 远程，去重去 origin/ 前缀，限 8 个） */

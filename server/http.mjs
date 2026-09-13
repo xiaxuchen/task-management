@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 
@@ -268,6 +268,17 @@ export function createApp({ store }) {
     '/api/commits/combined-diff',
     wrap(async (req, res) => res.json(await getCombinedDiff(store, (req.body || {}).cids)))
   )
+  app.get(
+    '/api/nodes/:id/duplicates',
+    wrap(async (req, res) => res.json(await getNodeDuplicates(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })))
+  )
+  app.post(
+    '/api/commits/dedupe',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(store.dedupeCommits({ keepId: b.keepId, removeIds: b.removeIds }, actorOf(req)))
+    })
+  )
 
   // ---------- commit diff 预览 ----------
 
@@ -288,7 +299,7 @@ export function createApp({ store }) {
   )
   app.get(
     '/api/nodes/:id/tracks',
-    wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })))
+    wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self', branches: req.query.branches === 'true' })))
   )
 
   // ---------- agent 运行（测试节点：写提示词触发 agent） ----------

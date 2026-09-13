@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS commits (
   review_note TEXT,
   reviewed_by TEXT,
   reviewed_at TEXT,
+  patch_id TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(node_id, sha)
 );
@@ -244,7 +245,8 @@ function migrate(db) {
     ['review_status', "TEXT NOT NULL DEFAULT 'pending'"],
     ['review_note', 'TEXT'],
     ['reviewed_by', 'TEXT'],
-    ['reviewed_at', 'TEXT']
+    ['reviewed_at', 'TEXT'],
+    ['patch_id', 'TEXT']
   ])
 }
 

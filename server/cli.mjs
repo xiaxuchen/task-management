@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -28,6 +28,9 @@ const OPTIONS = {
   model: { type: 'string' },
   cwd: { type: 'string' },
   ids: { type: 'string' },
+  branches: { type: 'boolean' },
+  keep: { type: 'string' },
+  remove: { type: 'string' },
   confirm: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   actor: { type: 'string' },
@@ -77,6 +80,8 @@ const HELP = `task-board <命令>
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
   commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
   commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
+  commit duplicates <ref> [--scope self|subtree]   重复检测（same-sha / patch-id / merge 覆盖）
+  commit dedupe --keep <cid> --remove "1,2,3"      一键去重（保留 keep，删除重复登记）
   agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>]   触发 agent 执行（默认 qodercli，异步）
   agent runs <ref>                   agent 运行历史（含输出）
   repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>] [--tags 前端,后端]
@@ -217,6 +222,15 @@ export async function run(argv) {
     case 'commit combined-diff':
       json(await getCombinedDiff(store, String(values.ids || '').split(',').map((s) => Number(s.trim()))))
       break
+    case 'commit duplicates':
+      json(await getNodeDuplicates(store, ref, { scope: values.scope === 'subtree' ? 'subtree' : 'self' }))
+      break
+    case 'commit dedupe':
+      json(store.dedupeCommits({
+        keepId: Number(values.keep),
+        removeIds: String(values.remove || '').split(',').map((s) => Number(s.trim()))
+      }, by))
+      break
     case 'agent run': {
       const node = store.resolveRef(ref)
       json(startAgentRun(store, node.id, { prompt: values.prompt, model: values.model, cwd: values.cwd }, by))
@@ -235,7 +249,7 @@ export async function run(argv) {
       json(await getCommitTrack(store, Number(ref)))
       break
     case 'node tracks':
-      json(await getNodeTracks(store, ref, { scope: values.scope || 'self' }))
+      json(await getNodeTracks(store, ref, { scope: values.scope || 'self', branches: !!values.branches }))
       break
     case 'repo list':
       json(store.listRepos())

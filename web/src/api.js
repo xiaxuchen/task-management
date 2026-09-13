@@ -48,7 +48,9 @@ export default {
   commitDiff: (cid) => api(`/commits/${cid}/diff`),
   nodeDiffs: (nodeId, scope) => api(`/nodes/${nodeId}/diffs?scope=${scope || 'self'}`),
   commitTrack: (cid) => api(`/commits/${cid}/track`),
-  nodeTracks: (nodeId, scope) => api(`/nodes/${nodeId}/tracks?scope=${scope || 'self'}`),
+  nodeTracks: (nodeId, scope, opts = {}) => api(`/nodes/${nodeId}/tracks?scope=${scope || 'self'}${opts.branches ? '&branches=true' : ''}`),
+  commitDuplicates: (nodeId, scope) => api(`/nodes/${nodeId}/duplicates?scope=${scope || 'self'}`),
+  commitDedupe: (payload) => api('/commits/dedupe', { method: 'POST', body: JSON.stringify(payload) }),
 
   // IDE 桥：请求 IDEA 打开 diff（插件轮询领取）
   ideOpenDiff: (payload) => api('/ide/open-diff', { method: 'POST', body: JSON.stringify(payload) }),
