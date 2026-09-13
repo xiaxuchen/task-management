@@ -2252,17 +2252,24 @@ public class TaskBoardPanel extends JPanel {
         long token = ++requestToken;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
+                long t0 = System.currentTimeMillis();
                 // 所属子需求的「需求分支」（subreq/自己的属性），拼到状态栏
                 String reqBranch = findReqBranch(d.id);
+                diag("enterReview findReqBranch " + (System.currentTimeMillis() - t0) + "ms");
+                long t1 = System.currentTimeMillis();
                 JsonObject res = api.nodeTracks(d.id, "subtree", true);
                 JsonArray items = res.getAsJsonArray("items");
+                diag("enterReview nodeTracks " + (System.currentTimeMillis() - t1) + "ms items=" + (items == null ? 0 : items.size()));
                 SwingUtilities.invokeLater(() -> {
                     if (token != requestToken) return;
+                    diag("enterReview invokeLater 开始");
+                    long t2 = System.currentTimeMillis();
                     commitItems.clear();
                     if (items != null) {
                         for (JsonElement el : items) commitItems.add(CommitItem.from(el.getAsJsonObject()));
                     }
                     rebuildReviewTree();
+                    diag("enterReview rebuildReviewTree " + (System.currentTimeMillis() - t2) + "ms");
                     int unmerged = 0;
                     for (CommitItem ci : commitItems) {
                         if (ci.mergedToReq != null && !ci.mergedToReq) unmerged++;
