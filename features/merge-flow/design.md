@@ -63,6 +63,22 @@
 - **列表项**：未合并的提交前缀 **`⚠未合并`**（`CommitItem.display()`）
 - API：`GET /api/nodes/:id/tracks?scope=subtree&branches=true` → commit 级 `mergedToReq`
 
+## 分支组层（已交付）
+
+按 dsh-charge 三层架构对齐：**分支组 → 子需求 → 子任务**。
+
+```
+【平台】立项工程&资产管理26Q3迭代（requirement）
+ ├── feature-send-receive 🌿（group + attrs.branch）→ 1 / 2 / 3 子需求
+ ├── feature-transfer 🌿                              → 4 / 5 / 6 子需求
+ └── feature-station-operation 🌿                     → 7 子需求
+```
+
+- **双击分支组** → 该分支视角的提交列表（子树全部提交 + `mergedToReq` 标记 + 状态栏「⚠ 未合并 N」）
+- 需求分支取值优先级：**① 节点自身 `branch`（分支组）② `subreq.reqBranch` ③ `requirement.demandBranch`**
+- CHILD_TYPES 放开：`requirement → [group, subreq]`、`group → [group, subreq, task, defect]`
+- 实测：分支组 158（feature-send-receive）→ 64 条提交 / 未合并 15
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）

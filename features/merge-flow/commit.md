@@ -6,3 +6,4 @@
 - feat(merge-mr): ① 进节点状态栏展示「🌿 需求分支」（沿父链取 subreq.reqBranch）② MR 式「合并预览」——previewMerge（diff --stat 变更统计 + merge-tree 冲突预判）+ POST /nodes/:id/merge-preview + 插件「合并预览」按钮（将引入变更/冲突文件/已合入跳过）
 - feat(merge-upstream): 子需求上跳合并——「合并到 feature-merge」把需求分支合入集成分支（POST /nodes/:id/merge-upstream；已合入跳过/有新内容再合/冲突拒绝）
 - feat(subreq-view): 子需求 Review 以需求分支视角呈现——branches 标注优先取 subreq.reqBranch（回退 demandBranch）、新增 mergedToReq；插件状态栏显示「🌿 需求分支 + ⚠ 未合并 N / ✓ 全部已合入」、列表未合并项标「⚠未合并」
+- feat(branch-group): 分支组层落地——26Q3 下建 3 个分支组节点并挂入 7 个子需求；CHILD_TYPES 放开 requirement→group / group→subreq；需求分支取值优先节点自身 branch；插件支持分支组双击视图
