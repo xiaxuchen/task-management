@@ -429,6 +429,10 @@ public class TaskBoardPanel extends JPanel {
             } else if (vf != null) {
                 path = vf.getPath();
             }
+            // 兜底：用编辑器内容反查（MyLightVirtualFile 等 diff 内容 vf 场景）
+            if (path == null) {
+                path = DiffOpener.filePathForEditor(editor);
+            }
             if (path == null) {
                 return null;
             }

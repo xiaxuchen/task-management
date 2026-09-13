@@ -84,6 +84,47 @@ public class DiffOpener {
         return lastDiffFile;
     }
 
+    /** 最近一次打开链 diff 的文件列表（供"内容反查文件路径"兜底） */
+    private static volatile List<FileDiff> lastDiffFiles;
+
+    /** 按编辑器内容反查文件路径（匹配 new/old 文本）；取不到返回 null */
+    public static String filePathForEditor(com.intellij.openapi.editor.Editor editor) {
+        try {
+            if (editor == null || editor.isDisposed() || editor.getDocument() == null) {
+                return null;
+            }
+            List<FileDiff> files = lastDiffFiles;
+            if (files == null || files.isEmpty()) {
+                return null;
+            }
+            String doc = editor.getDocument().getText();
+            // 1) 精确匹配任一方向
+            for (FileDiff fd : files) {
+                if (doc.equals(fd.oldText) || doc.equals(fd.newText)) {
+                    return fd.path;
+                }
+            }
+            // 2) 宽松匹配："变更后"在文档里或反之（考虑尾部截断差异）
+            for (FileDiff fd : files) {
+                String n = fd.newText;
+                String o = fd.oldText;
+                if (n != null && (n.startsWith(doc) || doc.startsWith(n))) {
+                    return fd.path;
+                }
+                if (o != null && (o.startsWith(doc) || doc.startsWith(o))) {
+                    return fd.path;
+                }
+            }
+            // 3) 单文件时直接返回
+            if (files.size() == 1) {
+                return files.get(0).path;
+            }
+            return null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /** 关闭上次由本插件打开的链 diff（对照布局重铺前清场用） */
     public static void closeCurrent(Project project) {
         try {
@@ -109,6 +150,7 @@ public class DiffOpener {
             requests.add(buildRequest(project, title, fd));
         }
         SimpleDiffRequestChain chain = new SimpleDiffRequestChain(requests, focus);
+        lastDiffFiles = List.copyOf(files);
         try {
             // 复用：先关掉上次本插件打开的链 diff，再开新的（保证只有一个 diff tab）
             closeCurrent(project);
