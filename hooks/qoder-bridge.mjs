@@ -132,16 +132,23 @@ async function buildTaskContext(prompt) {
       }
     }
 
-    // 3) 选中代码片段（含任务简报：任务 id/项目/commit/文件；review 完整段未推时用简报）
+    // 3) 最近选中（自动捕获，体量小 <1KB）：新鲜（≤5 分钟）即无条件注入——不被触发词门控
+    const lastSel = loadLastSelectionFresh(5 * 60 * 1000)
+    if (lastSel) {
+      parts.push(lastSel)
+      log('last-selection attached (fresh)')
+    }
+
+    // 4) 片段池 + 任务简报：触发词门控（体量较大，避免泛滥）
     if (SNIPPET_TRIGGER.test(prompt) || REVIEW_TRIGGER.test(prompt)) {
       if (!reviewPushed && review && review.brief) {
         parts.push(review.brief)
         log('review brief attached')
       }
-      const snippets = loadSelectedSnippets()
+      const snippets = loadSnippetsPool()
       if (snippets) {
         parts.push(snippets)
-        log('snippets attached')
+        log('snippets pool attached')
       }
     }
 
@@ -298,31 +305,33 @@ function renderReviewBrief(o, commits, files) {
   return lines.join('\n')
 }
 
-/** 读取选中代码：自动捕获的"最近选中" + 手动记入的片段池（各自 2 小时内有效） */
-function loadSelectedSnippets() {
+/** 自动捕获的"最近选中"：mtime 在 maxAgeMs 内才返回（新鲜即注入，不需触发词） */
+function loadLastSelectionFresh(maxAgeMs) {
   try {
-    const parts = []
-    const fresh = (p) => {
-      try {
-        if (!fs.existsSync(p)) return null
-        const st = fs.statSync(p)
-        if (Date.now() - st.mtimeMs > 2 * 60 * 60 * 1000) return null
-        const c = fs.readFileSync(p, 'utf8')
-        return c.trim() ? c : null
-      } catch {
-        return null
-      }
-    }
-    const last = fresh(LAST_SELECTION_FILE)
-    if (last) parts.push('## 你最近在 IDEA 中选中的代码（自动捕获）\n' + last)
-    let pool = fresh(SNIPPETS_FILE)
-    if (pool) {
-      if (pool.length > 3000) pool = '…（较早片段省略）\n' + pool.slice(-3000)
-      parts.push('## 你在 IDEA 里记入的选中代码片段（最近）\n' + pool)
-    }
-    return parts.length ? parts.join('\n\n') : null
+    if (!fs.existsSync(LAST_SELECTION_FILE)) return null
+    const st = fs.statSync(LAST_SELECTION_FILE)
+    if (Date.now() - st.mtimeMs > maxAgeMs) return null
+    const c = fs.readFileSync(LAST_SELECTION_FILE, 'utf8')
+    if (!c.trim()) return null
+    return '## 你刚在 IDEA 中选中的代码（自动捕获）\n' + c
   } catch (e) {
-    log('loadSelectedSnippets error: ' + (e && e.message ? e.message : e))
+    log('loadLastSelectionFresh error: ' + (e && e.message ? e.message : e))
+    return null
+  }
+}
+
+/** 手动记入的片段池（可能较大，上限截断；2 小时内有效；由触发词门控调用） */
+function loadSnippetsPool() {
+  try {
+    if (!fs.existsSync(SNIPPETS_FILE)) return null
+    const st = fs.statSync(SNIPPETS_FILE)
+    if (Date.now() - st.mtimeMs > 2 * 60 * 60 * 1000) return null
+    let c = fs.readFileSync(SNIPPETS_FILE, 'utf8')
+    if (!c.trim()) return null
+    if (c.length > 3000) c = '…（较早片段省略）\n' + c.slice(-3000)
+    return '## 你在 IDEA 里记入的选中代码片段（最近）\n' + c
+  } catch (e) {
+    log('loadSnippetsPool error: ' + (e && e.message ? e.message : e))
     return null
   }
 }
