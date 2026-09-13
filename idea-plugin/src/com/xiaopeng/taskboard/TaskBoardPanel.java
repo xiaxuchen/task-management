@@ -968,6 +968,8 @@ public class TaskBoardPanel extends JPanel {
     private final javax.swing.JEditorPane selectDetailPane = new javax.swing.JEditorPane();
     /** 详情已加载的节点 id（避免重复拉取） */
     private long selectDetailLoadedId = -1;
+    /** 详情已加载的节点名（供内置打开 PRD 时作 tab 标题） */
+    private String selectDetailLoadedName = "";
     /** 选区捕获防抖定时器 */
     private Timer selectionTimer;
     /** 用户拖动分隔条时自动记住 diff 宽度比例 */
@@ -1063,7 +1065,13 @@ public class TaskBoardPanel extends JPanel {
         selectDetailPane.addHyperlinkListener(ev -> {
             if (ev.getEventType() == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
                 try {
-                    BrowserUtil.browse(ev.getURL());
+                    String url = ev.getURL() != null ? ev.getURL().toString() : ev.getDescription();
+                    if (url != null && url.contains("feishu.cn")) {
+                        // 飞书链接：优先在 IDEA 内置 PRD tab（JCEF）打开，与「对照布局」展示一致
+                        PrdOpener.open(project, url, selectDetailLoadedName);
+                    } else {
+                        BrowserUtil.browse(ev.getURL());
+                    }
                 } catch (Throwable ignore) {
                     // 链接打开失败忽略
                 }
@@ -1085,6 +1093,7 @@ public class TaskBoardPanel extends JPanel {
             return;
         }
         selectDetailLoadedId = d.id;
+        selectDetailLoadedName = d.name;
         selectDetailPane.setText("<html><body style='padding:10px;color:#888'>加载中…（" + esc(d.name) + "）</body></html>");
         final long id = d.id;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
