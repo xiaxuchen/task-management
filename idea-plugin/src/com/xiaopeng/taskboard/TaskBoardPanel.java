@@ -2121,22 +2121,14 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "分析根因", "缺陷节点：派 Qoder 做根因分析与修复方案（结果回写文档）", AllIcons.Actions.Find, this::analyzeDefectWithQoder);
         addAction(group, "批准修复", "缺陷节点：批准「根因与修复方案」（批准后才允许派单修复）", AllIcons.Actions.Checked, this::approveDefectFix);
         addAction(group, "按方案修复", "缺陷节点：按已批准的方案派 Qoder 实施修复（未批准会被拦截）", AllIcons.Actions.Execute, this::fixDefectWithQoder);
-        group.add(Separator.getInstance());
-        addAction(group, "全选⇄全不选", "勾选全部提交（已全选时点一下变全不选）", AllIcons.Actions.Checked, this::toggleSelectAll);
-        addAction(group, "反选", "已勾选与未勾选互换", AllIcons.Actions.Rollback, this::invertChecks);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         ActionToolbar toolbar = reviewToolbar;
         toolbar.setTargetComponent(this);
 
-        onlyPending = new JBCheckBox("仅看待审");
-        onlyPending.setToolTipText("只显示审查状态为「待审 ○」的提交（勾选/取消调整范围）");
-        onlyPending.addActionListener(e -> rebuildReviewTree());
-
         JPanel north = new JPanel(new BorderLayout(8, 0));
-        north.add(toolbar.getComponent(), BorderLayout.WEST);
-        north.add(reviewSummary, BorderLayout.CENTER);
-        north.add(onlyPending, BorderLayout.EAST);
+        north.add(reviewSummary, BorderLayout.WEST);
+        north.add(toolbar.getComponent(), BorderLayout.EAST);
         p.add(north, BorderLayout.NORTH);
 
         // ---- 左侧：commit 列表（默认收起） ----
@@ -2212,7 +2204,27 @@ public class TaskBoardPanel extends JPanel {
         detailVertSplit.setDividerLocation(0.72);
         detailPanel.add(detailVertSplit, BorderLayout.CENTER);
 
-        reviewSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, commitScroll, detailPanel);
+        // 列表头行：全选⇄ / 反选 / 仅看待审（放在 commit 列表上方）
+        onlyPending = new JBCheckBox("仅看待审");
+        onlyPending.setToolTipText("只显示审查状态为「待审 ○」的提交（勾选/取消调整范围）");
+        onlyPending.addActionListener(e -> rebuildReviewTree());
+        JButton btnSelectAll = new JButton("全选⇄");
+        btnSelectAll.setToolTipText("勾选全部提交（已全选时点一下变全不选）");
+        btnSelectAll.setMargin(new java.awt.Insets(1, 6, 1, 6));
+        btnSelectAll.addActionListener(e -> toggleSelectAll());
+        JButton btnInvert = new JButton("反选");
+        btnInvert.setToolTipText("已勾选与未勾选互换");
+        btnInvert.setMargin(new java.awt.Insets(1, 6, 1, 6));
+        btnInvert.addActionListener(e -> invertChecks());
+        JPanel listHeader = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2));
+        listHeader.add(btnSelectAll);
+        listHeader.add(btnInvert);
+        listHeader.add(onlyPending);
+        JPanel leftCol = new JPanel(new BorderLayout());
+        leftCol.add(listHeader, BorderLayout.NORTH);
+        leftCol.add(commitScroll, BorderLayout.CENTER);
+
+        reviewSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftCol, detailPanel);
         reviewSplit.setDividerSize(6);
         reviewSplit.setResizeWeight(0.0);
         p.add(reviewSplit, BorderLayout.CENTER);
