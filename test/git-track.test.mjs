@@ -126,14 +126,57 @@ test('getNodeTracks：子树聚合、按 (repo, sha) 去重、回填 track', asy
   assert.equal(out.items[0].error, null)
 })
 
-test('addRepo / updateRepo 支持分支字段', async (t) => {
+test('addRepo / updateRepo 支持分支字段与 tags', async (t) => {
   const { tmp, store } = await setup()
   t.after(() => tmp.cleanup())
-  const repo = store.addRepo({ name: 'demo', testBranch: 'develop' })
+  const repo = store.addRepo({ name: 'demo', testBranch: 'develop', tags: '后端' })
   assert.equal(repo.testBranch, 'develop')
   assert.equal(repo.preBranch, null)
-  const updated = store.updateRepo(repo.id, { preBranch: 'pre', releaseBranch: 'master' })
+  assert.equal(repo.tags, '后端')
+  const updated = store.updateRepo(repo.id, { preBranch: 'pre', releaseBranch: 'master', tags: '前端,后端' })
   assert.equal(updated.preBranch, 'pre')
   assert.equal(updated.releaseBranch, 'master')
   assert.equal(updated.testBranch, 'develop')
+  assert.equal(updated.tags, '前端,后端')
+})
+
+test('标签级分支配置 CRUD + resolveBranchTargets 继承/覆盖', async (t) => {
+  const { tmp, store } = await setup()
+  t.after(() => tmp.cleanup())
+  // 新增与更新（同一标签 upsert）
+  store.upsertBranchConfig('后端', { testBranch: 'develop', releaseBranch: 'master' })
+  const cfg2 = store.upsertBranchConfig('后端', { testBranch: 'develop2', releaseBranch: 'master' })
+  assert.equal(cfg2.testBranch, 'develop2')
+  assert.equal(store.listBranchConfigs().length, 1)
+
+  // 仓库通过标签继承
+  const repo = store.addRepo({ name: 'demo', tags: '后端' })
+  let targets = store.resolveBranchTargets(repo)
+  assert.equal(targets.source, 'tag:后端')
+  assert.equal(targets.test, 'develop2')
+  assert.equal(targets.release, 'master')
+
+  // 仓库级（任一非空）优先
+  const repo2 = store.addRepo({ name: 'demo2', tags: '后端', testBranch: 'own-branch' })
+  targets = store.resolveBranchTargets(repo2)
+  assert.equal(targets.source, 'repo')
+  assert.equal(targets.test, 'own-branch')
+
+  // 多标签：取第一个有配置的
+  store.upsertBranchConfig('前端', { testBranch: 'fe-dev' })
+  const repo3 = store.addRepo({ name: 'demo3', tags: '小程序,前端' })
+  targets = store.resolveBranchTargets(repo3)
+  assert.equal(targets.source, 'tag:前端')
+  assert.equal(targets.test, 'fe-dev')
+
+  // 无标签 / 无配置 → 全空
+  const repo4 = store.addRepo({ name: 'demo4' })
+  targets = store.resolveBranchTargets(repo4)
+  assert.equal(targets.source, null)
+  assert.equal(targets.test, null)
+
+  // 删除（不存在时 NOT_FOUND）
+  store.deleteBranchConfig('前端')
+  assert.equal(store.listBranchConfigs().length, 1)
+  assert.throws(() => store.deleteBranchConfig('前端'), (e) => e.code === 'NOT_FOUND')
 })

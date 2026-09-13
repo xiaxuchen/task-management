@@ -625,6 +625,7 @@ export function createStore(db, options = {}) {
       localPath: r.local_path,
       gitlabProject: r.gitlab_project,
       note: r.note,
+      tags: r.tags,
       testBranch: r.test_branch,
       preBranch: r.pre_branch,
       releaseBranch: r.release_branch,
@@ -637,15 +638,15 @@ export function createStore(db, options = {}) {
     return db.prepare('SELECT * FROM repos ORDER BY name').all().map(repoVO)
   }
 
-  function addRepo({ name, localPath = null, gitlabProject = null, note = null, testBranch = null, preBranch = null, releaseBranch = null } = {}) {
+  function addRepo({ name, localPath = null, gitlabProject = null, note = null, tags = null, testBranch = null, preBranch = null, releaseBranch = null } = {}) {
     const n = String(name || '').trim()
     if (!n) throw new AppError(CODES.VALIDATION_FAILED, '仓库名必填', { field: 'name' })
     const dup = db.prepare('SELECT id FROM repos WHERE name = ?').get(n)
     if (dup) throw new AppError(CODES.VALIDATION_FAILED, `仓库 ${n} 已登记`, { name: n })
     const ts = now()
     const info = db
-      .prepare('INSERT INTO repos (name,local_path,gitlab_project,note,test_branch,pre_branch,release_branch,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(n, localPath, gitlabProject, note, testBranch, preBranch, releaseBranch, ts, ts)
+      .prepare('INSERT INTO repos (name,local_path,gitlab_project,note,tags,test_branch,pre_branch,release_branch,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(n, localPath, gitlabProject, note, tags, testBranch, preBranch, releaseBranch, ts, ts)
     bumpRevision()
     return repoVO(db.prepare('SELECT * FROM repos WHERE id = ?').get(Number(info.lastInsertRowid)))
   }
@@ -655,7 +656,7 @@ export function createStore(db, options = {}) {
     if (!cur) throw new AppError(CODES.NOT_FOUND, `仓库 ${id} 不存在`, { id })
     const fields = []
     const args = []
-    const map = { localPath: 'local_path', gitlabProject: 'gitlab_project', note: 'note', name: 'name', testBranch: 'test_branch', preBranch: 'pre_branch', releaseBranch: 'release_branch' }
+    const map = { localPath: 'local_path', gitlabProject: 'gitlab_project', note: 'note', name: 'name', tags: 'tags', testBranch: 'test_branch', preBranch: 'pre_branch', releaseBranch: 'release_branch' }
     for (const [k, col] of Object.entries(map)) {
       if (patch[k] !== undefined) {
         fields.push(`${col} = ?`)
@@ -676,6 +677,71 @@ export function createStore(db, options = {}) {
     db.prepare('DELETE FROM repos WHERE id = ?').run(id)
     bumpRevision()
     return { id }
+  }
+
+  // ---------- 标签级分支配置（仓库通过 tags 继承） ----------
+
+  function branchConfigVO(r) {
+    return {
+      id: r.id,
+      tag: r.tag,
+      testBranch: r.test_branch,
+      preBranch: r.pre_branch,
+      releaseBranch: r.release_branch,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    }
+  }
+
+  function listBranchConfigs() {
+    return db.prepare('SELECT * FROM branch_configs ORDER BY tag').all().map(branchConfigVO)
+  }
+
+  function upsertBranchConfig(tag, { testBranch = null, preBranch = null, releaseBranch = null } = {}) {
+    const t = String(tag || '').trim()
+    if (!t) throw new AppError(CODES.VALIDATION_FAILED, '标签名必填', { field: 'tag' })
+    const cur = db.prepare('SELECT * FROM branch_configs WHERE tag = ?').get(t)
+    const ts = now()
+    if (cur) {
+      db.prepare('UPDATE branch_configs SET test_branch=?, pre_branch=?, release_branch=?, updated_at=? WHERE id=?')
+        .run(testBranch, preBranch, releaseBranch, ts, cur.id)
+      bumpRevision()
+      return branchConfigVO(db.prepare('SELECT * FROM branch_configs WHERE id = ?').get(cur.id))
+    }
+    const info = db
+      .prepare('INSERT INTO branch_configs (tag,test_branch,pre_branch,release_branch,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+      .run(t, testBranch, preBranch, releaseBranch, ts, ts)
+    bumpRevision()
+    return branchConfigVO(db.prepare('SELECT * FROM branch_configs WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function deleteBranchConfig(tag) {
+    const t = String(tag || '').trim()
+    const cur = db.prepare('SELECT * FROM branch_configs WHERE tag = ?').get(t)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `标签配置 ${t} 不存在`, { tag: t })
+    db.prepare('DELETE FROM branch_configs WHERE id = ?').run(cur.id)
+    bumpRevision()
+    return { id: cur.id }
+  }
+
+  /**
+   * 解析仓库的追踪目标：仓库级（任一非空）优先；否则按 repo.tags 顺序取第一个有配置的标签
+   * 返回 { test, pre, release, source }（source: 'repo' | 'tag:<名>' | null）
+   */
+  function resolveBranchTargets(repo) {
+    const own = { test: repo.testBranch || null, pre: repo.preBranch || null, release: repo.releaseBranch || null }
+    if (own.test || own.pre || own.release) return { ...own, source: 'repo' }
+    const tags = String(repo.tags || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    for (const tag of tags) {
+      const cfg = db.prepare('SELECT * FROM branch_configs WHERE tag = ?').get(tag)
+      if (cfg && (cfg.test_branch || cfg.pre_branch || cfg.release_branch)) {
+        return { test: cfg.test_branch, pre: cfg.pre_branch, release: cfg.release_branch, source: `tag:${tag}` }
+      }
+    }
+    return { test: null, pre: null, release: null, source: null }
   }
 
   return {
@@ -714,6 +780,11 @@ export function createStore(db, options = {}) {
     addRepo,
     updateRepo,
     deleteRepo,
+    // branch configs（标签级）
+    listBranchConfigs,
+    upsertBranchConfig,
+    deleteBranchConfig,
+    resolveBranchTargets,
     // revision
     getRevision,
     bumpRevision

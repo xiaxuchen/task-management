@@ -18,13 +18,17 @@
     </el-form>
     <el-alert v-if="testResult" :title="testResult" :type="testOk ? 'success' : 'error'" show-icon style="margin-top:12px" />
 
-    <el-divider content-position="left">仓库分支 / Tag 追踪</el-divider>
+    <el-divider content-position="left">标签分支 / Tag 配置</el-divider>
     <p class="branch-tip">
-      为每个仓库配置「测试 / 预发 / 上线」的追踪目标，值可以是分支名或 tag 名（如上线常用发布 tag），
-      提交列表会检测各提交是否已合入 / 包含在该目标中（读取本机 git，目标有更新时请先 git fetch）。
+      按「标签」配置追踪目标（值可为分支名或 tag 名，如上线常用发布 tag）；仓库通过标签继承，
+      仓库行单独填写时优先于标签。以后可扩展更多标签（如小程序 / 数据）。
     </p>
-    <el-table :data="repos" size="small">
-      <el-table-column prop="name" label="仓库" width="170" />
+    <el-table :data="branchConfigs" size="small">
+      <el-table-column label="标签" width="150">
+        <template #default="{ row }">
+          <el-input v-model="row.tag" size="small" placeholder="如 前端 / 后端" :disabled="!row._new" />
+        </template>
+      </el-table-column>
       <el-table-column label="测试分支 / Tag">
         <template #default="{ row }">
           <el-input v-model="row.testBranch" size="small" placeholder="如 develop" />
@@ -38,6 +42,42 @@
       <el-table-column label="上线分支 / Tag">
         <template #default="{ row }">
           <el-input v-model="row.releaseBranch" size="small" placeholder="如 master 或 v1.2.0" />
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="110">
+        <template #default="{ row }">
+          <el-button link type="primary" size="small" @click="saveBranchConfig(row)">保存</el-button>
+          <el-button link type="danger" size="small" @click="removeBranchConfig(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-button size="small" style="margin-top:8px" @click="addTagRow">+ 新增标签</el-button>
+
+    <el-divider content-position="left">仓库（通过标签继承，单填优先）</el-divider>
+    <p class="branch-tip">
+      仓库标签为逗号分隔（如“后端”）；下方分支留空则继承标签配置，单独填写时优先（适用特例仓库）。
+      读取本机 git，目标有更新时请先 git fetch。
+    </p>
+    <el-table :data="repos" size="small">
+      <el-table-column prop="name" label="仓库" width="160" />
+      <el-table-column label="标签" width="150">
+        <template #default="{ row }">
+          <el-input v-model="row.tags" size="small" placeholder="如 后端" />
+        </template>
+      </el-table-column>
+      <el-table-column label="测试分支 / Tag">
+        <template #default="{ row }">
+          <el-input v-model="row.testBranch" size="small" placeholder="继承标签配置" />
+        </template>
+      </el-table-column>
+      <el-table-column label="预发分支 / Tag">
+        <template #default="{ row }">
+          <el-input v-model="row.preBranch" size="small" placeholder="继承标签配置" />
+        </template>
+      </el-table-column>
+      <el-table-column label="上线分支 / Tag">
+        <template #default="{ row }">
+          <el-input v-model="row.releaseBranch" size="small" placeholder="继承标签配置" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="80">
@@ -60,13 +100,47 @@ const testing = ref(false)
 const testResult = ref('')
 const testOk = ref(false)
 const repos = ref([])
+const branchConfigs = ref([])
 
 async function loadRepos() {
   repos.value = await api.repos()
 }
 
+async function loadBranchConfigs() {
+  branchConfigs.value = await api.branchConfigs()
+}
+
+function addTagRow() {
+  branchConfigs.value.push({ tag: '', testBranch: null, preBranch: null, releaseBranch: null, _new: true })
+}
+
+async function saveBranchConfig(row) {
+  if (!row.tag) {
+    ElMessage.warning('请先填写标签名')
+    return
+  }
+  const saved = await api.branchConfigSet(row.tag, {
+    testBranch: row.testBranch || null,
+    preBranch: row.preBranch || null,
+    releaseBranch: row.releaseBranch || null
+  })
+  Object.assign(row, saved, { _new: false })
+  ElMessage.success(`已保存标签配置：${saved.tag}`)
+}
+
+async function removeBranchConfig(row) {
+  if (row._new) {
+    branchConfigs.value = branchConfigs.value.filter((r) => r !== row)
+    return
+  }
+  await api.branchConfigRemove(row.tag)
+  branchConfigs.value = branchConfigs.value.filter((r) => r !== row)
+  ElMessage.success(`已删除标签配置：${row.tag}`)
+}
+
 async function saveRepo(row) {
   const saved = await api.repoUpdate(row.id, {
+    tags: row.tags || null,
     testBranch: row.testBranch || null,
     preBranch: row.preBranch || null,
     releaseBranch: row.releaseBranch || null
@@ -104,6 +178,7 @@ async function testGitlab() {
 onMounted(() => {
   loadConfig()
   loadRepos()
+  loadBranchConfigs()
 })
 </script>
 

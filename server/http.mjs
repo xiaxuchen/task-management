@@ -286,7 +286,7 @@ export function createApp({ store }) {
     '/api/repos',
     wrap((req, res) => {
       const b = req.body || {}
-      res.status(201).json(store.addRepo({ name: b.name, localPath: b.localPath, gitlabProject: b.gitlabProject, note: b.note }))
+      res.status(201).json(store.addRepo({ name: b.name, localPath: b.localPath, gitlabProject: b.gitlabProject, note: b.note, tags: b.tags, testBranch: b.testBranch, preBranch: b.preBranch, releaseBranch: b.releaseBranch }))
     })
   )
   app.patch(
@@ -296,6 +296,21 @@ export function createApp({ store }) {
   app.delete(
     '/api/repos/:rid',
     wrap((req, res) => res.json(store.deleteRepo(Number(req.params.rid))))
+  )
+
+  // ---------- 标签级分支配置（仓库通过 tags 继承） ----------
+
+  app.get('/api/branch-configs', wrap((req, res) => res.json(store.listBranchConfigs())))
+  app.put(
+    '/api/branch-configs/:tag',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(store.upsertBranchConfig(req.params.tag, { testBranch: b.testBranch, preBranch: b.preBranch, releaseBranch: b.releaseBranch }))
+    })
+  )
+  app.delete(
+    '/api/branch-configs/:tag',
+    wrap((req, res) => res.json(store.deleteBranchConfig(req.params.tag)))
   )
 
   // ---------- 本机配置 ----------

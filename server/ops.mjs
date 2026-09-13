@@ -267,9 +267,10 @@ export async function getCommitTrack(store, cid) {
     )
   }
   const dir = resolveRepoDir(repo)
-  const branches = { test: repo.testBranch, pre: repo.preBranch, release: repo.releaseBranch }
+  const targets = store.resolveBranchTargets(repo)
+  const branches = { test: targets.test, pre: targets.pre, release: targets.release }
   const track = await gitCommitTrack(dir, commit.sha, branches)
-  return { commit, repo: { name: repo.name, localPath: repo.localPath, ...branches }, track }
+  return { commit, repo: { name: repo.name, localPath: repo.localPath, ...branches, targetSource: targets.source }, track }
 }
 
 /**
@@ -302,8 +303,9 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self' } = {}) {
         )
       }
       const dir = resolveRepoDir(repo)
-      const branches = { test: repo.testBranch, pre: repo.preBranch, release: repo.releaseBranch }
-      item.repo = { name: repo.name, ...branches }
+      const targets = store.resolveBranchTargets(repo)
+      const branches = { test: targets.test, pre: targets.pre, release: targets.release }
+      item.repo = { name: repo.name, ...branches, targetSource: targets.source }
       item.track = await gitCommitTrack(dir, c.sha, branches)
     } catch (e) {
       item.error = { code: e.code || 'ERROR', message: e.message }

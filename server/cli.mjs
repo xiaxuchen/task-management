@@ -32,6 +32,7 @@ const OPTIONS = {
   sort: { type: 'string' },
   'local-path': { type: 'string' },
   'gitlab-project': { type: 'string' },
+  tags: { type: 'string' },
   'test-branch': { type: 'string' },
   'pre-branch': { type: 'string' },
   'release-branch': { type: 'string' },
@@ -67,8 +68,11 @@ const HELP = `task-board <命令>
   attr-def add --type t --key k --label l [--data-type text|textarea|number|date|select|url] [--options '[...]'] [--required]
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
-  repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>]
-  repo update <名|id> [--local-path p] [--test-branch b] [--pre-branch b] [--release-branch b]
+  repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>] [--tags 前端,后端]
+  repo update <名|id> [--local-path p] [--tags t] [--test-branch b] [--pre-branch b] [--release-branch b]
+  branch-config list                 标签级追踪目标列表（测试/预发/上线）
+  branch-config set <标签> [--test-branch b] [--pre-branch b] [--release-branch b]
+  branch-config remove <标签>
   import --file <md 大纲> [--parent <path>] [--dry-run]
   batch --file <ops.json> [--dry-run]
   config set [--port 3210] [--gitlab-base <url>] [--gitlab-token <token>]
@@ -212,7 +216,7 @@ export async function run(argv) {
       json(store.listRepos())
       break
     case 'repo add':
-      json(store.addRepo({ name: values.name, localPath: values['local-path'], gitlabProject: values['gitlab-project'], testBranch: values['test-branch'], preBranch: values['pre-branch'], releaseBranch: values['release-branch'] }))
+      json(store.addRepo({ name: values.name, localPath: values['local-path'], gitlabProject: values['gitlab-project'], tags: values.tags, testBranch: values['test-branch'], preBranch: values['pre-branch'], releaseBranch: values['release-branch'] }))
       break
     case 'repo update': {
       const repo = store.listRepos().find((r) => r.name === ref || String(r.id) === String(ref))
@@ -221,12 +225,26 @@ export async function run(argv) {
       if (values['local-path'] !== undefined) patch.localPath = values['local-path']
       if (values['gitlab-project'] !== undefined) patch.gitlabProject = values['gitlab-project']
       if (values.note !== undefined) patch.note = values.note
+      if (values.tags !== undefined) patch.tags = values.tags
       if (values['test-branch'] !== undefined) patch.testBranch = values['test-branch']
       if (values['pre-branch'] !== undefined) patch.preBranch = values['pre-branch']
       if (values['release-branch'] !== undefined) patch.releaseBranch = values['release-branch']
       json(store.updateRepo(repo.id, patch))
       break
     }
+    case 'branch-config list':
+      json(store.listBranchConfigs())
+      break
+    case 'branch-config set':
+      json(store.upsertBranchConfig(ref, {
+        testBranch: values['test-branch'] ?? null,
+        preBranch: values['pre-branch'] ?? null,
+        releaseBranch: values['release-branch'] ?? null
+      }))
+      break
+    case 'branch-config remove':
+      json(store.deleteBranchConfig(ref))
+      break
     case 'import': {
       const md = readMaybeFile({ content: values.content, file: values.file })
       json(importOutline(store, md, { parentPath: values.parent, dryRun: !!values['dry-run'], by }))

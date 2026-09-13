@@ -295,21 +295,38 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'repo_add',
-    '新增仓库',
-    { name: z.string(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
-    async ({ name, localPath, gitlabProject, note, testBranch, preBranch, releaseBranch }) => {
-      return { content: [{ type: 'text', text: JSON.stringify(store.addRepo({ name, localPath, gitlabProject, note, testBranch, preBranch, releaseBranch }), null, 2) }] }
+    '新增仓库（tags 为逗号分隔标签，如“前端”/“后端”，分支目标可从标签继承）',
+    { name: z.string(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional(), tags: z.string().optional(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
+    async ({ name, localPath, gitlabProject, note, tags, testBranch, preBranch, releaseBranch }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.addRepo({ name, localPath, gitlabProject, note, tags, testBranch, preBranch, releaseBranch }), null, 2) }] }
     }
   )
 
   server.tool(
     'repo_update',
-    '更新仓库（含测试/预发/上线分支配置）',
-    { id: z.number(), name: z.string().optional(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
+    '更新仓库（含 tags 与测试/预发/上线分支配置）',
+    { id: z.number(), name: z.string().optional(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional(), tags: z.string().optional(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
     async ({ id, ...patch }) => {
       return { content: [{ type: 'text', text: JSON.stringify(store.updateRepo(id, patch), null, 2) }] }
     }
   )
+
+  server.tool('branch_config_list', '标签级追踪目标列表（测试/预发/上线）', async () => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.listBranchConfigs(), null, 2) }] }
+  })
+
+  server.tool(
+    'branch_config_set',
+    '设置标签的测试/预发/上线追踪目标（分支或 tag 名；仓库通过 tags 继承，仓库级非空时优先）',
+    { tag: z.string(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
+    async ({ tag, testBranch, preBranch, releaseBranch }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.upsertBranchConfig(tag, { testBranch, preBranch, releaseBranch }), null, 2) }] }
+    }
+  )
+
+  server.tool('branch_config_remove', '删除标签配置', { tag: z.string() }, async ({ tag }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.deleteBranchConfig(tag), null, 2) }] }
+  })
 
   server.tool('repo_remove', '删除仓库', { id: z.number() }, async ({ id }) => {
     return { content: [{ type: 'text', text: JSON.stringify(store.deleteRepo(id), null, 2) }] }

@@ -56,6 +56,11 @@ export default {
   repoUpdate: (id, data) => api(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   repoDelete: (id) => api(`/repos/${id}`, { method: 'DELETE' }),
 
+  // 标签级分支配置
+  branchConfigs: () => api('/branch-configs'),
+  branchConfigSet: (tag, data) => api(`/branch-configs/${encodeURIComponent(tag)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  branchConfigRemove: (tag) => api(`/branch-configs/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
+
   // 配置
   configGet: () => api('/config'),
   configSet: (data) => api('/config', { method: 'PUT', body: JSON.stringify(data) }),
