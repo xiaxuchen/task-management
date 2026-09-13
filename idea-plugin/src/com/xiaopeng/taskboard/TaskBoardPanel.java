@@ -115,22 +115,61 @@ public class TaskBoardPanel extends JPanel {
             reviewSummary.setText("请先从节点树进入一个节点");
             return;
         }
+        final long nodeId = currentNodeId;
+        final String nodeName = currentNodeName;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
-                JsonArray docs = api.nodeDocuments(currentNodeId);
+                JsonArray docs = api.nodeDocuments(nodeId);
                 String prdUrl = null;
                 try {
-                    prdUrl = findPrdUrl(currentNodeId);
+                    prdUrl = findPrdUrl(nodeId);
                 } catch (Exception ignore) {
                     // 无 PRD 链接不阻断
                 }
+                // 实时拉取当前节点（子树）全量变更：不依赖面板缓存（切节点后立即点击也正确）
+                List<DiffOpener.FileDiff> layoutFiles = new ArrayList<>();
+                String layoutTitle = nodeName + " · 全部变更";
+                try {
+                    JsonObject tracks = api.nodeTracks(nodeId, "subtree");
+                    JsonArray items = tracks != null ? tracks.getAsJsonArray("items") : null;
+                    if (items != null && items.size() > 0) {
+                        long[] cids = new long[items.size()];
+                        for (int i = 0; i < items.size(); i++) {
+                            cids[i] = items.get(i).getAsJsonObject()
+                                    .getAsJsonObject("commit").get("id").getAsLong();
+                        }
+                        JsonObject combined = api.combinedDiff(cids);
+                        JsonArray repos = combined.getAsJsonArray("repos");
+                        if (repos != null) {
+                            for (JsonElement rel : repos) {
+                                JsonArray fs = rel.getAsJsonObject().getAsJsonArray("files");
+                                if (fs == null) continue;
+                                for (JsonElement fe : fs) {
+                                    JsonObject f = fe.getAsJsonObject();
+                                    if (f.has("binary") && f.get("binary").getAsBoolean()) continue;
+                                    layoutFiles.add(new DiffOpener.FileDiff(
+                                            f.get("path").getAsString(),
+                                            str(f, "old", ""),
+                                            str(f, "new", "")));
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignore) {
+                    // 实时失败时退回面板当前缓存
+                }
+                if (layoutFiles.isEmpty() && aggregateFiles != null && !aggregateFiles.isEmpty()) {
+                    layoutFiles = aggregateFiles;
+                    layoutTitle = aggregateTitle;
+                }
+                final List<DiffOpener.FileDiff> finalFiles = layoutFiles;
+                final String finalLayoutTitle = layoutTitle;
                 final JsonArray finalDocs = docs;
                 final String finalPrdUrl = prdUrl;
                 SwingUtilities.invokeLater(() -> {
-                    // 1) 左侧：diff（优先当前聚合变更，其次选中 commit）
-                    List<DiffOpener.FileDiff> files = aggregateFiles;
-                    if (files != null && !files.isEmpty()) {
-                        DiffOpener.openCombined(project, aggregateTitle, files, null);
+                    // 1) 左侧：diff（当前节点全量变更）
+                    if (finalFiles != null && !finalFiles.isEmpty()) {
+                        DiffOpener.openCombined(project, finalLayoutTitle, finalFiles, null);
                     } else {
                         CommitItem sel = selectedCommit();
                         if (sel != null) DiffOpener.open(project, api, sel.cid, sel.sha, null);
@@ -147,7 +186,7 @@ public class TaskBoardPanel extends JPanel {
                     // 3) 右侧：PRD（飞书，再右分屏）
                     if (finalPrdUrl != null) {
                         try {
-                            PrdVirtualFile prdVf = PrdOpener.prepare(project, finalPrdUrl, currentNodeName);
+                            PrdVirtualFile prdVf = PrdOpener.prepare(project, finalPrdUrl, nodeName);
                             EditorWindow base = docWin != null ? docWin : femEx.getCurrentWindow();
                             if (prdVf != null && base != null) {
                                 base.split(JSplitPane.HORIZONTAL_SPLIT, true, prdVf, true);
@@ -164,8 +203,8 @@ public class TaskBoardPanel extends JPanel {
                     });
                     t.setRepeats(false);
                     t.start();
-                    reviewSummary.setText("已铺对照布局：diff + 需求概设" + (finalPrdUrl != null ? " + PRD" : "")
-                            + "（可拖分隔条调整宽度）");
+                    reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件） + 需求概设"
+                            + (finalPrdUrl != null ? " + PRD" : "") + "（可拖分隔条调整宽度）");
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
@@ -639,6 +678,9 @@ public class TaskBoardPanel extends JPanel {
     private void enterReview(NodeData d) {
         currentNodeId = d.id;
         currentNodeName = d.name;
+        // 切换节点时清空聚合缓存，避免对照布局误用上一个节点的数据
+        aggregateFiles = new ArrayList<>();
+        aggregateTitle = "";
         reviewSummary.setText("加载中…（" + d.name + "）");
         detailRoot.removeAllChildren();
         detailModel.reload();
