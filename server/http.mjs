@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 
@@ -263,6 +263,10 @@ export function createApp({ store }) {
       const b = req.body || {}
       res.json(store.updateCommitReview(Number(req.params.cid), { reviewStatus: b.reviewStatus, note: b.note }, actorOf(req)))
     })
+  )
+  app.post(
+    '/api/commits/combined-diff',
+    wrap(async (req, res) => res.json(await getCombinedDiff(store, (req.body || {}).cids)))
   )
 
   // ---------- commit diff 预览 ----------

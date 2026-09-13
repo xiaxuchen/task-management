@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, showFileAt as gitShowFileAt } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -30,6 +30,7 @@ export const TOOLS = [
   'commit_add',
   'commit_remove',
   'commit_review',
+  'commit_combined_diff',
   'agent_run',
   'agent_runs_list',
   'repo_list',
@@ -217,6 +218,90 @@ export async function getCommitDiff(store, cid) {
   const dir = resolveRepoDir(repo)
   const diff = await gitCommitDiff(dir, commit.sha)
   return { commit, repo: { name: repo.name, localPath: repo.localPath }, ...diff }
+}
+
+const COMBINED_TEXT_LIMIT = 200 * 1024
+
+/**
+ * 多 commit 合并 diff（MR 式 review）：按仓库分组、文件取并集；
+ * 每个文件的 old = 涉及它最早的 commit 的父版本，new = 最新的 commit 的版本（净变更）；
+ * 统计为各 commit 该文件增删之和（近似值，用于概览）。
+ */
+export async function getCombinedDiff(store, cids) {
+  const idList = (Array.isArray(cids) ? cids : []).map((n) => Number(n)).filter((n) => Number.isFinite(n))
+  if (idList.length === 0) {
+    throw new AppError(CODES.VALIDATION_FAILED, 'cids 不能为空', {})
+  }
+  const commits = idList.map((id) => store.getCommit(id))
+  const reposByName = new Map(store.listRepos().map((r) => [r.name, r]))
+  const byRepo = new Map()
+  for (const c of commits) {
+    if (!c.repo) throw new AppError(CODES.REPO_NOT_REGISTERED, `提交 ${c.sha} 未标注仓库`, { sha: c.sha })
+    if (!byRepo.has(c.repo)) byRepo.set(c.repo, [])
+    byRepo.get(c.repo).push(c)
+  }
+
+  const out = []
+  for (const [repoName, list] of byRepo) {
+    const repo = reposByName.get(repoName)
+    if (!repo) throw new AppError(CODES.REPO_NOT_REGISTERED, `仓库 ${repoName} 未登记（先 repo add）`, { repo: repoName })
+    const dir = resolveRepoDir(repo)
+
+    // 每个 commit 的 stat + 时间，按时间升序（old 取最早、new 取最晚）
+    const withStat = []
+    for (const c of list) {
+      const stat = await gitCommitStat(dir, c.sha).catch(() => [])
+      const ts = await gitCommitTime(dir, c.sha).catch(() => 0)
+      withStat.push({ commit: c, stat, ts })
+    }
+    withStat.sort((a, b) => a.ts - b.ts)
+
+    // 文件并集
+    const filesMap = new Map()
+    withStat.forEach((item, idx) => {
+      for (const f of item.stat) {
+        let agg = filesMap.get(f.path)
+        if (!agg) {
+          agg = { path: f.path, additions: 0, deletions: 0, binary: false, shas: [], firstIdx: idx, lastIdx: idx }
+          filesMap.set(f.path, agg)
+        }
+        agg.additions += f.additions || 0
+        agg.deletions += f.deletions || 0
+        agg.binary = agg.binary || !!f.binary
+        agg.shas.push(item.commit.sha)
+        agg.lastIdx = idx
+      }
+    })
+
+    // 逐文件计算净变更 old/new
+    const files = []
+    for (const agg of filesMap.values()) {
+      const first = withStat[agg.firstIdx].commit
+      const last = withStat[agg.lastIdx].commit
+      let oldText = ''
+      let newText = ''
+      if (!agg.binary) {
+        const oldRaw = await gitShowFileAt(dir, `${first.sha}^`, agg.path)
+        if (oldRaw != null) oldText = oldRaw.slice(0, COMBINED_TEXT_LIMIT)
+        const newRaw = await gitShowFileAt(dir, last.sha, agg.path)
+        if (newRaw != null) newText = newRaw.slice(0, COMBINED_TEXT_LIMIT)
+      }
+      files.push({
+        path: agg.path,
+        additions: agg.additions,
+        deletions: agg.deletions,
+        binary: agg.binary,
+        old: oldText,
+        new: newText,
+        shas: agg.shas,
+        firstSha: first.sha,
+        lastSha: last.sha
+      })
+    }
+    out.push({ repo: { name: repo.name, localPath: repo.localPath }, files })
+  }
+
+  return { count: commits.length, repos: out }
 }
 
 /**

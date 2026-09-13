@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -27,6 +27,7 @@ const OPTIONS = {
   prompt: { type: 'string' },
   model: { type: 'string' },
   cwd: { type: 'string' },
+  ids: { type: 'string' },
   confirm: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   actor: { type: 'string' },
@@ -75,6 +76,7 @@ const HELP = `task-board <命令>
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
   commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
+  commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
   agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>]   触发 agent 执行（默认 qodercli，异步）
   agent runs <ref>                   agent 运行历史（含输出）
   repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>] [--tags 前端,后端]
@@ -211,6 +213,9 @@ export async function run(argv) {
     }
     case 'commit review':
       json(store.updateCommitReview(Number(ref), { reviewStatus: values['review-status'], note: values['review-note'] }, by))
+      break
+    case 'commit combined-diff':
+      json(await getCombinedDiff(store, String(values.ids || '').split(',').map((s) => Number(s.trim()))))
       break
     case 'agent run': {
       const node = store.resolveRef(ref)

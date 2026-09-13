@@ -78,7 +78,7 @@ function parseNumstat(out) {
     })
 }
 
-async function showFileAt(dir, rev, filePath) {
+export async function showFileAt(dir, rev, filePath) {
   try {
     return await git(dir, ['show', `${rev}:${filePath}`])
   } catch {
@@ -123,6 +123,12 @@ export async function commitDiff(dir, sha) {
   }
 
   return { sha: fullSha, shortSha: fullSha.slice(0, 9), author, authorEmail, date, subject, branches: await branchesContaining(dir, fullSha), files }
+}
+
+/** commit 时间戳（秒） */
+export async function commitTime(dir, sha) {
+  const r = await git(dir, ['show', '-s', '--format=%at', sha])
+  return Number(r.trim())
 }
 
 /** 包含该提交的分支（本地 + 远程，去重去 origin/ 前缀，限 8 个） */

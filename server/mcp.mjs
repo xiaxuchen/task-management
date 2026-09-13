@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 
 export function createMcpServer({ store }) {
@@ -281,6 +281,15 @@ export function createMcpServer({ store }) {
     async ({ ref, sha, repo, note }) => {
       const node = store.resolveRef(ref)
       return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note }, 'ai'), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'commit_combined_diff',
+    '多个 commit 的合并变更（MR 式）：按仓库分组、文件并集，每个文件 old=最早 commit 父版本、new=最新 commit 版本',
+    { cids: z.array(z.number()) },
+    async ({ cids }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(await getCombinedDiff(store, cids), null, 2) }] }
     }
   )
 
