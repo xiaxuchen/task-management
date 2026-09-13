@@ -22,8 +22,23 @@
 2. 扫描 `sel` 中 `issue` 状态 → 有则 `Messages.showWarningDialog` 列出清单（标题「无法标记通过」），**不执行**
 3. 无 issue → 走原 `markChecked("approved", null)`
 
+## 缺陷登记与 AI 修复（已交付）
+
+**登记**（Review 顶栏「登记缺陷」）：
+1. 输入标题（showInputDialog）+ 描述（showMultilineInputDialog）
+2. 自动取 diff 上下文（焦点编辑器或 `lastSelectionEditor` 回退）→ 文件/行号/选中片段
+3. `POST /api/nodes { parentId=当前节点, type=defect, name=标题 }` 创建缺陷节点
+4. `documents/upsert` 写「缺陷描述」文档（标题 + 描述 + 位置 + 选中代码）
+5. 弹窗询问「派给 Qoder / 稍后」
+
+**驱动 AI**（选「派给 Qoder」）：
+- `dispatchDefectToQoder`：提示词 = 缺陷标题 + 描述 + 位置（文件/行号）+ 选中代码 + 修复要求
+  （含"可使用 task-board MCP 工具回写状态"）
+- 经 `QoderOpener.dispatch`：打开 Qoder 面板 + 新会话 + 剪贴板就绪 → ⌘V+回车
+
+**闭环**：缺陷节点在树中可见 → 双击进 Review（可挂修复 commit）→ 审查通过。
+
 ## 后续候选
 
-- 「新建缺陷」：插件登记 defect 节点（关联当前节点）
-- 问题闭环状态机（issue → fixed → verified）+ 后端强约束
 - 在 IDEA 内以 Markdown 编辑节点文档
+- 问题闭环状态机（issue → fixed → verified）+ 后端强约束
