@@ -127,6 +127,16 @@
 - **修复**：去掉 `setCaretPosition(0)`，改 `invokeLater + scrollRectToVisible(new Rectangle(0,0,1,1))`
 - **教训**：JEditorPane 渲染 HTML 时**避免 setCaretPosition**；排查 EDT 卡死用 **jstack 直接看 AWT-EventQueue 栈**最快
 
+### 修复升级：JEditorPane → JTextArea（彻底）
+
+- **第一轮**（去 setCaretPosition）无效；**第二轮**（禁 caret）仍无效——
+  jstack 二次实锤：`BasicTextUI.getPreferredSize → BoxView.layout → View.append` 死循环
+  （HTML 布局在 IDEA 容器反复询问尺寸时无限追加 view）
+- **最终方案**：详情面板改 **JTextArea 纯文本**（`mdToText` 净化 markdown：去 # 与代码围栏），
+  **彻底绕开 HTML 布局**；PRD 改顶栏「PRD」按钮（内置 JCEF tab 打开）
+- **教训**：**Swing JEditorPane 的 HTML 渲染（尤其 text/html + 复杂样式/中文）在 IDEA 嵌套容器里不可靠**，
+  只读展示场景优先 JTextArea/Browser（JCEF）；排查 EDT 卡死第一步永远是 **jstack 看 AWT-EventQueue 栈**
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
