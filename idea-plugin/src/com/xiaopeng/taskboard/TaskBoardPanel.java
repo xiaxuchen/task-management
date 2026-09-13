@@ -1616,7 +1616,10 @@ public class TaskBoardPanel extends JPanel {
     /** Review 工具条（开关点击后刷新勾选状态） */
     private ActionToolbar reviewToolbar;
     /** Select 视图右侧详情面板 */
-    private final javax.swing.JEditorPane selectDetailPane = new javax.swing.JEditorPane();
+    /** 详情区：JTextArea（纯文本）——JEditorPane 的 HTML 布局在 IDEA 容器里会 BoxView 死循环（jstack 实锤），故不用 HTML 渲染 */
+    private final javax.swing.JTextArea selectDetailPane = new javax.swing.JTextArea();
+    /** 当前详情节点的飞书 PRD 链接（「PRD」按钮用） */
+    private String selectDetailPrdUrl;
     /** 详情已加载的节点 id（避免重复拉取） */
     private long selectDetailLoadedId = -1;
     /** 详情已加载的节点名（供内置打开 PRD 时作 tab 标题） */
@@ -1686,6 +1689,7 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "拷贝上下文", "复制选中节点的上下文（节点信息+文档+PRD）到剪贴板", AllIcons.Actions.Copy, this::copySelectContext);
         addAction(group, "拷贝节点ID", "复制选中节点的 id 与名称（如 114 · 1.4 新增…）", AllIcons.Actions.Show, this::copySelectNodeId);
         addAction(group, "搜索", "按名称搜索节点并定位", AllIcons.Actions.Find, this::searchSelectNode);
+        addAction(group, "PRD", "在 IDEA 内置 PRD tab（JCEF）打开当前节点的飞书 PRD", AllIcons.General.Web, this::openSelectPrd);
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardSelect", group, true);
         toolbar.setTargetComponent(this);
 
@@ -1711,30 +1715,14 @@ public class TaskBoardPanel extends JPanel {
         });
         // 单击选中 → 右侧详情（需求/设计/文档/PRD）
         selectTree.getSelectionModel().addTreeSelectionListener(e -> loadSelectDetail());
-        // 布局：左树右详情
+        // 布局：左树右详情（纯文本 JTextArea，规避 JEditorPane HTML 布局死循环）
         selectDetailPane.setEditable(false);
-        selectDetailPane.setContentType("text/html");
-        // 根治 EDT 卡死：禁用 caret（否则 DefaultCaret.repaintNewCaret → HTML BoxView 布局死循环）
-        selectDetailPane.setFocusable(false);
-        if (selectDetailPane.getCaret() instanceof javax.swing.text.DefaultCaret dc) {
-            dc.setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
-        }
-        selectDetailPane.setText("<html><body style='padding:10px;color:#888'>单击节点查看详情（需求 / 设计 / 文档 / PRD）<br><br>双击进入 Review</body></html>");
-        selectDetailPane.addHyperlinkListener(ev -> {
-            if (ev.getEventType() == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
-                try {
-                    String url = ev.getURL() != null ? ev.getURL().toString() : ev.getDescription();
-                    if (url != null && url.contains("feishu.cn")) {
-                        // 飞书链接：优先在 IDEA 内置 PRD tab（JCEF）打开，与「对照布局」展示一致
-                        PrdOpener.open(project, url, selectDetailLoadedName);
-                    } else {
-                        BrowserUtil.browse(ev.getURL());
-                    }
-                } catch (Throwable ignore) {
-                    // 链接打开失败忽略
-                }
-            }
-        });
+        selectDetailPane.setLineWrap(true);
+        selectDetailPane.setWrapStyleWord(true);
+        selectDetailPane.setFont(new java.awt.Font("Menlo", java.awt.Font.PLAIN, 12));
+        selectDetailPane.setMargin(new java.awt.Insets(10, 10, 10, 10));
+        selectDetailPane.setText("单击节点查看详情（需求 / 设计 / 文档 / PRD）\n" +
+                "双击进入 Review\n\n（PRD 链接用顶栏「PRD」按钮打开）");
         JSplitPane selectSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
                 ScrollPaneFactory.createScrollPane(selectTree, true),
                 ScrollPaneFactory.createScrollPane(selectDetailPane, true));
@@ -1742,6 +1730,25 @@ public class TaskBoardPanel extends JPanel {
         selectSplit.setResizeWeight(0.45);
         p.add(selectSplit, BorderLayout.CENTER);
         return p;
+    }
+
+    /** markdown → 纯文本（去 # 标记与代码围栏，保留正文；供 JTextArea 详情面板） */
+    private static String mdToText(String md) {
+        if (md == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : md.replace("\r\n", "\n").split("\n", -1)) {
+            String t = line;
+            if (t.trim().startsWith("```")) {
+                continue;
+            }
+            if (t.startsWith("#")) {
+                t = t.replaceAll("^#+\\s*", "");
+            }
+            sb.append(t).append("\n");
+        }
+        return sb.toString();
     }
 
     /** 轻量 markdown → HTML（标题/列表/代码块/行内代码/链接/粗体；供详情面板渲染） */
@@ -1835,7 +1842,7 @@ public class TaskBoardPanel extends JPanel {
         diag("loadSelectDetail 开始 id=" + d.id + " name=" + d.name);
         selectDetailLoadedId = d.id;
         selectDetailLoadedName = d.name;
-        selectDetailPane.setText("<html><body style='padding:10px;color:#888'>加载中…（" + esc(d.name) + "）</body></html>");
+        selectDetailPane.setText("加载中…（" + d.name + "）");
         final long id = d.id;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
@@ -1855,44 +1862,45 @@ public class TaskBoardPanel extends JPanel {
                         diag("loadSelectDetail 丢弃（已切到 " + selectDetailLoadedId + "）id=" + id);
                         return;
                     }
-                    StringBuilder h = new StringBuilder();
-                    h.append("<html><body style='font-family:sans-serif;padding:10px'>");
-                    h.append("<h2 style='margin:0 0 4px 0'>").append(esc(d.name)).append("</h2>");
-                    h.append("<div style='color:#888;font-size:11px'>id=").append(d.id)
-                            .append(" · ").append(esc(d.type)).append("</div>");
+                    StringBuilder t = new StringBuilder();
+                    t.append(d.name).append("\n");
+                    t.append("id=").append(d.id).append(" · ").append(d.type).append("\n");
                     if (finalPrdUrl != null) {
-                        h.append("<p>📄 <a href='").append(esc(finalPrdUrl)).append("'>飞书 PRD</a></p>");
+                        selectDetailPrdUrl = finalPrdUrl;
+                        t.append("\n📄 飞书 PRD：").append(finalPrdUrl).append("\n");
+                    } else {
+                        selectDetailPrdUrl = null;
                     }
-                    h.append("<p style='color:#888;font-size:11px'>双击节点进入 Review（diff / 审查 / 对照布局）</p>");
+                    t.append("\n双击节点进入 Review（diff / 审查 / 对照布局）\n");
                     if (finalDocs != null && finalDocs.size() > 0) {
                         for (JsonElement el : finalDocs) {
                             JsonObject doc = el.getAsJsonObject();
-                            h.append("<h3 style='margin:12px 0 4px 0;border-bottom:1px solid #eee;padding-bottom:2px'>")
-                                    .append(esc(str(doc, "name", "文档"))).append("</h3>");
-                            h.append("<div style='font-size:12px;line-height:1.6'>")
-                                    .append(mdToHtml(str(doc, "content", ""))).append("</div>");
+                            t.append("\n════════ ").append(str(doc, "name", "文档")).append(" ════════\n\n");
+                            t.append(mdToText(str(doc, "content", "")));
                         }
                     } else {
-                        h.append("<p style='color:#aaa'>（该节点暂无文档）</p>");
+                        t.append("\n（该节点暂无文档）\n");
                     }
-                    h.append("</body></html>");
                     long t1 = System.currentTimeMillis();
-                    selectDetailPane.setText(h.toString());
-                    // 注意：不能调 setCaretPosition(0)——会触发 DefaultCaret.repaintNewCaret → HTML BoxView 布局死循环（EDT 卡死）
-                    SwingUtilities.invokeLater(() -> {
-                        try {
-                            selectDetailPane.scrollRectToVisible(new java.awt.Rectangle(0, 0, 1, 1));
-                        } catch (Throwable ignore) {
-                            // 滚动失败不影响
-                        }
-                    });
-                    diag("loadSelectDetail 已 setText id=" + id + " 渲染 " + (System.currentTimeMillis() - t1) + "ms htmlLen=" + h.length());
+                    selectDetailPane.setText(t.toString());
+                    selectDetailPane.setCaretPosition(0); // JTextArea 纯文本：安全
+                    diag("loadSelectDetail 已 setText id=" + id + " 渲染 " + (System.currentTimeMillis() - t1) + "ms len=" + t.length());
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> selectDetailPane.setText(
-                        "<html><body style='padding:10px;color:#c00'>加载详情失败：" + esc(ex.getMessage()) + "</body></html>"));
+                        "加载详情失败：" + ex.getMessage()));
             }
         });
+    }
+
+    /** 打开当前详情节点的飞书 PRD（内置 JCEF tab） */
+    private void openSelectPrd() {
+        if (selectDetailPrdUrl == null || selectDetailPrdUrl.isEmpty()) {
+            selectStatus.setText("当前节点未配置飞书 PRD 链接");
+            return;
+        }
+        PrdOpener.open(project, selectDetailPrdUrl, selectDetailLoadedName);
+        selectStatus.setText("已在内置 tab 打开 PRD：" + selectDetailLoadedName);
     }
 
     /** Select 视图：当前选中的节点（未选中返回 null） */
