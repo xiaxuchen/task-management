@@ -468,7 +468,17 @@ public class TaskBoardPanel extends JPanel {
         }
         String[] info = diffFileAndLines(editor);
         if (info == null) {
-            reviewSummary.setText("当前编辑器不是 task-board 的 diff 视图");
+            String vfDesc;
+            try {
+                VirtualFile vf0 = editor.getVirtualFile();
+                vfDesc = vf0 == null ? "null" : vf0.getClass().getSimpleName() + ":" + vf0.getName();
+            } catch (Throwable t) {
+                vfDesc = "err";
+            }
+            VirtualFile chainVf = DiffOpener.currentFile();
+            String chainDesc = chainVf == null ? "null" : chainVf.getClass().getSimpleName();
+            diag("addComment: 未定位到变更文件 vf=" + vfDesc + ", chain=" + chainDesc);
+            reviewSummary.setText("未定位到变更文件（vf=" + vfDesc + "）——已记日志");
             return;
         }
         String content = Messages.showMultilineInputDialog(project,
