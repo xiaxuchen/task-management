@@ -415,6 +415,21 @@ export function createMcpServer({ store }) {
     return { content: [{ type: 'text', text: JSON.stringify(maskToken(loadConfig()), null, 2) }] }
   })
 
+  server.tool('agent_run_get', '读取 agent 运行记录（测试/派单；含输出，200KB 截断）', { id: z.number() }, async ({ id }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.getAgentRun(id), null, 2) }] }
+  })
+
+  server.tool(
+    'agent_run_update',
+    '回写 agent 运行结果（Qoder IDE 完成任务后调用：追加输出 + 置为 success/failed/timeout）',
+    { id: z.number(), status: z.enum(['success', 'failed', 'timeout']), output: z.string().optional() },
+    async ({ id, status, output }) => {
+      if (output) store.appendAgentRunOutput(id, output)
+      const run = store.finishAgentRun(id, { status })
+      return { content: [{ type: 'text', text: JSON.stringify(run, null, 2) }] }
+    }
+  )
+
   server.tool(
     'config_set',
     '更新配置',

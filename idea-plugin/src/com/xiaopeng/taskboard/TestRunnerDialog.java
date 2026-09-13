@@ -19,6 +19,7 @@ import java.util.List;
  */
 public class TestRunnerDialog extends DialogWrapper {
 
+    private final Project project;
     private final TaskBoardApi api;
     private final long nodeId;
 
@@ -26,12 +27,14 @@ public class TestRunnerDialog extends DialogWrapper {
     private final JTextArea outputArea = new JTextArea(18, 80);
     private final JComboBox<String> historyBox = new JComboBox<>();
     private final JLabel statusLabel = new JLabel(" ");
-    private final JButton runButton = new JButton("▶ 运行（qodercli · DeepSeek-Flash）");
+    private final JButton runButton = new JButton("▶ 后台运行（qodercli · DeepSeek-Flash）");
+    private final JButton qoderButton = new JButton("⚡ 在 Qoder IDE 运行（前台）");
     private final List<RunItem> runs = new ArrayList<>();
     private Timer pollTimer;
 
     public TestRunnerDialog(Project project, TaskBoardApi api, long nodeId, String nodeName) {
         super(project);
+        this.project = project;
         this.api = api;
         this.nodeId = nodeId;
         setTitle("测试运行 · " + nodeName);
@@ -50,10 +53,14 @@ public class TestRunnerDialog extends DialogWrapper {
         promptArea.setWrapStyleWord(true);
         top.add(new JScrollPane(promptArea), BorderLayout.CENTER);
         JPanel runRow = new JPanel(new BorderLayout(8, 0));
-        runRow.add(runButton, BorderLayout.WEST);
+        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        btnRow.add(runButton);
+        btnRow.add(qoderButton);
+        runRow.add(btnRow, BorderLayout.WEST);
         runRow.add(statusLabel, BorderLayout.CENTER);
         top.add(runRow, BorderLayout.SOUTH);
         runButton.addActionListener(e -> startRun());
+        qoderButton.addActionListener(e -> startQoderRun());
         p.add(top, BorderLayout.NORTH);
 
         JPanel center = new JPanel(new BorderLayout(4, 4));
@@ -206,6 +213,51 @@ public class TestRunnerDialog extends DialogWrapper {
                 });
             }
         });
+    }
+
+    // ---------- 在 Qoder IDE 前台运行 ----------
+
+    /** 在 Qoder IDE（前台 Agent）运行：建 run（ideMode）→ 打开 Qoder + 提示词就绪 */
+    private void startQoderRun() {
+        String prompt = promptArea.getText().trim();
+        if (prompt.isEmpty()) {
+            statusLabel.setText("请先输入提示词");
+            return;
+        }
+        qoderButton.setEnabled(false);
+        statusLabel.setText("提交给 Qoder IDE…");
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonObject run = api.startAgentRun(nodeId, prompt, true);
+                long rid = run.get("id").getAsLong();
+                String fullPrompt = buildQoderPrompt(prompt, rid);
+                RunItem item = from(run);
+                SwingUtilities.invokeLater(() -> {
+                    qoderButton.setEnabled(true);
+                    runs.add(0, item);
+                    refreshBox();
+                    historyBox.setSelectedIndex(0);
+                    showSelectedRun();
+                    boolean ok = QoderOpener.dispatch(project, fullPrompt);
+                    statusLabel.setText(ok
+                            ? "已在 Qoder 打开（run #" + rid + "）——粘贴（⌘V）+ 回车发送"
+                            : "提示词已复制（run #" + rid + "）——请手动打开 Qoder 面板粘贴发送");
+                });
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> {
+                    qoderButton.setEnabled(true);
+                    statusLabel.setText("提交失败：" + e.getMessage());
+                });
+            }
+        });
+    }
+
+    /** 给 Qoder Agent 的完整提示词（附带 run 编号与回写说明） */
+    private String buildQoderPrompt(String userPrompt, long runId) {
+        return userPrompt
+                + "\n\n---\n（本条任务对应 task-board 运行记录 #" + runId
+                + "。完成后请调用 task-board MCP 工具 agent_run_update（id=" + runId
+                + "，status=success/failed，output=结论摘要）回写结果。）";
     }
 
     // ---------- 轮询（2s） ----------

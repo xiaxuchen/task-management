@@ -265,9 +265,9 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
-    // ---------- Qoder 联动：派任务给 Qoder Agent（终端） ----------
+    // ---------- Qoder 联动：派任务给 Qoder IDE（前台 Agent） ----------
 
-    /** 派给 Qoder：生成任务提示词 → 新终端自动启动 qodercli 执行（可见可交互） */
+    /** 派给 Qoder（IDE 前台）：生成任务提示词 → 打开 Qoder 面板 + 剪贴板就绪（⌘V+回车即发） */
     private void dispatchToQoder() {
         if (currentNodeId < 0) {
             reviewSummary.setText("请先从节点树进入一个节点");
@@ -284,25 +284,12 @@ public class TaskBoardPanel extends JPanel {
                 } catch (Exception ignore) {
                     // 无 PRD 不阻断
                 }
-                final String prompt = buildDispatchPrompt(nodeName, docs, prdUrl);
-                Path dir = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard");
-                Files.createDirectories(dir);
-                final Path file = dir.resolve("dispatch-prompt.md");
-                Files.writeString(file, prompt);
+                String prompt = buildDispatchPrompt(nodeName, docs, prdUrl);
                 SwingUtilities.invokeLater(() -> {
-                    try {
-                        org.jetbrains.plugins.terminal.TerminalView tv =
-                                org.jetbrains.plugins.terminal.TerminalView.getInstance(project);
-                        String workDir = project.getBasePath() != null
-                                ? project.getBasePath() : System.getProperty("user.home");
-                        org.jetbrains.plugins.terminal.ShellTerminalWidget widget =
-                                tv.createLocalShellWidget(workDir, "Qoder·" + nodeName);
-                        widget.executeCommand("qodercli \"$(cat '" + file + "')\"");
-                        reviewSummary.setText("已派给 Qoder：新终端「Qoder·" + nodeName
-                                + "」正在启动执行（可在终端直接追问）");
-                    } catch (Throwable t) {
-                        reviewSummary.setText("派给 Qoder 失败：" + t.getMessage() + "（可改用「复制上下文」手动粘贴）");
-                    }
+                    boolean ok = QoderOpener.dispatch(project, prompt);
+                    reviewSummary.setText(ok
+                            ? "已打开 Qoder 面板并复制任务提示词（" + nodeName + "）——粘贴（⌘V）+ 回车发送"
+                            : "任务提示词已复制（" + nodeName + "）——请手动打开 Qoder 面板粘贴发送");
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("生成提示词失败：" + ex.getMessage()));
@@ -830,7 +817,7 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
-        addAction(group, "派给 Qoder", "生成任务提示词并在新终端启动 qodercli 执行（可见可交互，可继续追问）", AllIcons.Actions.RunAll, this::dispatchToQoder);
+        addAction(group, "派给 Qoder", "生成任务提示词并打开 Qoder IDE 面板（提示词已复制，粘贴+回车即发送）", AllIcons.Actions.RunAll, this::dispatchToQoder);
 
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         toolbar.setTargetComponent(this);

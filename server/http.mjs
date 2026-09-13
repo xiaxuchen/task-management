@@ -309,7 +309,7 @@ export function createApp({ store }) {
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
       const b = req.body || {}
-      res.status(201).json(startAgentRun(store, node.id, { prompt: b.prompt, agent: b.agent, model: b.model, cwd: b.cwd }, actorOf(req)))
+      res.status(201).json(startAgentRun(store, node.id, { prompt: b.prompt, agent: b.agent, model: b.model, cwd: b.cwd, ideMode: !!b.ideMode }, actorOf(req)))
     })
   )
   app.get(

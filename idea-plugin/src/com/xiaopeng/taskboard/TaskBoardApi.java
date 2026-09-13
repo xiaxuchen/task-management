@@ -72,8 +72,16 @@ public class TaskBoardApi {
 
     /** 触发 agent 运行（异步；默认 qodercli + DeepSeek-Flash） */
     public JsonObject startAgentRun(long nodeId, String prompt) throws Exception {
+        return startAgentRun(nodeId, prompt, false);
+    }
+
+    /** ideMode=true：只创建运行记录（由 Qoder IDE 前台会话执行），不后台 spawn */
+    public JsonObject startAgentRun(long nodeId, String prompt, boolean ideMode) throws Exception {
         JsonObject body = new JsonObject();
         body.addProperty("prompt", prompt);
+        if (ideMode) {
+            body.addProperty("ideMode", true);
+        }
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-runs"))
                 .timeout(Duration.ofSeconds(30))
                 .header("content-type", "application/json")

@@ -39,8 +39,16 @@ export function resolveRunCwd(store, nodeId) {
 /**
  * 创建并启动一次 agent 运行（异步执行，立即返回 run；结果用 getAgentRun / listAgentRuns 查询）
  */
-export function startAgentRun(store, nodeId, { prompt, agent = DEFAULT_AGENT, model = DEFAULT_MODEL, cwd = null } = {}, by = 'user') {
+export function startAgentRun(store, nodeId, { prompt, agent = DEFAULT_AGENT, model = DEFAULT_MODEL, cwd = null, ideMode = false } = {}, by = 'user') {
   const dir = cwd || resolveRunCwd(store, nodeId)
+  if (ideMode) {
+    // 前台（Qoder IDE）模式：只创建运行记录，不 spawn；由 IDE 会话执行，完成后经 MCP/HTTP 回写
+    return store.createAgentRun(
+      nodeId,
+      { agent: agent === DEFAULT_AGENT ? 'qoder-ide' : agent, model, prompt, cwd: dir || null },
+      by
+    )
+  }
   if (!dir) {
     throw new AppError(
       CODES.VALIDATION_FAILED,
