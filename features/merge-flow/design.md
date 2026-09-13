@@ -79,6 +79,17 @@
 - CHILD_TYPES 放开：`requirement → [group, subreq]`、`group → [group, subreq, task, defect]`
 - 实测：分支组 158（feature-send-receive）→ 64 条提交 / 未合并 15
 
+## 性能优化（分支组视图 20.7s → 0.6s，33 倍）
+
+- **问题**：64 条提交 × (is-ancestor × 1 + commitTrack × 3) ≈ 256 次 git 进程
+- **修复**：
+  1. **分支标注批量化**：每仓库一次 `git log <需求分支> --format=%H` → Set(sha)，
+     提交用**前缀匹配**（登记可能是短 sha）——替代逐条 `merge-base --is-ancestor`
+  2. **light 模式**：`?light=true` 跳过逐条 `commitTrack`（测试/预发/上线追踪，插件 Review 不需要），
+     插件 `nodeTracks` 默认带 light；网页保持全量
+  3. **bug 修复**：短 sha 直接 `Set.has(40位sha)` 永不命中 → 改为前缀匹配
+- 实测：分支组 158 → 20.7s → **0.62s**（48 已合入 / 16 未合并）
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
