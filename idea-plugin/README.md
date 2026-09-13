@@ -6,15 +6,17 @@
 
 | 区域 | 能力 |
 |---|---|
-| **任务视图（工具窗）** | 需求树双击进入 Review；工具窗另含「网页」（内嵌 task-board 前端）tab |
-| **Review 工作区** | 默认全选 commit → 右侧展示**合并变更**（文件并集 + 净 old/new，按仓库分组、路径压缩、原生图标与绿/红统计）；「提交列表」按钮展开勾选调整范围 |
+| **任务视图（工具窗）** | 需求树双击进入 Review；另含「网页」（内嵌 task-board 前端）tab；对照布局时自动停靠底部（高 30% 可调） |
+| **Review 工作区** | 默认全选 commit → 右侧展示**合并变更**（文件并集 + 净 old/new，按仓库分组、路径压缩、原生图标与绿/红统计）；「提交列表」展开勾选调整范围 |
 | **commit 审查** | 勾选后批量：标记通过 / 标记有问题（意见）/ 重置待审；汇总计数与「仅看待审」 |
-| **链式 Diff** | 双击文件/commit → 编辑器区打开该 commit（或合并变更）的**全部文件 diff**（`SimpleDiffRequestChain`，平台自带上一/下一文件导航与 F7 变更导航，定位到点击文件） |
-| **需求 + 概设** | 节点文档（需求内容/设计方案）合并为 markdown，**右侧分屏**打开对照 diff；头部含 PRD 飞书链接行 |
-| **PRD（飞书）** | 编辑器区 tab（自定义 FileEditor + JCEF），首次登录后持久；`prdAnchor` 节点属性支持锚点定位 |
-| **对照布局** | 一键铺排：左 diff + 右 需求+概设（编辑器区分屏） |
-| **测试运行** | 写提示词 → qodercli（DeepSeek-Flash）在关联仓库执行，输出 2s 轮询 + 历史 |
-| **IDE 桥** | 每 3s 轮询 task-board 的 `ide_requests`，网页点「在 IDEA 查看」自动打开（单 commit 定位文件 / 多 commit 合并变更） |
+| **链式 Diff** | 编辑器区打开全部文件 diff（`SimpleDiffRequestChain`，上一/下一文件导航 + F7）；多 commit 走合并变更 |
+| **对照布局** | 一键铺排：**左 diff（宽 50% 可调）+ 右列（需求概设 ⇄ 飞书 PRD 双 tab）+ TaskBoard 底部（高 30% 可调）**；重铺前自动清场（tab/分屏不堆积） |
+| **显隐开关** | 顶栏 **☑ diff / ☑ 文档** 开关（勾选=显示、状态实时）——收起文档→diff 全宽；收起 diff→文档全宽 |
+| **布局设置** | diff 宽度% / TaskBoard 高度% 可配；拖分隔条自动记忆（应用级持久化） |
+| **PRD（飞书）** | 编辑器区 tab（自定义 FileEditor + JCEF），首次登录后持久；`prdAnchor` 支持锚点定位 |
+| **测试运行** | 「▶ 后台运行（qodercli）」或「⚡ 在 Qoder IDE 运行（前台）」（run#id 绑定，Agent 完成后 MCP 回写） |
+| **Qoder 联动** | 「派给 Qoder」派单（激活面板+新会话+提示词就绪）；「复制上下文」；**选区自动捕获**（零点击，Qoder 提问时 hook 自动注入选中代码/任务上下文，见 `features/qoder-integration/`） |
+| **IDE 桥** | 每 3s 轮询 `ide_requests`，网页点「在 IDEA 查看」自动打开（单 commit 定位文件 / 多 commit 合并变更） |
 
 ## 构建与安装
 
@@ -36,3 +38,8 @@ cp -r dist/task-board-idea "$HOME/Library/Application Support/JetBrains/IntelliJ
 - PRD tab：`PrdVirtualFile`（LightVirtualFile） + `PrdFileEditor`（JCEF，extends UserDataHolderBase） + `FileEditorProvider`（HIDE_DEFAULT_EDITOR）
 - diff 打开时按文件名取 FileType（`FileTypeManager`）以启用语法高亮
 - 平台图标体系：`AllIcons` / `FileType.getIcon()`；工具栏用 ActionToolbar 原生样式
+- 布局显隐：空分屏组由平台自动收起；「收起文档」需先定位文档所在组（关内容前），并清掉组内残留的 diff 副本（`closeFile(vf, window)`）以防"露出重复 diff"
+- 工具窗高度：`stretchHeight(value)` 是**增量**（当前高度 + value）而非目标值——传差值保证幂等（平台源码 `ToolWindowPane.stretch`）；面板需给合理 preferred 尺寸防内容撑高
+- 开关观感：`ToggleAction` 覆写 `update()` 加 ☑/☐ 前缀 + Checked 图标；点击后 `ActionToolbar.updateActionsImmediately()` 即时刷新
+- 选区捕获：`EditorFactory.getEventMulticaster().addSelectionListener(listener, project)`（project 作为 Disposable 自动清理）
+- Qoder 边界：插件无"程序化发送消息"契约 API；派单止步于"面板+剪贴板"，最后一步人工 ⌘V+回车（详见 `features/qoder-integration/design.md`）

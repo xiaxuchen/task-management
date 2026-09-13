@@ -26,7 +26,8 @@
 | 分支合并追踪（测试 / 预发 / 上线） | `branch-track/` | 计划 4 | server/git.mjs、SettingsView、NodeDrawer |
 | commit 审查（审查状态 / 意见，三入口 1:1） | `commit-registry/` | 计划 4 增强 | server/store.mjs（commits review）+ NodeDrawer |
 | 多 commit 合并 diff（MR 式净变更 + commit 明细） | `commit-registry/` | 计划 4 增强 | server/ops.mjs（getCombinedDiff）|
-| agent 测试运行（qodercli + DeepSeek-Flash） | `agent-run/` | — | server/agent.mjs |
+| agent 测试运行（qodercli 后台 / Qoder IDE 前台 ideMode） | `agent-run/` | — | server/agent.mjs |
+| **Qoder 联动**（hook 注入 / MCP 读写 / 前台派单 / 选区自动捕获） | `qoder-integration/` | — | hooks/qoder-bridge.mjs、QoderOpener + 选区监听（插件）、MCP agent_run_* |
 | 网页 → IDEA 打开 diff（IDE 桥） | `ide-bridge/` | — | server/store.mjs（ide_requests）+ DiffPane/NodeDrawer |
 | 重复检测与一键去重（+ 需求分支标注） | `duplicates/` | — | server/ops.mjs（getNodeDuplicates）+ NodeDrawer |
 
