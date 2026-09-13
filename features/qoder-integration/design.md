@@ -32,7 +32,7 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 | 当前 review（完整段） | 含 `当前review/这次变更/@review/变更文件` 等；或编号与 review 节点同源 | 读 `current-review.json`（节点 + 勾选提交 + 变更文件；2 小时新鲜） |
 | **最近选中（自动捕获）** | **无触发词：mtime ≤ 5 分钟即无条件注入**（体量 <1KB，静默失败代价大） | `last-selection.md`（选区监听写入） |
 | 任务简报（选中随行） | 触发词（`这段/选中/片段`…）或 review 类词 | `renderReviewBrief`（任务 id/名称 + 代码项目 + commit + 文件） |
-| 片段池 | 触发词（同上） | `selected-snippets.md`（体量可能大，需门控；2h 内、截断 3000 字） |
+| 片段池 | **新鲜 ≤30 分钟无条件注入；触发词时放宽到 2h** | `selected-snippets.md`（快捷键「加入上下文」追加；体量可能大，截断 3000 字） |
 
 ## 选中来源解析（如何拿到"真实文件路径"）
 
@@ -46,6 +46,21 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 | 兜底 | — | `（当前 review diff）` |
 
 **踩坑**：diff 视图里用户实际选中的是"左右编辑器"（挂 diff 内容 vf，**不是** ChainDiff），首版只认 `ChainDiffVirtualFile` 类型 → 落入兜底标签"（虚拟文件）"，用户看起来像"没拿到文件"。教训：**同一个 diff 视图存在两种虚拟文件层级（tab 层 / 内容层），取值要做回退链**。
+
+## 手动加入上下文（快捷键）
+
+**动作**：`AddToContextAction`（快捷键 **Cmd/Ctrl+Alt+C**，也在编辑器右键菜单）
+
+**选中来源自动识别**：
+1. **编辑器选区**（代码 / **需求概设 Markdown** / diff 视图）→ `getSelectedTextEditor` 取选中
+2. **JCEF 网页**（**飞书 PRD 云文档** / Markdown 预览）→ `JBCefJSQuery` + `window.getSelection()`（异步回调）
+3. 都没有 → 状态栏提示
+
+**多选累积**：每次快捷键 → 追加一条到 `selected-snippets.md`（含来源 + 时间）——**支持多个文档/文件同时选中**，池内可累积多条
+
+**注入策略**：池 **30 分钟内新鲜 → 无条件注入**（用户"挑了就是要用"）；旧池（≤2h）仅在触发词命中时带
+
+**类结构**：`PrdFileEditor.last()`（静态最近实例）+ `captureJcefSelection(cb)`；`TaskBoardPanel.lastInstance()` + `addSelectionToContextGlobal()` / `appendToContextPool()` / `sourceLabelOf()`
 
 ## 数据流
 
