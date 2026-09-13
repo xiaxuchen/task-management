@@ -49,7 +49,7 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 
 ## 手动加入上下文（快捷键）
 
-**动作**：`AddToContextAction`（快捷键 **Cmd/Ctrl+Alt+C**，也在编辑器右键菜单）
+**动作**：`AddToContextAction`（快捷键 **Ctrl+Shift+Alt+C**（Mac：Control+Shift+Option+C）—— 避开被 IDEA 占用的 Cmd+Alt+C（Change Signature 重构会报 read-only 错）；也在编辑器右键菜单）
 
 **选中来源自动识别**：
 1. **编辑器选区**（代码 / **需求概设 Markdown** / diff 视图）→ `getSelectedTextEditor` 取选中

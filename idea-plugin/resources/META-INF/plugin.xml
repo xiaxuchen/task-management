@@ -29,9 +29,9 @@
     <actions>
         <action id="TaskBoardAddToContext"
                 class="com.xiaopeng.taskboard.AddToContextAction">
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt C"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt C"/>
-            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt C"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift alt C"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="control shift alt C"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control shift alt C"/>
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
         </action>
     </actions>

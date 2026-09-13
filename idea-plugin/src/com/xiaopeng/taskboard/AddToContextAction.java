@@ -11,7 +11,7 @@ import org.jetbrains.annotations.NotNull;
  *  - 编辑器（代码 / 需求概设 Markdown / diff 视图）→ 编辑器选区文本
  *  - JCEF 网页（飞书 PRD 云文档 / Markdown 预览）→ window.getSelection()
  *
- * 快捷键：Cmd+Alt+C（macOS）/ Ctrl+Alt+C；亦在编辑器右键菜单。
+ * 快捷键：Ctrl+Shift+Alt+C（Mac 为 Control+Shift+Option+C；避开被 IDEA 占用的 Cmd+Alt+C 重构键）；亦在编辑器右键菜单。
  * 上下文池写入 ~/.taskboard/selected-snippets.md，hook 注入（30 分钟内新鲜即带，触发词放宽到 2h）。
  */
 public class AddToContextAction extends AnAction {
