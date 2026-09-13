@@ -101,6 +101,9 @@ public class TaskBoardPanel extends JPanel {
     public TaskBoardPanel(Project project) {
         super(new BorderLayout());
         this.project = project;
+        // 合理的偏好尺寸：避免底部停靠时被“内容偏好”（树/表格的巨量 preferred）撑高
+        setPreferredSize(new Dimension(900, 320));
+        setMinimumSize(new Dimension(320, 120));
         cards.add(buildSelectView(), CARD_SELECT);
         cards.add(buildReviewView(), CARD_REVIEW);
         add(cards, BorderLayout.CENTER);

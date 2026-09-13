@@ -24,6 +24,8 @@ public class TaskBoardToolWindowFactory implements ToolWindowFactory {
         try {
             if (JBCefApp.isSupported()) {
                 JBCefBrowser browser = new JBCefBrowser(TaskBoardApi.DEFAULT_BASE);
+                // 合理的偏好尺寸：避免底部停靠时内容偏好把工具窗撑高
+                browser.getComponent().setPreferredSize(new java.awt.Dimension(900, 320));
                 Content webContent = ContentFactory.getInstance()
                         .createContent(browser.getComponent(), "网页", false);
                 webContent.setDisposer(browser);
