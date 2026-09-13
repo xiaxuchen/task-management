@@ -22,21 +22,29 @@
 2. 扫描 `sel` 中 `issue` 状态 → 有则 `Messages.showWarningDialog` 列出清单（标题「无法标记通过」），**不执行**
 3. 无 issue → 走原 `markChecked("approved", null)`
 
-## 缺陷登记与 AI 修复（已交付）
+## 缺陷登记与 AI 修复（已交付，三段式流程）
 
 **登记**（Review 顶栏「登记缺陷」）：
-1. 输入标题（showInputDialog）+ 描述（showMultilineInputDialog）
+1. **单对话框**（`DefectDialog`：标题 + 描述 + 位置只读展示，一个窗口搞定）
 2. 自动取 diff 上下文（焦点编辑器或 `lastSelectionEditor` 回退）→ 文件/行号/选中片段
-3. `POST /api/nodes { parentId=当前节点, type=defect, name=标题 }` 创建缺陷节点
-4. `documents/upsert` 写「缺陷描述」文档（标题 + 描述 + 位置 + 选中代码）
-5. 弹窗询问「派给 Qoder / 稍后」
+3. `POST /api/nodes { parentId=当前节点, type=defect }` 创建缺陷节点
+4. `documents/upsert` 写「缺陷描述」文档
+5. 弹窗：「分析根因 / 稍后」
 
-**驱动 AI**（选「派给 Qoder」）：
-- `dispatchDefectToQoder`：提示词 = 缺陷标题 + 描述 + 位置（文件/行号）+ 选中代码 + 修复要求
-  （含"可使用 task-board MCP 工具回写状态"）
-- 经 `QoderOpener.dispatch`：打开 Qoder 面板 + 新会话 + 剪贴板就绪 → ⌘V+回车
+**三段式流程**（合法提交前置）：
 
-**闭环**：缺陷节点在树中可见 → 双击进 Review（可挂修复 commit）→ 审查通过。
+| 环节 | 按钮 | 行为 |
+|---|---|---|
+| ① 分析 | 「分析根因」 | 派 Qoder（`defect_analyze` 模板）输出 root cause + 修复方案；结果由 Qoder 经 MCP 回写文档「根因与修复方案」 |
+| ② 审批 | 「批准修复」 | 读「根因与修复方案」（空则拒绝）→ 弹窗展示方案 → 确认后写「修复方案审批」文档（已批准/审批人/时间） |
+| ③ 修复 | 「按方案修复」 | **检查审批文档含"已批准"**（否则拦截）→ 派 Qoder（`defect_dispatch` 模板，含已批准方案）实施 |
+
+**提示词模板机制**：
+- 存储：`config.json` 的 `promptTemplates`（默认三套：`defect_analyze` / `defect_dispatch` / `task_dispatch`）
+- 变量：`{{defectId}} {{title}} {{desc}} {{locationSection}} {{analysisSection}}` 等，插件 `applyTemplate` 注入
+- 配置入口：网页 **设置页「提示词模板」编辑区**（保存后即时生效；服务不可用时插件用内置兜底模板）
+
+**闭环**：缺陷节点在树中可见 → 三段式修复 → 修复提交登记回缺陷节点 → 审查通过。
 
 ## 后续候选
 
