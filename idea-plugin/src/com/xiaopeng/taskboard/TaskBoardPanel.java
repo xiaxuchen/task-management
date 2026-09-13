@@ -213,7 +213,7 @@ public class TaskBoardPanel extends JPanel {
                     final EditorWindow mainRef = main;
                     Timer t = new Timer(500, ev -> {
                         ((Timer) ev.getSource()).stop();
-                        applyTopSplitterProportion(mainRef, 0.70f);
+                        applyTopSplitterProportion(mainRef, LayoutPrefs.diffRatio());
                         applyTaskBoardBottom(project);
                     });
                     t.setRepeats(false);
@@ -325,7 +325,7 @@ public class TaskBoardPanel extends JPanel {
             if (tw instanceof com.intellij.openapi.wm.ex.ToolWindowEx twEx) {
                 java.awt.Window win = SwingUtilities.getWindowAncestor(tw.getComponent());
                 int frameH = win != null ? win.getHeight() : 900;
-                twEx.stretchHeight(Math.max(220, (int) (frameH * 0.30)));
+                twEx.stretchHeight(Math.max(220, (int) (frameH * LayoutPrefs.toolWindowRatio())));
             }
         } catch (Throwable ignore) {
             // 工具窗停靠失败不阻断布局
@@ -346,10 +346,30 @@ public class TaskBoardPanel extends JPanel {
             }
             if (top != null) {
                 top.setProportion(p);
+                // 记录并监听拖动（自动记住比例）
+                lastTopSplitter = top;
+                top.removePropertyChangeListener(RATIO_SAVER);
+                top.addPropertyChangeListener(RATIO_SAVER);
             }
         } catch (Throwable ignore) {
             // 平台差异时忽略
         }
+    }
+
+    /** 布局比例设置：保存后即时应用到已铺布局 */
+    private void openLayoutSettings() {
+        new LayoutSettingsDialog(project, () -> {
+            if (lastTopSplitter != null) {
+                try {
+                    lastTopSplitter.setProportion(LayoutPrefs.diffRatio());
+                } catch (Throwable ignore) {
+                    // 忽略
+                }
+            }
+            applyTaskBoardBottom(project);
+            reviewSummary.setText("布局比例已更新：diff " + Math.round(LayoutPrefs.diffRatio() * 100)
+                    + "% / TaskBoard " + Math.round(LayoutPrefs.toolWindowRatio() * 100) + "%");
+        }).show();
     }
 
     /** 上溯到需求节点取飞书 PRD 链接；节点（或需求节点）配置 prdAnchor 时拼接锚点 */
@@ -494,6 +514,16 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
+    /** 上次铺设的顶层 Splitter（供实时应用/记忆比例用） */
+    private static com.intellij.openapi.ui.Splitter lastTopSplitter;
+    /** 用户拖动分隔条时自动记住 diff 宽度比例 */
+    private static final java.beans.PropertyChangeListener RATIO_SAVER = evt -> {
+        if ("proportion".equals(evt.getPropertyName()) && evt.getSource() == lastTopSplitter
+                && evt.getNewValue() instanceof Float f) {
+            LayoutPrefs.setDiffRatio(f);
+        }
+    };
+
     /** 便捷：往动作组加一个带图标动作 */
     private void addAction(DefaultActionGroup group, String text, String desc, Icon icon, Runnable runnable) {
         group.add(new AnAction(text, desc, icon) {
@@ -619,8 +649,9 @@ public class TaskBoardPanel extends JPanel {
             new TestRunnerDialog(project, api, currentNodeId, currentNodeName).show();
         });
         group.add(Separator.getInstance());
-        addAction(group, "对照布局", "一键铺排：左侧 diff（宽70%） + 右列（需求概设⇄PRD） + TaskBoard底部", AllIcons.Actions.SplitVertically, this::openReviewLayout);
+        addAction(group, "对照布局", "一键铺排：左 diff + 右列（需求概设⇄PRD） + TaskBoard底部（比例可在「布局设置」中调整）", AllIcons.Actions.SplitVertically, this::openReviewLayout);
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
+        addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         toolbar.setTargetComponent(this);
 
