@@ -1086,6 +1086,88 @@ public class TaskBoardPanel extends JPanel {
         return p;
     }
 
+    /** 轻量 markdown → HTML（标题/列表/代码块/行内代码/链接/粗体；供详情面板渲染） */
+    private static String mdToHtml(String md) {
+        StringBuilder sb = new StringBuilder();
+        boolean inCode = false;
+        boolean inUl = false;
+        boolean inOl = false;
+        String[] lines = md.replace("\r\n", "\n").split("\n", -1);
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.startsWith("```")) {
+                if (inCode) {
+                    sb.append("</pre>");
+                    inCode = false;
+                } else {
+                    sb.append("<pre style='background:#f6f8fa;padding:8px;border-radius:4px;font-size:11px;white-space:pre-wrap'>");
+                    inCode = true;
+                }
+                continue;
+            }
+            if (inCode) {
+                sb.append(esc(line)).append("\n");
+                continue;
+            }
+            boolean isUl = t.startsWith("- ") || t.startsWith("* ");
+            boolean isOl = t.matches("^\\d+\\.\\s+.*");
+            if (!isUl && inUl) {
+                sb.append("</ul>");
+                inUl = false;
+            }
+            if (!isOl && inOl) {
+                sb.append("</ol>");
+                inOl = false;
+            }
+            if (t.isEmpty()) {
+                sb.append("<div style='height:6px'></div>");
+                continue;
+            }
+            if (t.startsWith("#### ")) {
+                sb.append("<b>").append(inlineMd(t.substring(5))).append("</b>");
+            } else if (t.startsWith("### ")) {
+                sb.append("<h4 style='margin:10px 0 4px 0'>").append(inlineMd(t.substring(4))).append("</h4>");
+            } else if (t.startsWith("## ")) {
+                sb.append("<h3 style='margin:12px 0 4px 0'>").append(inlineMd(t.substring(3))).append("</h3>");
+            } else if (t.startsWith("# ")) {
+                sb.append("<h2 style='margin:14px 0 6px 0'>").append(inlineMd(t.substring(2))).append("</h2>");
+            } else if (isUl) {
+                if (!inUl) {
+                    sb.append("<ul style='margin:4px 0'>");
+                    inUl = true;
+                }
+                sb.append("<li>").append(inlineMd(t.substring(2))).append("</li>");
+            } else if (isOl) {
+                if (!inOl) {
+                    sb.append("<ol style='margin:4px 0'>");
+                    inOl = true;
+                }
+                sb.append("<li>").append(inlineMd(t.replaceFirst("^\\d+\\.\\s+", ""))).append("</li>");
+            } else {
+                sb.append("<p style='margin:4px 0'>").append(inlineMd(t)).append("</p>");
+            }
+        }
+        if (inCode) {
+            sb.append("</pre>");
+        }
+        if (inUl) {
+            sb.append("</ul>");
+        }
+        if (inOl) {
+            sb.append("</ol>");
+        }
+        return sb.toString();
+    }
+
+    /** 行内 markdown（链接 / 粗体 / 行内代码） */
+    private static String inlineMd(String s) {
+        String h = esc(s);
+        h = h.replaceAll("\\[([^\\]]+)\\]\\(([^)]+)\\)", "<a href='$2'>$1</a>");
+        h = h.replaceAll("\\*\\*([^*]+)\\*\\*", "<b>$1</b>");
+        h = h.replaceAll("`([^`]+)`", "<code style='background:#f0f0f0;padding:0 2px'>$1</code>");
+        return h;
+    }
+
     /** 单击节点 → 加载详情（需求 / 设计 / 文档 / PRD）到右侧面板 */
     private void loadSelectDetail() {
         NodeData d = selectedSelectNode();
@@ -1123,10 +1205,10 @@ public class TaskBoardPanel extends JPanel {
                     if (finalDocs != null && finalDocs.size() > 0) {
                         for (JsonElement el : finalDocs) {
                             JsonObject doc = el.getAsJsonObject();
-                            h.append("<h3 style='margin:12px 0 4px 0'>")
+                            h.append("<h3 style='margin:12px 0 4px 0;border-bottom:1px solid #eee;padding-bottom:2px'>")
                                     .append(esc(str(doc, "name", "文档"))).append("</h3>");
-                            h.append("<pre style='white-space:pre-wrap;word-wrap:break-word;font-size:11px;background:#fafafa;padding:6px;border:1px solid #eee'>")
-                                    .append(esc(str(doc, "content", ""))).append("</pre>");
+                            h.append("<div style='font-size:12px;line-height:1.6'>")
+                                    .append(mdToHtml(str(doc, "content", ""))).append("</div>");
                         }
                     } else {
                         h.append("<p style='color:#aaa'>（该节点暂无文档）</p>");
