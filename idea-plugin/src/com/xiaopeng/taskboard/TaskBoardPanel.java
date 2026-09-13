@@ -197,16 +197,16 @@ public class TaskBoardPanel extends JPanel {
                     if (docsVf != null && main != null) {
                         docWin = main.split(JSplitPane.HORIZONTAL_SPLIT, true, docsVf, true);
                     }
-                    // 3) 右侧：PRD（飞书，在文档下方 → 右列上下结构）
+                    // 3) 右侧同一组：PRD 作为第二个 tab（与需求概设切换展示，用顶栏「文档/PRD」按钮切）
                     if (finalPrdUrl != null) {
                         try {
                             PrdVirtualFile prdVf = PrdOpener.prepare(project, finalPrdUrl, nodeName);
-                            EditorWindow base = docWin != null ? docWin : femEx.getCurrentWindow();
-                            if (prdVf != null && base != null) {
-                                base.split(JSplitPane.VERTICAL_SPLIT, true, prdVf, true);
+                            if (prdVf != null) {
+                                // focus=false：打开为 tab 但不抢激活（默认展示需求概设）
+                                FileEditorManagerEx.getInstanceEx(project).openFile(prdVf, false);
                             }
                         } catch (Throwable ignore) {
-                            // PRD 分屏失败不阻断
+                            // PRD 打开失败不阻断
                         }
                     }
                     // 4) 宽度：diff 主组约 70%；并把 TaskBoard 工具窗停靠到底部（与 diff 上下）后设高度约 30%
@@ -218,12 +218,96 @@ public class TaskBoardPanel extends JPanel {
                     });
                     t.setRepeats(false);
                     t.start();
-                    reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件，宽70%） + 右列上下（需求概设/PRD） + TaskBoard底部（可拖分隔条调整）");
+                    reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件，宽70%） + 右列（需求概设⇄PRD 用顶栏按钮切） + TaskBoard底部（高30%）");
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
             }
         });
+    }
+
+    /** 在「需求概设」与「飞书 PRD」之间切换（右列同一组内的两个 tab） */
+    private void toggleDocsPrd() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个节点");
+            return;
+        }
+        final long nodeId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonArray docs = api.nodeDocuments(nodeId);
+                String prdUrl = null;
+                try {
+                    prdUrl = findPrdUrl(nodeId);
+                } catch (Exception ignore) {
+                    // 无 PRD 不阻断
+                }
+                final JsonArray finalDocs = docs;
+                final String finalPrdUrl = prdUrl;
+                SwingUtilities.invokeLater(() -> {
+                    try {
+                        FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
+                        String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
+                                "taskboard-docs", "taskboard-需求概设.md").toString();
+                        VirtualFile docsVf = LocalFileSystem.getInstance().findFileByPath(docsPath);
+                        if (docsVf == null) {
+                            docsVf = buildDocsFile(finalDocs, finalPrdUrl);
+                        }
+                        VirtualFile prdVf = PrdOpener.currentFile();
+                        boolean prdActive = prdVf != null && isActiveFile(fem, prdVf);
+                        boolean docsAvailable = docsVf != null;
+                        if (!docsAvailable && (finalPrdUrl == null || !finalPrdUrl.isEmpty())) {
+                            // 还可尝试开 PRD
+                        }
+                        if (!docsAvailable && finalPrdUrl == null) {
+                            reviewSummary.setText("该节点暂无文档且未配置 PRD 链接");
+                            return;
+                        }
+                        if (prdActive && docsAvailable) {
+                            fem.openFile(docsVf, true);
+                            reviewSummary.setText("已切换到：需求概设");
+                            return;
+                        }
+                        // 切换到 PRD
+                        if (prdVf == null || !prdVf.isValid()) {
+                            if (finalPrdUrl == null) {
+                                if (docsAvailable) {
+                                    fem.openFile(docsVf, true);
+                                    reviewSummary.setText("未配置 PRD 链接，保持需求概设");
+                                }
+                                return;
+                            }
+                            prdVf = PrdOpener.prepare(project, finalPrdUrl, nodeName);
+                        }
+                        if (prdVf != null) {
+                            fem.openFile(prdVf, true);
+                            reviewSummary.setText("已切换到：飞书 PRD");
+                        } else if (docsAvailable) {
+                            fem.openFile(docsVf, true);
+                        }
+                    } catch (Exception ex) {
+                        reviewSummary.setText("切换失败：" + ex.getMessage());
+                    }
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("切换失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 指定文件是否当前激活 */
+    private static boolean isActiveFile(FileEditorManagerEx fem, VirtualFile vf) {
+        try {
+            for (VirtualFile f : fem.getSelectedFiles()) {
+                if (f == vf || f.equals(vf)) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignore) {
+            // 忽略
+        }
+        return false;
     }
 
     /** 把 TaskBoard 工具窗停靠到底部并占约 30% 高度（与上方 diff 形成上下结构） */
@@ -612,7 +696,8 @@ public class TaskBoardPanel extends JPanel {
         group.add(Separator.getInstance());
         addAction(group, "需求+概设", "在旁侧编辑器打开该节点的需求内容/设计方案，与 diff 对照查看", AllIcons.Actions.Preview, this::openDocsBeside);
         addAction(group, "PRD", "在编辑器区打开该需求对应的飞书 PRD（节点属性 prdAnchor 可配锚点）", AllIcons.General.Web, this::openPrd);
-        addAction(group, "对照布局", "一键铺排：左侧 diff（当前变更） + 右侧 PRD 分屏对照", AllIcons.Actions.SplitVertically, this::openReviewLayout);
+        addAction(group, "对照布局", "一键铺排：左侧 diff（宽70%） + 右列（需求概设⇄PRD） + TaskBoard底部", AllIcons.Actions.SplitVertically, this::openReviewLayout);
+        addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         toolbar.setTargetComponent(this);
 

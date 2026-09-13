@@ -15,6 +15,11 @@ public class PrdOpener {
 
     private static VirtualFile current;
 
+    /** 当前 PRD 虚拟文件（未打开时为 null；供切换按钮判断） */
+    public static VirtualFile currentFile() {
+        return current;
+    }
+
     /** 关闭当前 PRD tab（对照布局重铺前清场用） */
     public static void closeCurrent(Project project) {
         try {
