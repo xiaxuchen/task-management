@@ -30,11 +30,12 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 |---|---|---|
 | 任务上下文 | 提示词含编号（`3.1.1` / `26Q3` / `XPD-…`）或 `@` / 引号名 | 查 nodes 模糊匹配（命中 1~2 个）；显式提及摘要加长（1200 字 vs 500 字） |
 | 当前 review | 含 `当前review/这次变更/@review/变更文件` 等；或编号与 review 节点同源 | 读 `current-review.json`（节点 + 勾选提交 + 变更文件；2 小时新鲜） |
-| 选中代码 | 含 `这段/这些/选中/该代码/片段/@选` 或 review 类词 | `last-selection.md`（自动捕获，覆盖式）+ `selected-snippets.md` 池（各自 2h 内有效） |
+| 选中代码 | 含 `这段/这些/选中/该代码/片段/@选` 或 review 类词 | 先带**任务简报**（review 完整段未推时）：任务 id/名称 + 代码项目（仓库去重）+ 相关 commit + 涉及文件；再带 `last-selection.md`（自动捕获）+ `selected-snippets.md` 池 |
 
 ## 数据流
 
 1. **提问链**：Qoder prompt → hook 桥 → SQLite/文件 → `additionalContext`（≤6000 字符，超长截断）
+   - 选中片段场景自动附**任务简报**（`renderReviewBrief`：任务 id/名称 + 代码项目 + commit + 文件）——只给选中代码也能定位到任务/仓库/变更
 2. **派单链**：插件 → `POST /api/nodes/:id/agent-runs {ideMode:true}` 建 run#id → 提示词（含 run id + 回写指令）→ Qoder 面板 → **人工 ⌘V+回车** → Agent 执行 → MCP `agent_run_update` 回写 → 插件历史可见
 3. **自动捕获链**：编辑器选区变化 → `EditorFactory.getEventMulticaster().addSelectionListener` → 防抖 700ms → 写入
 

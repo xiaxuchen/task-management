@@ -118,20 +118,26 @@ async function buildTaskContext(prompt) {
       if (taskPart) parts.push(taskPart)
     }
 
-    // 2) 当前 review 上下文
+    // 2) 当前 review 上下文（完整 md）
     const review = loadReviewContext()
+    let reviewPushed = false
     if (review) {
       const trigger = REVIEW_TRIGGER.test(prompt)
       const sameNode =
         keywords.length > 0 && !!review.nodeName && keywords.some((k) => review.nodeName.includes(k))
       if (trigger || sameNode) {
         parts.push(review.md)
+        reviewPushed = true
         log(`review ctx attached (trigger=${trigger} sameNode=${sameNode})`)
       }
     }
 
-    // 3) 记入的选中代码片段（review/选中 类触发词命中时附带）
+    // 3) 选中代码片段（含任务简报：任务 id/项目/commit/文件；review 完整段未推时用简报）
     if (SNIPPET_TRIGGER.test(prompt) || REVIEW_TRIGGER.test(prompt)) {
+      if (!reviewPushed && review && review.brief) {
+        parts.push(review.brief)
+        log('review brief attached')
+      }
       const snippets = loadSelectedSnippets()
       if (snippets) {
         parts.push(snippets)
@@ -264,11 +270,32 @@ function loadReviewContext() {
       for (const f of files.slice(0, 30)) lines.push(`  - ${f}`)
       if (files.length > 30) lines.push(`  - …共 ${files.length} 个`)
     }
-    return { md: lines.join('\n'), nodeName: String(o.nodeName) }
+    return { md: lines.join('\n'), brief: renderReviewBrief(o, commits, files), nodeName: String(o.nodeName) }
   } catch (e) {
     log('loadReviewContext error: ' + (e && e.message ? e.message : e))
     return null
   }
+}
+
+/** 生成"当前任务简报"（任务 id/名称 + 代码项目 + commit + 文件；用于随选中片段一起注入） */
+function renderReviewBrief(o, commits, files) {
+  const repos = [...new Set(commits.map((c) => c.repo).filter(Boolean))]
+  const lines = ['## 当前任务（IDEA TaskBoard review，自动带入供定位上下文）']
+  lines.push(`- 任务：${o.nodeName}（id=${o.nodeId}）`)
+  if (repos.length) lines.push(`- 代码项目：${repos.join('、')}`)
+  if (commits.length) {
+    lines.push(`- 相关 commit（${commits.length}）：`)
+    for (const c of commits.slice(0, 5)) {
+      lines.push(`  - ${String(c.sha || '').slice(0, 10)} ${c.note || ''}（${c.repo || ''}）`)
+    }
+    if (commits.length > 5) lines.push(`  - …共 ${commits.length} 个`)
+  }
+  if (files.length) {
+    lines.push(`- 涉及文件（${files.length}）：`)
+    for (const f of files.slice(0, 15)) lines.push(`  - ${f}`)
+    if (files.length > 15) lines.push(`  - …共 ${files.length} 个`)
+  }
+  return lines.join('\n')
 }
 
 /** 读取选中代码：自动捕获的"最近选中" + 手动记入的片段池（各自 2 小时内有效） */
