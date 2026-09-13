@@ -56,6 +56,13 @@
 - **实测**（子需求 119）：2 仓库"已合入跳过"（xp-thor-project/xp-thor-par-construction）+
   1 仓库有新内容实合并（xp-thor-mgnt，mergeSha f4afa21c）——正是"增量再合"行为
 
+## 子需求 Review 的需求分支视角（已交付）
+
+- 进子需求节点 → 提交列表带 **`mergedToReq`**（是否已合入需求分支；优先 subreq.reqBranch，回退 demandBranch）
+- **状态栏**：`【3】… 🌿 需求分支：feature-send-receive　⚠ 未合并 3`（或 `✓ 全部已合入`）
+- **列表项**：未合并的提交前缀 **`⚠未合并`**（`CommitItem.display()`）
+- API：`GET /api/nodes/:id/tracks?scope=subtree&branches=true` → commit 级 `mergedToReq`
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）

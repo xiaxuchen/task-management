@@ -5,3 +5,4 @@
 - feat(merge-status): 组级「合入状态」——getMergeStatus（子树子任务 × 开发分支 → 是否已合入需求分支）+ GET /api/nodes/:id/merge-status + 插件「合入状态」按钮（✓/✗ + 逐分支明细）
 - feat(merge-mr): ① 进节点状态栏展示「🌿 需求分支」（沿父链取 subreq.reqBranch）② MR 式「合并预览」——previewMerge（diff --stat 变更统计 + merge-tree 冲突预判）+ POST /nodes/:id/merge-preview + 插件「合并预览」按钮（将引入变更/冲突文件/已合入跳过）
 - feat(merge-upstream): 子需求上跳合并——「合并到 feature-merge」把需求分支合入集成分支（POST /nodes/:id/merge-upstream；已合入跳过/有新内容再合/冲突拒绝）
+- feat(subreq-view): 子需求 Review 以需求分支视角呈现——branches 标注优先取 subreq.reqBranch（回退 demandBranch）、新增 mergedToReq；插件状态栏显示「🌿 需求分支 + ⚠ 未合并 N / ✓ 全部已合入」、列表未合并项标「⚠未合并」
