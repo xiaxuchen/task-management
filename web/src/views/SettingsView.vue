@@ -18,6 +18,26 @@
     </el-form>
     <el-alert v-if="testResult" :title="testResult" :type="testOk ? 'success' : 'error'" show-icon style="margin-top:12px" />
 
+    <el-divider content-position="left">提示词模板（各环节派单）</el-divider>
+    <p class="branch-tip">
+      变量用 {{ '{{名称}}' }} 注入；缺陷流程：<b>分析根因 → 批准修复 → 按方案修复</b>（派单提示词即用以下模板）。
+    </p>
+    <el-form label-position="top" size="small">
+      <el-form-item :label="'分析根因 defect_analyze（变量：{{defectId}} {{title}} {{desc}} {{locationSection}}）'">
+        <el-input v-model="tplDefectAnalyze" type="textarea" :autosize="{ minRows: 8 }" />
+      </el-form-item>
+      <el-form-item :label="'按方案修复 defect_dispatch（额外：{{analysisSection}}）'">
+        <el-input v-model="tplDefectDispatch" type="textarea" :autosize="{ minRows: 8 }" />
+      </el-form-item>
+      <el-form-item :label="'任务派单 task_dispatch（变量：{{taskName}} {{prdSection}} {{docs}} {{commitsSection}} {{filesSection}}）'">
+        <el-input v-model="tplTaskDispatch" type="textarea" :autosize="{ minRows: 8 }" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" @click="savePromptTemplates">保存模板</el-button>
+        <el-button @click="loadConfig">丢弃修改</el-button>
+      </el-form-item>
+    </el-form>
+
     <el-divider content-position="left">标签分支 / Tag 配置</el-divider>
     <p class="branch-tip">
       按「标签」配置追踪目标（值可为分支名或 tag 名，如上线常用发布 tag）；仓库通过标签继承，
@@ -86,6 +106,9 @@ const testResult = ref('')
 const testOk = ref(false)
 const repos = ref([])
 const branchConfigs = ref([])
+const tplDefectAnalyze = ref('')
+const tplDefectDispatch = ref('')
+const tplTaskDispatch = ref('')
 
 async function loadRepos() {
   repos.value = await api.repos()
@@ -134,6 +157,20 @@ async function loadConfig() {
   port.value = cfg.port || 3210
   gitlabBase.value = cfg.gitlab?.base_url || ''
   gitlabToken.value = cfg.gitlab?.token || ''
+  tplDefectAnalyze.value = cfg.promptTemplates?.defect_analyze || ''
+  tplDefectDispatch.value = cfg.promptTemplates?.defect_dispatch || ''
+  tplTaskDispatch.value = cfg.promptTemplates?.task_dispatch || ''
+}
+
+async function savePromptTemplates() {
+  await api.configSet({
+    promptTemplates: {
+      defect_analyze: tplDefectAnalyze.value,
+      defect_dispatch: tplDefectDispatch.value,
+      task_dispatch: tplTaskDispatch.value
+    }
+  })
+  ElMessage.success('提示词模板已保存（插件/派单立即生效）')
 }
 
 async function saveConfig() {
