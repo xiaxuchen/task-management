@@ -140,6 +140,31 @@ test('addRepo / updateRepo 支持分支字段与 tags', async (t) => {
   assert.equal(updated.tags, '前端,后端')
 })
 
+test('commit review：状态更新与审者记录', async (t) => {
+  const { tmp, store } = await setup()
+  t.after(() => tmp.cleanup())
+  const { t: task } = makeTask(store)
+  store.addRepo({ name: 'demo' })
+  const c = store.addCommit(task.id, { repo: 'demo', sha: 'abcdef1' })
+  assert.equal(c.reviewStatus, 'pending')
+
+  const r1 = store.updateCommitReview(c.id, { reviewStatus: 'approved' }, 'idea')
+  assert.equal(r1.reviewStatus, 'approved')
+  assert.equal(r1.reviewedBy, 'idea')
+  assert.ok(r1.reviewedAt)
+
+  const r2 = store.updateCommitReview(c.id, { reviewStatus: 'issue', note: '变量命名需调整' }, 'idea')
+  assert.equal(r2.reviewStatus, 'issue')
+  assert.equal(r2.reviewNote, '变量命名需调整')
+
+  const r3 = store.updateCommitReview(c.id, { reviewStatus: 'pending' }, 'idea')
+  assert.equal(r3.reviewStatus, 'pending')
+  assert.equal(r3.reviewedBy, null)
+  assert.equal(r3.reviewedAt, null)
+
+  assert.throws(() => store.updateCommitReview(c.id, { reviewStatus: 'xx' }), (e) => e.code === 'VALIDATION_FAILED')
+})
+
 test('标签级分支配置 CRUD + resolveBranchTargets 继承/覆盖', async (t) => {
   const { tmp, store } = await setup()
   t.after(() => tmp.cleanup())

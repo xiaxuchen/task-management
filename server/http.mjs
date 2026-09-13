@@ -256,6 +256,13 @@ export function createApp({ store }) {
     '/api/commits/:cid',
     wrap((req, res) => res.json(store.removeCommit(Number(req.params.cid))))
   )
+  app.patch(
+    '/api/commits/:cid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(store.updateCommitReview(Number(req.params.cid), { reviewStatus: b.reviewStatus, note: b.note }, actorOf(req)))
+    })
+  )
 
   // ---------- commit diff 预览 ----------
 

@@ -29,6 +29,7 @@ export const TOOLS = [
   'node_tracks',
   'commit_add',
   'commit_remove',
+  'commit_review',
   'repo_list',
   'repo_add',
   'repo_update',

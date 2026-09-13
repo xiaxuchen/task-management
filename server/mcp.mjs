@@ -283,6 +283,15 @@ export function createMcpServer({ store }) {
     }
   )
 
+  server.tool(
+    'commit_review',
+    '更新 commit 审查结果（pending 待审 / approved 通过 / issue 有问题）；pending 时清空审者信息',
+    { cid: z.number(), reviewStatus: z.enum(['pending', 'approved', 'issue']), reviewNote: z.string().optional() },
+    async ({ cid, reviewStatus, reviewNote }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.updateCommitReview(cid, { reviewStatus, note: reviewNote }, 'ai'), null, 2) }] }
+    }
+  )
+
   server.tool('commit_remove', '删除 commit 登记', { commitId: z.number() }, async ({ commitId }) => {
     return { content: [{ type: 'text', text: JSON.stringify(store.removeCommit(commitId), null, 2) }] }
   })

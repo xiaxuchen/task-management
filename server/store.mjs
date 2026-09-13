@@ -3,6 +3,7 @@ import { CHILD_TYPES, LEAF_TYPES } from './db.mjs'
 
 const ACTORS = new Set(['user', 'ai', 'cli', 'import'])
 const now = () => new Date().toISOString()
+const REVIEW_STATUSES = ['pending', 'approved', 'issue']
 
 /** 预置文档名（与 config.docPresets 默认值一致） */
 const DEFAULT_DOC_PRESETS = {
@@ -571,7 +572,18 @@ export function createStore(db, options = {}) {
   const SHA_RE = /^[0-9a-f]{7,40}$/i
 
   function commitVO(r) {
-    return { id: r.id, nodeId: r.node_id, repo: r.repo, sha: r.sha, note: r.note, createdAt: r.created_at }
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      repo: r.repo,
+      sha: r.sha,
+      note: r.note,
+      reviewStatus: r.review_status || 'pending',
+      reviewNote: r.review_note,
+      reviewedBy: r.reviewed_by,
+      reviewedAt: r.reviewed_at,
+      createdAt: r.created_at
+    }
   }
 
   function getCommit(id) {
@@ -614,6 +626,27 @@ export function createStore(db, options = {}) {
     db.prepare('DELETE FROM commits WHERE id = ?').run(commitId)
     bumpRevision()
     return { id: commitId }
+  }
+
+  /** 更新 commit 审查结果（pending / approved / issue）；pending 时清空审者信息 */
+  function updateCommitReview(commitId, { reviewStatus, note = undefined } = {}, by = 'user') {
+    if (!REVIEW_STATUSES.includes(reviewStatus)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `reviewStatus 必须是 ${REVIEW_STATUSES.join(' / ')}`, { reviewStatus })
+    }
+    const cur = db.prepare('SELECT * FROM commits WHERE id = ?').get(Number(commitId))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `提交记录 ${commitId} 不存在`, { id: commitId })
+    const isPending = reviewStatus === 'pending'
+    const reviewedBy = isPending ? null : by
+    const reviewedAt = isPending ? null : now()
+    if (note !== undefined) {
+      db.prepare('UPDATE commits SET review_status=?, review_note=?, reviewed_by=?, reviewed_at=? WHERE id=?')
+        .run(reviewStatus, note, reviewedBy, reviewedAt, cur.id)
+    } else {
+        db.prepare('UPDATE commits SET review_status=?, reviewed_by=?, reviewed_at=? WHERE id=?')
+        .run(reviewStatus, reviewedBy, reviewedAt, cur.id)
+    }
+    bumpRevision()
+    return commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(cur.id))
   }
 
   // ---------- repos（仓库登记） ----------
@@ -775,6 +808,7 @@ export function createStore(db, options = {}) {
     listCommits,
     addCommit,
     removeCommit,
+    updateCommitReview,
     // repos
     listRepos,
     addRepo,

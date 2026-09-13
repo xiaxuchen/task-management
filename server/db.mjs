@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS commits (
   repo TEXT,
   sha TEXT NOT NULL,
   note TEXT,
+  review_status TEXT NOT NULL DEFAULT 'pending',
+  review_note TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(node_id, sha)
 );
@@ -202,17 +206,26 @@ export function openDb(file = DB_PATH) {
 
 /** 轻量迁移：对已存在的库幂等补列/补表（SCHEMA 里只对新建库生效） */
 function migrate(db) {
-  const cols = db
-    .prepare('PRAGMA table_info(repos)')
-    .all()
-    .map((c) => c.name)
-  const additions = [
+  addColumns(db, 'repos', [
     ['tags', 'TEXT'],
     ['test_branch', 'TEXT'],
     ['pre_branch', 'TEXT'],
     ['release_branch', 'TEXT']
-  ]
+  ])
+  addColumns(db, 'commits', [
+    ['review_status', "TEXT NOT NULL DEFAULT 'pending'"],
+    ['review_note', 'TEXT'],
+    ['reviewed_by', 'TEXT'],
+    ['reviewed_at', 'TEXT']
+  ])
+}
+
+function addColumns(db, table, additions) {
+  const cols = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .map((c) => c.name)
   for (const [name, ddl] of additions) {
-    if (!cols.includes(name)) db.exec(`ALTER TABLE repos ADD COLUMN ${name} ${ddl}`)
+    if (!cols.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`)
   }
 }

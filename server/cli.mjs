@@ -21,6 +21,8 @@ const OPTIONS = {
   note: { type: 'string' },
   subtree: { type: 'boolean' },
   scope: { type: 'string' },
+  'review-status': { type: 'string' },
+  'review-note': { type: 'string' },
   confirm: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   actor: { type: 'string' },
@@ -68,6 +70,7 @@ const HELP = `task-board <命令>
   attr-def add --type t --key k --label l [--data-type text|textarea|number|date|select|url] [--options '[...]'] [--required]
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
+  commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
   repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>] [--tags 前端,后端]
   repo update <名|id> [--local-path p] [--tags t] [--test-branch b] [--pre-branch b] [--release-branch b]
   branch-config list                 标签级追踪目标列表（测试/预发/上线）
@@ -200,6 +203,9 @@ export async function run(argv) {
       json(store.addCommit(node.id, { repo: values.repo, sha: values.sha, note: values.note }, by))
       break
     }
+    case 'commit review':
+      json(store.updateCommitReview(Number(ref), { reviewStatus: values['review-status'], note: values['review-note'] }, by))
+      break
     case 'commit diff':
       json(await getCommitDiff(store, Number(ref)))
       break
