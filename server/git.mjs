@@ -94,37 +94,108 @@ export async function commitMeta(dir, sha) {
 }
 
 /** 单个 commit 的完整 diff：meta + 文件列表 + 每文件 patch / old / new */
+/** git cat-file --batch：批量取内容（specs 如 "sha:path" / "sha^:path"）。返回 Map<spec, string|null> */
+async function catFileBatch(dir, specs) {
+  if (!specs.length) return new Map()
+  return new Promise((resolve) => {
+    const proc = spawn('git', ['-C', dir, 'cat-file', '--batch'], { stdio: ['pipe', 'pipe', 'ignore'] })
+    const chunks = []
+    proc.stdout.on('data', (d) => chunks.push(d))
+    proc.on('error', () => resolve(new Map()))
+    proc.on('close', () => {
+      const buf = Buffer.concat(chunks)
+      const out = new Map()
+      let pos = 0
+      let idx = 0
+      while (pos < buf.length && idx < specs.length) {
+        const nl = buf.indexOf(10, pos)
+        if (nl < 0) break
+        const header = buf.slice(pos, nl).toString('utf8')
+        pos = nl + 1
+        if (header.endsWith(' missing') || header.includes(' ambiguous')) {
+          out.set(specs[idx], null)
+          idx++
+          continue
+        }
+        const parts = header.split(' ')
+        const size = Number(parts[2] ?? -1)
+        if (!Number.isFinite(size) || size < 0) {
+          out.set(specs[idx], null)
+          idx++
+          continue
+        }
+        out.set(specs[idx], buf.slice(pos, pos + size).toString('utf8'))
+        pos += size + 1
+        idx++
+      }
+      resolve(out)
+    })
+    for (const sp of specs) {
+      proc.stdin.write(sp + '\n')
+    }
+    proc.stdin.end()
+  })
+}
+
 export async function commitDiff(dir, sha) {
   const meta = await commitMeta(dir, sha)
 
   const entries = parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))
 
+  // ① 一次拿全部 patch，按 "diff --git a/x b/x" 拆分（替代逐文件 git show）
+  const patchFull = await gitTry(dir, ['show', sha, '--format=', '--no-renames'])
+  const patchByFile = new Map()
+  if (patchFull.ok && patchFull.stdout) {
+    let curPath = null
+    let curLines = []
+    const flush = () => {
+      if (curPath != null) patchByFile.set(curPath, curLines.join('\n'))
+      curPath = null
+      curLines = []
+    }
+    for (const line of patchFull.stdout.split('\n')) {
+      const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/)
+      if (m) {
+        flush()
+        curPath = m[2]
+        curLines = [line]
+      } else if (curPath != null) {
+        curLines.push(line)
+      }
+    }
+    flush()
+  }
+
+  // ② 一次 cat-file --batch 拿 old/new（父版本 + 本版本；替代每文件 2 次 git）
+  const specs = []
+  for (const f of entries) {
+    if (f.binary) continue
+    specs.push(`${sha}^:${f.path}`, `${sha}:${f.path}`)
+  }
+  const contents = await catFileBatch(dir, specs)
+
   const files = []
   for (const f of entries) {
-    let patch = { text: '', truncated: false }
-    if (!f.binary) {
-      const raw = await git(dir, ['show', sha, '--format=', '--no-renames', '--', f.path]).catch(() => '')
-      patch = clip(raw)
+    if (f.binary) {
+      files.push({ path: f.path, additions: 0, deletions: 0, binary: true, patch: '', patchTruncated: false, old: '', oldTruncated: false, new: '', newTruncated: false })
+      continue
     }
-    let oldText = { text: '', truncated: false }
-    let newText = { text: '', truncated: false }
-    if (!f.binary) {
-      const oldRaw = await showFileAt(dir, `${sha}^`, f.path)
-      if (oldRaw != null) oldText = clip(oldRaw)
-      const newRaw = await showFileAt(dir, sha, f.path)
-      if (newRaw != null) newText = clip(newRaw)
-    }
+    const patch = clip(patchByFile.get(f.path) || '')
+    const oldRaw = contents.get(`${sha}^:${f.path}`)
+    const newRaw = contents.get(`${sha}:${f.path}`)
+    const oldT = oldRaw != null ? clip(oldRaw) : { text: '', truncated: false }
+    const newT = newRaw != null ? clip(newRaw) : { text: '', truncated: false }
     files.push({
       path: f.path,
       additions: f.additions,
       deletions: f.deletions,
-      binary: f.binary,
+      binary: false,
       patch: patch.text,
       patchTruncated: patch.truncated,
-      old: oldText.text,
-      oldTruncated: oldText.truncated,
-      new: newText.text,
-      newTruncated: newText.truncated
+      old: oldT.text,
+      oldTruncated: oldT.truncated,
+      new: newT.text,
+      newTruncated: newT.truncated
     })
   }
 
