@@ -1666,7 +1666,7 @@ public class TaskBoardPanel extends JPanel {
         group.add(Separator.getInstance());
         addAction(group, "评论", "在 diff 选中处添加评论（记录文件+行号，存入 task-board）", AllIcons.General.Note, this::addCommentOnDiff);
         addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
-        addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.Actions.Cancel, this::reportDefect);
+        addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.General.InspectionsError, this::reportDefect);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         ActionToolbar toolbar = reviewToolbar;
