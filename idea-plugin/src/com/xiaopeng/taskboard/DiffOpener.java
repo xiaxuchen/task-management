@@ -158,12 +158,38 @@ public class DiffOpener {
             if (idx < 0 || idx >= reqs.size()) {
                 idx = 0;
             }
-            // 我们的 request title = "<链标题> · <文件路径>"
+            // 我们的 request title = "<链标题> · <文件路径>"；兼容中文全角/其它分隔变体
             com.intellij.diff.requests.DiffRequest req =
                     (com.intellij.diff.requests.DiffRequest) reqs.get(idx);
             String t = req.getTitle();
-            if (t != null && t.contains(" · ")) {
-                return t.substring(t.lastIndexOf(" · ") + 3);
+            if (t != null) {
+                int i = t.lastIndexOf(" · ");
+                if (i < 0) {
+                    i = t.lastIndexOf("·");
+                }
+                if (i >= 0) {
+                    String p = t.substring(i + 1).trim();
+                    if (p.startsWith("·")) {
+                        p = p.substring(1).trim();
+                    }
+                    if (!p.isEmpty()) {
+                        return p;
+                    }
+                }
+                // 兜底：title 本身就是路径（无链标题分隔时）
+                if (t.contains("/")) {
+                    return t;
+                }
+            }
+            // 诊断：title 与 contentTitles 一并记录
+            try {
+                java.nio.file.Files.writeString(
+                        java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "taskboard-plugin.log"),
+                        "[" + java.time.LocalTime.now().withNano(0) + "] currentDiffFilePath: title=" + t
+                                + ", requests=" + reqs.size() + ", idx=" + idx + "\n",
+                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            } catch (Throwable ignore) {
+                // 诊断失败忽略
             }
             return null;
         } catch (Throwable t) {
