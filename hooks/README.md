@@ -48,6 +48,16 @@ qodercli mcp add task-board -s user node /Users/xuchen.xia/charge2/task-board/se
 
 之后在 Qoder 里可以直接让它：查任务树 / 节点详情 / 文档 / 登记提交 / 改状态等（MCP 工具集）。
 
+## 四、提及与当前 review 上下文（v2）
+
+- **@ 提及 / 引号名**：`@3.1.1 详细说明`、「建站加盟立项」——显式提及会注入更长的文档摘要（1200 字 vs 500 字）。
+- **当前 review 上下文**：IDEA TaskBoard 插件在**进节点 / 勾选提交 / 加载合并变更**时，会把
+  「当前节点 + 勾选提交 + 变更文件」写到 `~/.taskboard/current-review.json`；在 Qoder 里说
+  **「当前 review 的变更」「这次变更」「@review」** 等触发词即自动注入；若提问里的任务编号
+  正好是插件当前节点（同源），也会自动附带。
+- **手动路径**：插件顶栏「**复制上下文**」按钮——一键复制（节点/勾选提交/变更文件）markdown，
+  直接粘贴到 Qoder 即可。
+
 ## 三、注意
 
 - IDE 插件侧的 Qoder 会话需在 **重启 IDE / 重开 Qoder 会话** 后加载新配置。

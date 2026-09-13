@@ -1,31 +1,41 @@
 #!/usr/bin/env node
 /**
- * task-board ⇄ Qoder Hook 桥（Claude Code 规范，Qoder CLI/IDE 通用）
+ * task-board ⇄ Qoder Hook 桥（Claude Code 规范，Qoder CLI/IDE 通用）v2
  *
  * 作用：
- *  - UserPromptSubmit：从提示词中识别任务编号/关键词 → 查 task-board 库 → 把当前任务的
- *    上下文（层级路径 / 文档摘要 / PRD 链接 / 已登记提交）以 additionalContext 注入 Qoder。
+ *  - UserPromptSubmit：
+ *    1) 从提示词识别任务编号/关键词 → 注入该任务上下文（层级路径 / 文档摘要 / PRD / 已登记提交）；
+ *       显式提及（@ 或「引号名」）时文档摘要加长（1200 字 vs 500 字）。
+ *    2) 提示词含 review 触发词（当前review/这次变更/@review/变更文件…）→ 附带"当前 review 上下文"
+ *       （由 IDEA TaskBoard 插件写到 ~/.taskboard/current-review.json：节点/勾选提交/变更文件）；
+ *       或关键词命中的任务正好是插件当前 review 的节点时也附带。
  *  - Stop：记录日志（后续可按需扩展为自动回写登记）。
  *
  * 配置（~/.qoder/settings.json 的 hooks 段）：
  *  {
  *    "hooks": {
  *      "UserPromptSubmit": [ { "hooks": [ { "type": "command",
- *        "command": "node /Users/xuchen.xia/charge2/task-board/hooks/qoder-bridge.mjs", "timeout": 15 } ] } ],
+ *        "command": "bash /Users/xuchen.xia/charge2/task-board/hooks/qoder-bridge.sh", "timeout": 15 } ] } ],
  *      "Stop": [ { "hooks": [ { "type": "command",
- *        "command": "node /Users/xuchen.xia/charge2/task-board/hooks/qoder-bridge.mjs", "timeout": 15 } ] } ]
+ *        "command": "bash /Users/xuchen.xia/charge2/task-board/hooks/qoder-bridge.sh", "timeout": 15 } ] } ]
  *    }
  *  }
  *
  * 日志：/tmp/taskboard-qoder-bridge.log（每次调用一行，便于排查）
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOG = '/tmp/taskboard-qoder-bridge.log'
-const MAX_CTX_CHARS = 4000
+const MAX_CTX_CHARS = 6000
+/** IDEA TaskBoard 插件写出的"当前 review 上下文"文件 */
+const REVIEW_FILE = path.join(os.homedir(), '.taskboard', 'current-review.json')
+/** review 触发词：命中则附带当前 review 上下文 */
+const REVIEW_TRIGGER =
+  /当前\s*review|当前审查|这次变更|本次变更|这次改动|本次改动|当前\s*diff|这个\s*diff|变更文件|@review|current\s*review/i
 
 const log = (m) => {
   try {
@@ -68,7 +78,7 @@ const cwd = String(input.cwd || '')
 const prompt = String(input.prompt || '')
 log(`event=${event} cwd=${cwd} prompt=${prompt.replace(/\s+/g, ' ').slice(0, 120)}`)
 
-// ---------------- UserPromptSubmit：注入任务上下文 ----------------
+// ---------------- UserPromptSubmit：注入任务 / review 上下文 ----------------
 
 if (event === 'UserPromptSubmit') {
   const ctx = await buildTaskContext(prompt)
@@ -89,52 +99,77 @@ process.exit(0)
 
 // ---------------- 实现 ----------------
 
-/** 从提示词提取候选关键词并查询任务 */
+/** 组装注入文本：任务上下文（编号/关键词）+ 当前 review 上下文（触发词/同源） */
 async function buildTaskContext(prompt) {
   try {
     const keywords = extractKeywords(prompt)
-    if (keywords.length === 0) return null
+    const explicit = /(^|[^\w])@[^\s@]/.test(prompt) || /[「『“"][^」』”"]{2,30}[」』”"]/.test(prompt)
+    const parts = []
 
-    const { DatabaseSync } = await import('node:sqlite')
-    const { DB_PATH } = await import(pathToFileURL(path.join(__dirname, '../server/config.mjs')).href)
-    if (!fs.existsSync(DB_PATH)) {
-      log(`db not found: ${DB_PATH}`)
-      return null
+    // 1) 任务上下文（编号 / 关键词命中）
+    if (keywords.length > 0) {
+      const taskPart = await buildTaskPart(keywords, explicit)
+      if (taskPart) parts.push(taskPart)
     }
-    const db = new DatabaseSync(DB_PATH, { readOnly: true })
-    try {
-      const found = []
-      for (const kw of keywords.slice(0, 4)) {
-        const rows = db
-          .prepare(
-            `SELECT id, type, name, parent_id, status FROM nodes
-             WHERE name LIKE ? AND type IN ('requirement','subreq','group','task','defect')
-             ORDER BY length(name) LIMIT 3`
-          )
-          .all(`%${kw}%`)
-        for (const r of rows) {
-          if (!found.some((f) => f.id === r.id)) found.push(r)
-        }
-        if (found.length >= 3) break
-      }
-      if (found.length === 0) return null
 
-      const sections = ['## 来自 task-board 的任务上下文（自动注入，供参考；如与当前问题无关请忽略）']
-      for (const node of found.slice(0, 2)) {
-        sections.push(buildNodeSection(db, node))
-      }
-      const text = sections.join('\n\n')
-      return text.length > MAX_CTX_CHARS ? text.slice(0, MAX_CTX_CHARS) + '\n…（已截断）' : text
-    } finally {
-      try {
-        db.close()
-      } catch {
-        // 忽略关闭异常
+    // 2) 当前 review 上下文
+    const review = loadReviewContext()
+    if (review) {
+      const trigger = REVIEW_TRIGGER.test(prompt)
+      const sameNode =
+        keywords.length > 0 && !!review.nodeName && keywords.some((k) => review.nodeName.includes(k))
+      if (trigger || sameNode) {
+        parts.push(review.md)
+        log(`review ctx attached (trigger=${trigger} sameNode=${sameNode})`)
       }
     }
+
+    if (parts.length === 0) return null
+    const text = parts.join('\n\n')
+    return text.length > MAX_CTX_CHARS ? text.slice(0, MAX_CTX_CHARS) + '\n…（已截断）' : text
   } catch (e) {
     log('buildTaskContext error: ' + (e && e.stack ? e.stack.split('\n')[0] : e))
     return null
+  }
+}
+
+/** 任务上下文：查库 + 组装（explicit=true 时文档摘要加长） */
+async function buildTaskPart(keywords, explicit) {
+  const { DatabaseSync } = await import('node:sqlite')
+  const { DB_PATH } = await import(pathToFileURL(path.join(__dirname, '../server/config.mjs')).href)
+  if (!fs.existsSync(DB_PATH)) {
+    log(`db not found: ${DB_PATH}`)
+    return null
+  }
+  const db = new DatabaseSync(DB_PATH, { readOnly: true })
+  try {
+    const found = []
+    for (const kw of keywords.slice(0, 4)) {
+      const rows = db
+        .prepare(
+          `SELECT id, type, name, parent_id, status FROM nodes
+           WHERE name LIKE ? AND type IN ('requirement','subreq','group','task','defect')
+           ORDER BY length(name) LIMIT 3`
+        )
+        .all(`%${kw}%`)
+      for (const r of rows) {
+        if (!found.some((f) => f.id === r.id)) found.push(r)
+      }
+      if (found.length >= 3) break
+    }
+    if (found.length === 0) return null
+
+    const sections = ['## 来自 task-board 的任务上下文（自动注入，供参考；如与当前问题无关请忽略）']
+    for (const node of found.slice(0, 2)) {
+      sections.push(buildNodeSection(db, node, explicit ? 1200 : 500))
+    }
+    return sections.join('\n\n')
+  } finally {
+    try {
+      db.close()
+    } catch {
+      // 忽略关闭异常
+    }
   }
 }
 
@@ -149,8 +184,8 @@ function extractKeywords(prompt) {
   return [...out]
 }
 
-/** 组装单个节点的上下文段落 */
-function buildNodeSection(db, node) {
+/** 组装单个节点的上下文段落（briefLen：文档摘要字符数上限） */
+function buildNodeSection(db, node, briefLen) {
   const lines = []
   // 层级路径（如：26Q3 雷阵雨 › 3.1 建站加盟 › 3.1.1 立项新增…）
   const pathNames = []
@@ -163,14 +198,14 @@ function buildNodeSection(db, node) {
   }
   lines.push(`### ${pathNames.join(' › ')}（${node.type} / ${node.status}）`)
 
-  // 文档摘要（需求内容 / 设计方案）
+  // 文档（需求内容 / 设计方案）
   const docs = db
     .prepare('SELECT name, content FROM documents WHERE node_id = ? ORDER BY sort')
     .all(node.id)
   for (const d of docs.slice(0, 3)) {
     const full = String(d.content || '')
-    const brief = full.replace(/\s+/g, ' ').slice(0, 500)
-    if (brief) lines.push(`- **${d.name}**：${brief}${full.length > 500 ? '…' : ''}`)
+    const brief = full.replace(/\s+/g, ' ').slice(0, briefLen)
+    if (brief) lines.push(`- **${d.name}**：${brief}${full.length > briefLen ? '…' : ''}`)
   }
 
   // PRD（沿父链找 feishu_url）
@@ -189,6 +224,36 @@ function buildNodeSection(db, node) {
     lines.push(`- 已登记提交 ${stats.c} 个；最近：${brief}`)
   }
   return lines.join('\n')
+}
+
+/** 读取 IDEA TaskBoard 插件写出的"当前 review 上下文"（~/.taskboard/current-review.json） */
+function loadReviewContext() {
+  try {
+    if (!fs.existsSync(REVIEW_FILE)) return null
+    const o = JSON.parse(fs.readFileSync(REVIEW_FILE, 'utf8'))
+    if (!o || !o.nodeName) return null
+    const ageMin = Math.max(0, Math.round((Date.now() - Number(o.updatedAt || 0)) / 60000))
+    const lines = [`## 当前 review 上下文（来自 IDEA TaskBoard 插件，更新于 ${ageMin} 分钟前）`]
+    lines.push(`- **当前节点**：${o.nodeName}（id=${o.nodeId}）`)
+    const commits = Array.isArray(o.checkedCommits) ? o.checkedCommits : []
+    if (commits.length > 0) {
+      lines.push(`- **勾选提交（${commits.length}）**：`)
+      for (const c of commits.slice(0, 10)) {
+        lines.push(`  - ${String(c.sha || '').slice(0, 10)} ${c.note || ''}（${c.repo || ''}）`)
+      }
+      if (commits.length > 10) lines.push(`  - …共 ${commits.length} 个`)
+    }
+    const files = Array.isArray(o.files) ? o.files : []
+    if (files.length > 0) {
+      lines.push(`- **变更文件（${files.length}）**：`)
+      for (const f of files.slice(0, 30)) lines.push(`  - ${f}`)
+      if (files.length > 30) lines.push(`  - …共 ${files.length} 个`)
+    }
+    return { md: lines.join('\n'), nodeName: String(o.nodeName) }
+  } catch (e) {
+    log('loadReviewContext error: ' + (e && e.message ? e.message : e))
+    return null
+  }
 }
 
 /** 沿父链查找飞书 PRD 链接（节点属性 feishu_url） */

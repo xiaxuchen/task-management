@@ -18,6 +18,7 @@ import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx;
 import com.intellij.openapi.fileEditor.impl.EditorWindow;
 import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -38,6 +39,7 @@ import javax.swing.tree.TreeSelectionModel;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.datatransfer.StringSelection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -227,6 +229,69 @@ public class TaskBoardPanel extends JPanel {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
             }
         });
+    }
+
+    // ---------- Qoder 联动：当前 review 上下文 ----------
+
+    /** 把"当前 review 上下文"（节点/勾选提交/变更文件）写到固定文件，供 Qoder hook 桥注入 */
+    private void writeReviewContext() {
+        try {
+            JsonObject o = new JsonObject();
+            o.addProperty("updatedAt", System.currentTimeMillis());
+            o.addProperty("nodeId", currentNodeId);
+            o.addProperty("nodeName", currentNodeName);
+            JsonArray commits = new JsonArray();
+            for (CommitItem it : checkedCommits()) {
+                JsonObject c = new JsonObject();
+                c.addProperty("sha", it.sha == null ? "" : it.sha);
+                c.addProperty("note", it.note == null ? "" : it.note);
+                c.addProperty("repo", it.repo == null ? "" : it.repo);
+                c.addProperty("reviewStatus", it.reviewStatus == null ? "pending" : it.reviewStatus);
+                commits.add(c);
+            }
+            o.add("checkedCommits", commits);
+            JsonArray files = new JsonArray();
+            if (aggregateFiles != null) {
+                for (DiffOpener.FileDiff f : aggregateFiles) {
+                    files.add(f.path);
+                }
+            }
+            o.add("files", files);
+            Path dir = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard");
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve("current-review.json"), o.toString());
+        } catch (Exception ignore) {
+            // 上下文写入失败不影响 UI
+        }
+    }
+
+    /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
+    private void copyReviewContext() {
+        try {
+            StringBuilder md = new StringBuilder();
+            md.append("## task-board 当前 review 上下文\n");
+            md.append("- **节点**：").append(currentNodeName).append("（id=").append(currentNodeId).append("）\n");
+            List<CommitItem> sel = checkedCommits();
+            md.append("- **勾选提交（").append(sel.size()).append("）**\n");
+            for (CommitItem it : sel) {
+                String sha = it.sha == null ? "" : it.sha;
+                md.append("  - `").append(sha.length() > 10 ? sha.substring(0, 10) : sha).append("` ")
+                        .append(it.note == null ? "" : it.note)
+                        .append("（").append(it.repo == null ? "" : it.repo).append("）\n");
+            }
+            int fileCount = aggregateFiles == null ? 0 : aggregateFiles.size();
+            if (fileCount > 0) {
+                md.append("- **变更文件（").append(fileCount).append("）**\n");
+                for (DiffOpener.FileDiff f : aggregateFiles) {
+                    md.append("  - ").append(f.path).append("\n");
+                }
+            }
+            CopyPasteManager.getInstance().setContents(new StringSelection(md.toString()));
+            reviewSummary.setText("已复制当前 review 上下文（" + sel.size() + " 提交 / " + fileCount
+                    + " 文件），可直接粘贴给 Qoder");
+        } catch (Throwable t) {
+            reviewSummary.setText("复制失败：" + t.getMessage());
+        }
     }
 
     /** 在「需求概设」与「飞书 PRD」之间切换（右列同一组内的两个 tab） */
@@ -682,6 +747,8 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "对照布局", "一键铺排：左 diff + 右列（需求概设⇄PRD） + TaskBoard底部（比例可在「布局设置」中调整）", AllIcons.Actions.SplitVertically, this::openReviewLayout);
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
+        addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
+
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         toolbar.setTargetComponent(this);
 
@@ -786,6 +853,7 @@ public class TaskBoardPanel extends JPanel {
         // 切换节点时清空聚合缓存，避免对照布局误用上一个节点的数据
         aggregateFiles = new ArrayList<>();
         aggregateTitle = "";
+        writeReviewContext();
         reviewSummary.setText("加载中…（" + d.name + "）");
         detailRoot.removeAllChildren();
         detailModel.reload();
@@ -930,6 +998,7 @@ public class TaskBoardPanel extends JPanel {
     /** 勾选变化（防抖后） */
     private void onChecksChanged() {
         refreshDetailForChecked();
+        writeReviewContext();
     }
 
     // ---------- 多 commit 合并变更 ----------
@@ -1000,6 +1069,7 @@ public class TaskBoardPanel extends JPanel {
             }
         }
         aggregateFiles = agg;
+        writeReviewContext();
         detailRoot.removeAllChildren();
         while (root.getChildCount() > 0) detailRoot.add((DefaultMutableTreeNode) root.getChildAt(0));
         detailModel.reload();
