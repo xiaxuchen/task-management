@@ -334,6 +334,44 @@ public class TaskBoardPanel extends JPanel {
         return md.toString();
     }
 
+    // ---------- Qoder 联动：记入选中代码片段 ----------
+
+    /** 把当前编辑器（含 diff 视图）里选中的代码记入任务上下文，供 Qoder Hook 自动注入；同时复制到剪贴板 */
+    private void addSelectionToContext() {
+        try {
+            com.intellij.openapi.editor.Editor editor =
+                    FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+            String text = editor != null && editor.getSelectionModel().hasSelection()
+                    ? editor.getSelectionModel().getSelectedText() : null;
+            if (text == null || text.trim().isEmpty()) {
+                reviewSummary.setText("请先在编辑器（含 diff 视图）里选中代码，再点「记入上下文」");
+                return;
+            }
+            String fileName = "";
+            try {
+                VirtualFile vf = editor.getVirtualFile();
+                if (vf != null) {
+                    fileName = vf.getName();
+                }
+            } catch (Throwable ignore) {
+                // 虚拟文件时忽略
+            }
+            StringBuilder block = new StringBuilder();
+            block.append("\n### 选中代码片段（").append(java.time.LocalTime.now().withNano(0))
+                    .append(fileName.isEmpty() ? "" : "，来自 " + fileName).append("）\n```\n")
+                    .append(text).append("\n```\n");
+            Path dir = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard");
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve("selected-snippets.md"), block.toString(),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            CopyPasteManager.getInstance().setContents(new StringSelection(text));
+            int lines = text.split("\n", -1).length;
+            reviewSummary.setText("已记入任务上下文（选中 " + lines + " 行，已同时复制）——在 Qoder 提问时会自动带上");
+        } catch (Exception ex) {
+            reviewSummary.setText("记入上下文失败：" + ex.getMessage());
+        }
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -1042,6 +1080,7 @@ public class TaskBoardPanel extends JPanel {
         group.add(Separator.getInstance());
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
+        addAction(group, "记入上下文", "把编辑器（含 diff 视图）里选中的代码存入任务上下文，Qoder 提问时自动带上", AllIcons.General.Add, this::addSelectionToContext);
         addAction(group, "派给 Qoder", "生成任务提示词并打开 Qoder IDE 面板（提示词已复制，粘贴+回车即发送）", AllIcons.Actions.RunAll, this::dispatchToQoder);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);

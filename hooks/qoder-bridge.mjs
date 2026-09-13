@@ -33,6 +33,10 @@ const LOG = '/tmp/taskboard-qoder-bridge.log'
 const MAX_CTX_CHARS = 6000
 /** IDEA TaskBoard 插件写出的"当前 review 上下文"文件 */
 const REVIEW_FILE = path.join(os.homedir(), '.taskboard', 'current-review.json')
+/** IDEA TaskBoard 插件写出的"选中代码片段"文件（「记入上下文」按钮追加） */
+const SNIPPETS_FILE = path.join(os.homedir(), '.taskboard', 'selected-snippets.md')
+/** snippets 触发词：命中则附带选中代码片段 */
+const SNIPPET_TRIGGER = /这段|这些|选中|该代码|这个代码|snippet|@选/i
 /** review 触发词：命中则附带当前 review 上下文 */
 const REVIEW_TRIGGER =
   /当前\s*review|当前审查|这次变更|本次变更|这次改动|本次改动|当前\s*diff|这个\s*diff|变更文件|@review|current\s*review/i
@@ -121,6 +125,15 @@ async function buildTaskContext(prompt) {
       if (trigger || sameNode) {
         parts.push(review.md)
         log(`review ctx attached (trigger=${trigger} sameNode=${sameNode})`)
+      }
+    }
+
+    // 3) 记入的选中代码片段（review/选中 类触发词命中时附带）
+    if (SNIPPET_TRIGGER.test(prompt) || REVIEW_TRIGGER.test(prompt)) {
+      const snippets = loadSelectedSnippets()
+      if (snippets) {
+        parts.push(snippets)
+        log('snippets attached')
       }
     }
 
@@ -252,6 +265,22 @@ function loadReviewContext() {
     return { md: lines.join('\n'), nodeName: String(o.nodeName) }
   } catch (e) {
     log('loadReviewContext error: ' + (e && e.message ? e.message : e))
+    return null
+  }
+}
+
+/** 读取"记入的选中代码片段"（~/.taskboard/selected-snippets.md；超 2 小时未更新则忽略） */
+function loadSelectedSnippets() {
+  try {
+    if (!fs.existsSync(SNIPPETS_FILE)) return null
+    const st = fs.statSync(SNIPPETS_FILE)
+    if (Date.now() - st.mtimeMs > 2 * 60 * 60 * 1000) return null
+    let content = fs.readFileSync(SNIPPETS_FILE, 'utf8')
+    if (!content.trim()) return null
+    if (content.length > 3000) content = '…（较早片段省略）\n' + content.slice(-3000)
+    return '## 你在 IDEA 里记入的选中代码片段（最近）\n' + content
+  } catch (e) {
+    log('loadSelectedSnippets error: ' + (e && e.message ? e.message : e))
     return null
   }
 }
