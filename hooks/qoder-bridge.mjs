@@ -122,16 +122,10 @@ async function buildTaskContext(prompt) {
     const review = loadReviewContext()
     let reviewPushed = false
     if (review) {
-      const trigger = REVIEW_TRIGGER.test(prompt)
-      const sameNode =
-        keywords.length > 0 && !!review.nodeName && keywords.some((k) => review.nodeName.includes(k))
-      // 布局新鲜（刚点过对照布局 ≤30 分钟）→ 无条件注入
-      const layoutFresh = review.layoutFresh === true
-      if (trigger || sameNode || layoutFresh) {
-        parts.push(review.md)
-        reviewPushed = true
-        log(`review ctx attached (trigger=${trigger} sameNode=${sameNode} layoutFresh=${layoutFresh})`)
-      }
+      // 无门控：current-review.json 存在即注入（用户要求：打开布局后上下文直给）
+      parts.push(review.md)
+      reviewPushed = true
+      log('review ctx attached (always)')
     }
 
     // 3) 最近选中（自动捕获，体量小 <1KB）：新鲜（≤5 分钟）即无条件注入——不被触发词门控
