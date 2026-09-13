@@ -116,6 +116,17 @@
   - 未合并 → **黄橙色**（#B8860B）
   - 未知 → 默认色
 
+## 踩坑：单击节点 EDT 卡死（JEditorPane HTML 布局死循环）
+
+- **现象**：单击节点（如 26Q3 需求）后右侧"加载中…"永不消失，IDE 整体卡死
+- **排查**：日志打点显示 `数据到达` 后第三条 `已 setText` 缺失 → EDT 被堵；
+  **jstack 实锤**：`AWT-EventQueue` RUNNABLE，栈为
+  `DefaultCaret.repaintNewCaret → modelToView → BoxView.layout` 递归 10+ 层，CPU 36s+
+- **根因**：`selectDetailPane.setCaretPosition(0)`（JEditorPane + text/html）触发
+  `DefaultCaret.repaintNewCaret` → HTML BoxView 布局**死循环**（经典 Swing bug）
+- **修复**：去掉 `setCaretPosition(0)`，改 `invokeLater + scrollRectToVisible(new Rectangle(0,0,1,1))`
+- **教训**：JEditorPane 渲染 HTML 时**避免 setCaretPosition**；排查 EDT 卡死用 **jstack 直接看 AWT-EventQueue 栈**最快
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）

@@ -10,3 +10,4 @@
 - perf(node-tracks): 分支组视图 20.7s→0.6s（33倍）——分支标注批量化（每仓库一次 git log + 前缀匹配）+ light 模式（跳过逐条 commitTrack）+ 修短 sha 匹配 bug
 - perf(combined-diff): 合并变更加载大提速——提交元信息批量化（一次 git log 替代 192 次）+ 文件 old/new 并发 8（≈1.5s）
 - feat(review-ux): ① 单击提交只看这一个（清空勾选→单提交详情）② 「全选⇄全不选」toggle + 「反选」 ③ 着色：已合入=绿 / 未合并=黄橙
+- fix(subreq-view): 修复单击节点 EDT 卡死——setCaretPosition(0) 触发 JEditorPane HTML BoxView 布局死循环（jstack 实锤）；改 scrollRectToVisible 安全滚动
