@@ -70,6 +70,39 @@ public class TaskBoardApi {
         return sendAny(req).getAsJsonObject();
     }
 
+    // ---------- nodes / documents（登记缺陷等） ----------
+
+    /** 创建节点（如缺陷：type=defect） */
+    public JsonObject createNode(long parentId, String type, String name) throws Exception {
+        JsonObject body = new JsonObject();
+        if (parentId > 0) {
+            body.addProperty("parentId", parentId);
+        }
+        body.addProperty("type", type);
+        body.addProperty("name", name);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes"))
+                .timeout(Duration.ofSeconds(15))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /** 写入/覆盖节点文档 */
+    public JsonObject upsertDocument(long nodeId, String name, String content) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("name", name);
+        body.addProperty("content", content);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/documents/upsert"))
+                .timeout(Duration.ofSeconds(15))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
     // ---------- comments（diff 行级评论） ----------
 
     /** 添加 diff 行级评论 */

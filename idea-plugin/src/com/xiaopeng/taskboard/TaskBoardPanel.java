@@ -546,6 +546,98 @@ public class TaskBoardPanel extends JPanel {
         });
     }
 
+    // ---------- 缺陷登记与 AI 修复 ----------
+
+    /** 登记缺陷：在当前节点下创建 defect 节点（自动带 diff 位置/片段），可一键派给 Qoder 修复 */
+    private void reportDefect() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个节点");
+            return;
+        }
+        // 取 diff 上下文（可无——非 diff 场景也可登记）
+        String[] info = null;
+        com.intellij.openapi.editor.Editor editor =
+                FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+        if (editor == null || editor.isDisposed() || !editor.getSelectionModel().hasSelection()) {
+            com.intellij.openapi.editor.Editor fb = lastSelectionEditor;
+            if (fb != null && !fb.isDisposed() && fb.getSelectionModel().hasSelection()) {
+                editor = fb;
+            }
+        }
+        if (editor != null && !editor.isDisposed()) {
+            info = diffFileAndLines(editor);
+        }
+        String title = Messages.showInputDialog(project, "缺陷标题：", "登记缺陷", null);
+        if (title == null || title.trim().isEmpty()) {
+            return;
+        }
+        String desc = Messages.showMultilineInputDialog(project, "缺陷描述（可空）：", "登记缺陷", "", null, null);
+        if (desc == null) {
+            desc = "";
+        }
+        final String[] finfo = info;
+        final long parentId = currentNodeId;
+        final String fTitle = title.trim();
+        final String fDesc = desc;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonObject created = api.createNode(parentId, "defect", fTitle);
+                long defectId = created.get("id").getAsLong();
+                StringBuilder md = new StringBuilder();
+                md.append("# ").append(fTitle).append("\n\n");
+                if (!fDesc.trim().isEmpty()) {
+                    md.append(fDesc).append("\n\n");
+                }
+                if (finfo != null) {
+                    md.append("## 位置\n\n- 文件：`").append(finfo[0]).append("`\n- 行号：L")
+                            .append(finfo[1]).append("-").append(finfo[2]).append("\n\n");
+                    if (!finfo[3].isEmpty()) {
+                        md.append("## 选中代码\n\n```\n").append(finfo[3]).append("\n```\n");
+                    }
+                }
+                api.upsertDocument(defectId, "缺陷描述", md.toString());
+                SwingUtilities.invokeLater(() -> {
+                    reviewSummary.setText("已登记缺陷 #" + defectId + "：" + fTitle + "（可在树中查看）");
+                    SwingUtilities.invokeLater(() -> {
+                        int r = Messages.showDialog(project,
+                                "缺陷 #" + defectId + " 已登记：\n" + fTitle + "\n\n是否立即派给 Qoder 修复？",
+                                "登记缺陷", new String[]{"派给 Qoder", "稍后"}, 0, null);
+                        if (r == 0) {
+                            dispatchDefectToQoder(defectId, fTitle, fDesc, finfo);
+                        }
+                    });
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("登记缺陷失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 把缺陷派给 Qoder（提示词 = 缺陷 + 位置 + 选中代码 + 要求） */
+    private void dispatchDefectToQoder(long defectId, String title, String desc, String[] info) {
+        StringBuilder md = new StringBuilder();
+        md.append("你是 Qoder Agent。请修复以下 task-board 缺陷（defect #").append(defectId).append("）。\n\n");
+        md.append("# 缺陷：").append(title).append("\n\n");
+        if (desc != null && !desc.trim().isEmpty()) {
+            md.append(desc).append("\n\n");
+        }
+        if (info != null) {
+            md.append("## 位置\n\n- 文件：`").append(info[0]).append("`\n- 行号：L")
+                    .append(info[1]).append("-").append(info[2]).append("\n\n");
+            if (!info[3].isEmpty()) {
+                md.append("## 选中代码\n\n```\n").append(info[3]).append("\n```\n\n");
+            }
+        }
+        md.append("## 要求\n\n定位并修复；修复后给出变更摘要与验证方式（可使用 task-board MCP 工具回写状态）。\n");
+        final String prompt = md.toString();
+        SwingUtilities.invokeLater(() -> {
+            boolean ok = QoderOpener.dispatch(project, prompt);
+            reviewSummary.setText(ok
+                    ? "已派给 Qoder（缺陷 #" + defectId + "）——⌘V+回车发送，修复后可在树中看到该 defect 节点"
+                    : "缺陷提示词已复制——请手动打开 Qoder 面板粘贴");
+        });
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -1574,6 +1666,7 @@ public class TaskBoardPanel extends JPanel {
         group.add(Separator.getInstance());
         addAction(group, "评论", "在 diff 选中处添加评论（记录文件+行号，存入 task-board）", AllIcons.General.Note, this::addCommentOnDiff);
         addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
+        addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.Actions.Cancel, this::reportDefect);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         ActionToolbar toolbar = reviewToolbar;
