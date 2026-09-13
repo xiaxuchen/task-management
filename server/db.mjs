@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS commits (
   node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
   repo TEXT,
   sha TEXT NOT NULL,
+  branch TEXT,
   note TEXT,
   review_status TEXT NOT NULL DEFAULT 'pending',
   review_note TEXT,
@@ -262,7 +263,8 @@ function migrate(db) {
     ['review_note', 'TEXT'],
     ['reviewed_by', 'TEXT'],
     ['reviewed_at', 'TEXT'],
-    ['patch_id', 'TEXT']
+    ['patch_id', 'TEXT'],
+    ['branch', 'TEXT']
   ])
 }
 

@@ -577,6 +577,7 @@ export function createStore(db, options = {}) {
       nodeId: r.node_id,
       repo: r.repo,
       sha: r.sha,
+      branch: r.branch,
       note: r.note,
       reviewStatus: r.review_status || 'pending',
       reviewNote: r.review_note,
@@ -654,7 +655,7 @@ export function createStore(db, options = {}) {
       .map(commitVO)
   }
 
-  function addCommit(nodeId, { repo = null, sha, note = null } = {}, by = 'user') {
+  function addCommit(nodeId, { repo = null, sha, note = null, branch = null } = {}, by = 'user') {
     rawNode(nodeId)
     const s = String(sha || '').trim()
     if (!SHA_RE.test(s)) throw new AppError(CODES.VALIDATION_FAILED, 'sha 必须是 7–40 位十六进制', { sha: s })
@@ -663,11 +664,19 @@ export function createStore(db, options = {}) {
       if (!known) throw new AppError(CODES.REPO_NOT_REGISTERED, `仓库 ${repo} 未登记（先 repo add）`, { repo })
     }
     const existing = db.prepare('SELECT * FROM commits WHERE node_id = ? AND sha = ?').get(nodeId, s)
-    if (existing) return { ...commitVO(existing), created: false }
+    if (existing) {
+      // 已存在：补齐 branch（若原来没有而这次给了）
+      if (branch && !existing.branch) {
+        db.prepare('UPDATE commits SET branch = ? WHERE id = ?').run(branch, existing.id)
+        bumpRevision()
+        return { ...commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(existing.id)), created: false }
+      }
+      return { ...commitVO(existing), created: false }
+    }
     const ts = now()
     const info = db
-      .prepare('INSERT INTO commits (node_id,repo,sha,note,created_at) VALUES (?,?,?,?,?)')
-      .run(nodeId, repo, s, note, ts)
+      .prepare('INSERT INTO commits (node_id,repo,sha,branch,note,created_at) VALUES (?,?,?,?,?,?)')
+      .run(nodeId, repo, s, branch, note, ts)
     bumpRevision()
     return { ...commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(Number(info.lastInsertRowid))), created: true }
   }

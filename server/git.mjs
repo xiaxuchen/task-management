@@ -206,6 +206,18 @@ export async function branchesContaining(dir, sha) {
   return out
 }
 
+/** 为提交挑选"开发分支"：排除 feature-merge，优先最具体的 feature-*（含子需求/子任务 slug），否则回退第一个 */
+export async function pickBranchForCommit(dir, sha) {
+  const all = await branchesContaining(dir, sha)
+  if (!all.length) return null
+  const feats = all.filter((b) => b.startsWith('feature-') && b !== 'feature-merge')
+  if (feats.length) {
+    // 最具体 = 最长（如 feature-send-receive-3.1.1-inner-buy-flag > feature-send-receive）
+    return feats.sort((a, b) => b.length - a.length)[0]
+  }
+  return all[0]
+}
+
 /** 仅变更文件统计（子树聚合用，避免拉取全量 patch / old / new） */
 export async function commitStat(dir, sha) {
   return parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))

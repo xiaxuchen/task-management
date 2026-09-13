@@ -6,6 +6,7 @@ import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
+import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
 export function createMcpServer({ store }) {
   const cfg = loadConfig()
@@ -276,11 +277,22 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'commit_add',
-    '登记 commit',
-    { ref: z.string(), sha: z.string(), repo: z.string().optional(), note: z.string().optional() },
-    async ({ ref, sha, repo, note }) => {
+    '登记 commit（branch 可选：不传时自动从本机 git 推断开发分支）',
+    { ref: z.string(), sha: z.string(), repo: z.string().optional(), note: z.string().optional(), branch: z.string().optional() },
+    async ({ ref, sha, repo, note, branch }) => {
       const node = store.resolveRef(ref)
-      return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note }, 'ai'), null, 2) }] }
+      let br = branch || null
+      if (!br && repo && sha) {
+        try {
+          const repoRow = store.listRepos().find((r) => r.name === repo)
+          if (repoRow && repoRow.localPath) {
+            br = await pickBranchForCommit(resolveRepoDir(repoRow), sha)
+          }
+        } catch (ignore) {
+          // 推断失败不阻断
+        }
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note, branch: br }, 'ai'), null, 2) }] }
     }
   )
 

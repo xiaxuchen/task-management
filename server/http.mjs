@@ -2,6 +2,7 @@ import express from 'express'
 import { AppError, CODES } from './errors.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
+import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 
 const STATUS_BY_CODE = {
@@ -247,10 +248,22 @@ export function createApp({ store }) {
   )
   app.post(
     '/api/nodes/:id/commits',
-    wrap((req, res) => {
+    wrap(async (req, res) => {
       const node = store.resolveRef(refOf(req))
-      const { repo, sha, note } = req.body || {}
-      res.status(201).json(store.addCommit(node.id, { repo, sha, note }, actorOf(req)))
+      const { repo, sha, note, branch } = req.body || {}
+      // 登记分支：未提供时自动从本机 git 推断（best-effort，失败不影响登记）
+      let br = branch || null
+      if (!br && repo && sha) {
+        try {
+          const repoRow = store.listRepos().find((r) => r.name === repo)
+          if (repoRow && repoRow.localPath) {
+            br = await pickBranchForCommit(resolveRepoDir(repoRow), sha)
+          }
+        } catch (ignore) {
+          // 推断失败不阻断
+        }
+      }
+      res.status(201).json(store.addCommit(node.id, { repo, sha, note, branch: br }, actorOf(req)))
     })
   )
   app.delete(
