@@ -1,0 +1,1 @@
+- feat(agent-run): 测试节点 agent 执行（qodercli + DeepSeek-Flash，异步 + 输出落库 + 超时/兜底，三入口 1:1 + IDEA 插件 TestRunnerDialog）

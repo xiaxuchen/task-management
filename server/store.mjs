@@ -649,6 +649,81 @@ export function createStore(db, options = {}) {
     return commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(cur.id))
   }
 
+  // ---------- agent 运行记录（测试节点：写提示词触发 agent） ----------
+
+  function agentRunVO(r) {
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      agent: r.agent,
+      model: r.model,
+      prompt: r.prompt,
+      cwd: r.cwd,
+      status: r.status,
+      output: r.output,
+      exitCode: r.exit_code,
+      startedAt: r.started_at,
+      finishedAt: r.finished_at,
+      createdBy: r.created_by
+    }
+  }
+
+  function createAgentRun(nodeId, { agent = 'qodercli', model = 'DeepSeek-Flash', prompt, cwd = null } = {}, by = 'user') {
+    rawNode(nodeId)
+    const p = String(prompt || '').trim()
+    if (!p) throw new AppError(CODES.VALIDATION_FAILED, 'prompt 不能为空', { field: 'prompt' })
+    const info = db
+      .prepare('INSERT INTO agent_runs (node_id,agent,model,prompt,cwd,status,started_at,created_by) VALUES (?,?,?,?,?,?,?,?)')
+      .run(nodeId, agent, model, p, cwd, 'running', now(), actor(by))
+    bumpRevision()
+    return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  const AGENT_OUTPUT_LIMIT = 200 * 1024
+
+  /** 追加执行输出（限 200KB） */
+  function appendAgentRunOutput(id, chunk) {
+    const cur = db.prepare('SELECT output FROM agent_runs WHERE id = ?').get(Number(id))
+    if (!cur) return
+    const base = cur.output || ''
+    if (base.length >= AGENT_OUTPUT_LIMIT) return
+    const next = (base + chunk).slice(0, AGENT_OUTPUT_LIMIT)
+    db.prepare('UPDATE agent_runs SET output = ? WHERE id = ?').run(next, Number(id))
+  }
+
+  function finishAgentRun(id, { status, exitCode = null } = {}) {
+    if (!['success', 'failed', 'timeout'].includes(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `status 非法：${status}`, { status })
+    }
+    db.prepare('UPDATE agent_runs SET status=?, exit_code=?, finished_at=? WHERE id=?')
+      .run(status, exitCode, now(), Number(id))
+    bumpRevision()
+    return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id)))
+  }
+
+  function getAgentRun(id) {
+    const r = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `agent 运行记录 ${id} 不存在`, { id })
+    return agentRunVO(r)
+  }
+
+  function listAgentRuns(nodeId, { limit = 20 } = {}) {
+    rawNode(nodeId)
+    return db
+      .prepare('SELECT * FROM agent_runs WHERE node_id = ? ORDER BY id DESC LIMIT ?')
+      .all(Number(nodeId), Number(limit))
+      .map(agentRunVO)
+  }
+
+  /** 服务启动时调用：把残留的 running 标记为 failed（子进程已随服务退出） */
+  function failStaleAgentRuns() {
+    const info = db
+      .prepare("UPDATE agent_runs SET status='failed', output=COALESCE(output,'') || ?, finished_at=? WHERE status='running'")
+      .run('\n[task-board] 服务重启，本次运行已中断\n', now())
+    if (info.changes > 0) bumpRevision()
+    return { cleared: info.changes }
+  }
+
   // ---------- repos（仓库登记） ----------
 
   function repoVO(r) {
@@ -809,6 +884,13 @@ export function createStore(db, options = {}) {
     addCommit,
     removeCommit,
     updateCommitReview,
+    // agent runs（测试节点）
+    createAgentRun,
+    appendAgentRunOutput,
+    finishAgentRun,
+    getAgentRun,
+    listAgentRuns,
+    failStaleAgentRuns,
     // repos
     listRepos,
     addRepo,

@@ -125,6 +125,23 @@ CREATE TABLE IF NOT EXISTS branch_configs (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  agent TEXT NOT NULL DEFAULT 'qodercli',
+  model TEXT NOT NULL DEFAULT 'DeepSeek-Flash',
+  prompt TEXT NOT NULL,
+  cwd TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  output TEXT,
+  exit_code INTEGER,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  created_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_node ON agent_runs(node_id);
+
 CREATE TABLE IF NOT EXISTS merges (
   id INTEGER PRIMARY KEY,
   node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,

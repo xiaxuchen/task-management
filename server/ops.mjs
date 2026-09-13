@@ -30,6 +30,8 @@ export const TOOLS = [
   'commit_add',
   'commit_remove',
   'commit_review',
+  'agent_run',
+  'agent_runs_list',
   'repo_list',
   'repo_add',
   'repo_update',

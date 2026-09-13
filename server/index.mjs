@@ -24,6 +24,7 @@ export async function startServer({ port, open = true, host = '127.0.0.1' } = {}
   const cfg = loadConfig()
   const db = openDb()
   const store = createStore(db, { docPresets: cfg.docPresets })
+  store.failStaleAgentRuns()
   const app = createApp({ store })
   // 前端构建产物静态托管
   if (fs.existsSync(DIST)) {

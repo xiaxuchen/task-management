@@ -5,6 +5,7 @@ import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
+import { startAgentRun } from './agent.mjs'
 
 export function createMcpServer({ store }) {
   const cfg = loadConfig()
@@ -280,6 +281,26 @@ export function createMcpServer({ store }) {
     async ({ ref, sha, repo, note }) => {
       const node = store.resolveRef(ref)
       return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note }, 'ai'), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'agent_run',
+    '触发 agent 执行提示词（默认 qodercli + DeepSeek-Flash；工作目录自动取节点关联仓库，可显式传 cwd）。异步运行，用 agent_runs_list 查结果',
+    { ref: z.string(), prompt: z.string(), agent: z.string().optional(), model: z.string().optional(), cwd: z.string().optional() },
+    async ({ ref, prompt, agent, model, cwd }) => {
+      const node = store.resolveRef(ref)
+      return { content: [{ type: 'text', text: JSON.stringify(startAgentRun(store, node.id, { prompt, agent, model, cwd }, 'ai'), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'agent_runs_list',
+    'agent 运行历史（含输出与状态）',
+    { ref: z.string(), limit: z.number().optional() },
+    async ({ ref, limit }) => {
+      const node = store.resolveRef(ref)
+      return { content: [{ type: 'text', text: JSON.stringify(store.listAgentRuns(node.id, { limit: limit || 20 }), null, 2) }] }
     }
   )
 

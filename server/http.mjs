@@ -1,6 +1,7 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
+import { startAgentRun } from './agent.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 
 const STATUS_BY_CODE = {
@@ -284,6 +285,25 @@ export function createApp({ store }) {
   app.get(
     '/api/nodes/:id/tracks',
     wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })))
+  )
+
+  // ---------- agent 运行（测试节点：写提示词触发 agent） ----------
+
+  app.post(
+    '/api/nodes/:id/agent-runs',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(startAgentRun(store, node.id, { prompt: b.prompt, agent: b.agent, model: b.model, cwd: b.cwd }, actorOf(req)))
+    })
+  )
+  app.get(
+    '/api/nodes/:id/agent-runs',
+    wrap((req, res) => res.json(store.listAgentRuns(store.resolveRef(refOf(req)).id, { limit: Number(req.query.limit) || 20 })))
+  )
+  app.get(
+    '/api/agent-runs/:rid',
+    wrap((req, res) => res.json(store.getAgentRun(Number(req.params.rid))))
   )
 
   // ---------- 仓库登记 ----------

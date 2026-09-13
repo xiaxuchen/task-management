@@ -4,6 +4,7 @@ import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
+import { startAgentRun } from './agent.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -23,6 +24,9 @@ const OPTIONS = {
   scope: { type: 'string' },
   'review-status': { type: 'string' },
   'review-note': { type: 'string' },
+  prompt: { type: 'string' },
+  model: { type: 'string' },
+  cwd: { type: 'string' },
   confirm: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   actor: { type: 'string' },
@@ -71,6 +75,8 @@ const HELP = `task-board <命令>
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
   commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
+  agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>]   触发 agent 执行（默认 qodercli，异步）
+  agent runs <ref>                   agent 运行历史（含输出）
   repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>] [--tags 前端,后端]
   repo update <名|id> [--local-path p] [--tags t] [--test-branch b] [--pre-branch b] [--release-branch b]
   branch-config list                 标签级追踪目标列表（测试/预发/上线）
@@ -205,6 +211,14 @@ export async function run(argv) {
     }
     case 'commit review':
       json(store.updateCommitReview(Number(ref), { reviewStatus: values['review-status'], note: values['review-note'] }, by))
+      break
+    case 'agent run': {
+      const node = store.resolveRef(ref)
+      json(startAgentRun(store, node.id, { prompt: values.prompt, model: values.model, cwd: values.cwd }, by))
+      break
+    }
+    case 'agent runs':
+      json(store.listAgentRuns(store.resolveRef(ref).id))
       break
     case 'commit diff':
       json(await getCommitDiff(store, Number(ref)))
