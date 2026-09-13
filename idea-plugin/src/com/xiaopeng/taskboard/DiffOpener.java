@@ -79,6 +79,18 @@ public class DiffOpener {
         showChain(project, title, files, focusPath);
     }
 
+    /** 关闭上次由本插件打开的链 diff（对照布局重铺前清场用） */
+    public static void closeCurrent(Project project) {
+        try {
+            if (lastDiffFile != null && lastDiffFile.isValid()) {
+                FileEditorManager.getInstance(project).closeFile(lastDiffFile);
+            }
+        } catch (Throwable ignore) {
+            // 已关闭则忽略
+        }
+        lastDiffFile = null;
+    }
+
     private static void showChain(Project project, String title, List<FileDiff> files, String focusPath) {
         if (files.isEmpty()) {
             Messages.showInfoMessage(project, "没有可展示的文本变更（可能为空提交或二进制文件）", "查看 Diff");
@@ -94,13 +106,7 @@ public class DiffOpener {
         SimpleDiffRequestChain chain = new SimpleDiffRequestChain(requests, focus);
         try {
             // 复用：先关掉上次本插件打开的链 diff，再开新的（保证只有一个 diff tab）
-            if (lastDiffFile != null && lastDiffFile.isValid()) {
-                try {
-                    FileEditorManager.getInstance(project).closeFile(lastDiffFile);
-                } catch (Throwable ignore) {
-                    // 已关闭则忽略
-                }
-            }
+            closeCurrent(project);
             ChainDiffVirtualFile vf = new ChainDiffVirtualFile(chain, title);
             lastDiffFile = vf;
             FileEditorManager.getInstance(project).openFile(vf, true);

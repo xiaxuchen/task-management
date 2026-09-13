@@ -15,20 +15,25 @@ public class PrdOpener {
 
     private static VirtualFile current;
 
+    /** 关闭当前 PRD tab（对照布局重铺前清场用） */
+    public static void closeCurrent(Project project) {
+        try {
+            if (current != null && current.isValid()) {
+                FileEditorManager.getInstance(project).closeFile(current);
+            }
+        } catch (Throwable ignore) {
+            // 已关闭则忽略
+        }
+        current = null;
+    }
+
     /** 准备 PRD 虚拟文件（先关掉上次的，避免堆积）；不负责打开 */
     public static PrdVirtualFile prepare(Project project, String url, String nodeName) {
         try {
             if (!JBCefApp.isSupported()) {
                 return null;
             }
-            FileEditorManager fem = FileEditorManager.getInstance(project);
-            if (current != null && current.isValid()) {
-                try {
-                    fem.closeFile(current);
-                } catch (Throwable ignore) {
-                    // 已关闭则忽略
-                }
-            }
+            closeCurrent(project);
             PrdVirtualFile vf = new PrdVirtualFile(url, "PRD · " + nodeName);
             current = vf;
             return vf;

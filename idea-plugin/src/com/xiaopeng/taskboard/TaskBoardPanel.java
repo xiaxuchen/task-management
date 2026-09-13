@@ -167,6 +167,20 @@ public class TaskBoardPanel extends JPanel {
                 final JsonArray finalDocs = docs;
                 final String finalPrdUrl = prdUrl;
                 SwingUtilities.invokeLater(() -> {
+                    // 0) 清场：关掉上次开的三类 tab + 合并分屏 → 保证每次都是干净三栏（不堆叠）
+                    try {
+                        DiffOpener.closeCurrent(project);
+                        PrdOpener.closeCurrent(project);
+                        String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
+                                "taskboard-docs", "taskboard-需求概设.md").toString();
+                        VirtualFile docsOld = LocalFileSystem.getInstance().findFileByPath(docsPath);
+                        if (docsOld != null) {
+                            FileEditorManagerEx.getInstanceEx(project).closeFile(docsOld);
+                        }
+                        FileEditorManagerEx.getInstanceEx(project).unsplitAllWindow();
+                    } catch (Throwable ignore) {
+                        // 清场失败不阻断重铺
+                    }
                     // 1) 左侧：diff（当前节点全量变更）
                     if (finalFiles != null && !finalFiles.isEmpty()) {
                         DiffOpener.openCombined(project, finalLayoutTitle, finalFiles, null);
