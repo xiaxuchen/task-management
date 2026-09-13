@@ -2057,11 +2057,11 @@ public class TaskBoardPanel extends JPanel {
     private JPanel buildReviewView() {
         JPanel p = new JPanel(new BorderLayout());
 
-        // ---- 顶部：平台工具栏 + 汇总 + 过滤 ----
-        DefaultActionGroup group = new DefaultActionGroup();
-        addAction(group, "退出", "返回节点选择", AllIcons.Actions.Back, () -> cardLayout.show(cards, CARD_SELECT));
-        group.add(Separator.getInstance());
-        group.add(new ToggleAction("提交列表", "展开/收起左侧 commit 列表（勾选/取消调整参与合并的范围）", AllIcons.Actions.ListFiles) {
+        // ---- 顶部：导航组（退出/提交列表，左侧） + 功能按钮组（右侧） + 汇总 ----
+        DefaultActionGroup navGroup = new DefaultActionGroup();
+        addAction(navGroup, "退出", "返回节点选择", AllIcons.Actions.Back, () -> cardLayout.show(cards, CARD_SELECT));
+        navGroup.add(Separator.getInstance());
+        navGroup.add(new ToggleAction("提交列表", "展开/收起左侧 commit 列表（勾选/取消调整参与合并的范围）", AllIcons.Actions.ListFiles) {
             @Override
             public boolean isSelected(@NotNull AnActionEvent e) {
                 return commitListVisible;
@@ -2072,7 +2072,9 @@ public class TaskBoardPanel extends JPanel {
                 setCommitListVisible(state);
             }
         });
-        group.add(Separator.getInstance());
+        navGroup.add(Separator.getInstance());
+
+        DefaultActionGroup group = new DefaultActionGroup();
         addAction(group, "标记通过", "对勾选的 commit 标记审查通过（存在\"有问题\"的 commit 时会被拦截）", AllIcons.Actions.Checked, this::markApproved);
         addAction(group, "标记有问题…", "对勾选的 commit 标记有问题（可填写意见）", AllIcons.Actions.Cancel, this::markCheckedWithNote);
         addAction(group, "重置待审", "对勾选的 commit 重置为待审", AllIcons.Actions.Rollback, () -> markChecked("pending", null));
@@ -2126,8 +2128,14 @@ public class TaskBoardPanel extends JPanel {
         ActionToolbar toolbar = reviewToolbar;
         toolbar.setTargetComponent(this);
 
+        ActionToolbar navToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReviewNav", navGroup, true);
+        navToolbar.setTargetComponent(this);
+        JPanel navPart = new JPanel(new BorderLayout(6, 0));
+        navPart.add(navToolbar.getComponent(), BorderLayout.WEST);
+        navPart.add(reviewSummary, BorderLayout.CENTER);
+
         JPanel north = new JPanel(new BorderLayout(8, 0));
-        north.add(reviewSummary, BorderLayout.WEST);
+        north.add(navPart, BorderLayout.CENTER);
         north.add(toolbar.getComponent(), BorderLayout.EAST);
         p.add(north, BorderLayout.NORTH);
 
