@@ -253,6 +253,52 @@ export async function previewMerge(dir, source, target) {
   }
 }
 
+/**
+ * 批量提交元信息：一次 git log --no-walk 拿多条的 stat/作者/时间/分支。
+ * 返回 Map<完整sha, {sha,author,authorEmail,date,branches,stat:[{path,additions,deletions,binary}]}>
+ */
+export async function commitMetasBatch(dir, shas) {
+  const list = (shas || []).filter(Boolean)
+  if (list.length === 0) return new Map()
+  const SEP = '\u0001'
+  const r = await gitTry(dir, [
+    'log',
+    '--no-walk=unsorted',
+    '--numstat',
+    `--format=@@@%H${SEP}%an${SEP}%ae${SEP}%aI${SEP}%D`,
+    ...list
+  ])
+  if (!r.ok) return new Map()
+  const out = new Map()
+  let cur = null
+  for (const line of r.stdout.split('\n')) {
+    if (line.startsWith('@@@')) {
+      const parts = line.slice(3).split(SEP)
+      cur = {
+        sha: parts[0] || '',
+        author: parts[1] || '',
+        authorEmail: parts[2] || '',
+        date: parts[3] || '',
+        branches: parts[4] ? parts[4].split(',').map((x) => x.trim()).filter(Boolean) : [],
+        stat: []
+      }
+      if (cur.sha) out.set(cur.sha, cur)
+    } else if (cur && line.trim()) {
+      const cells = line.split('\t')
+      if (cells.length >= 3) {
+        const binary = cells[0] === '-' && cells[1] === '-'
+        cur.stat.push({
+          path: cells.slice(2).join('\t'),
+          additions: binary ? 0 : Number(cells[0]) || 0,
+          deletions: binary ? 0 : Number(cells[1]) || 0,
+          binary
+        })
+      }
+    }
+  }
+  return out
+}
+
 /** 一次 git log 拿分支上的全部 sha（Set）；ref 不存在返回 null */
 export async function branchLogShas(dir, branch, maxCount = 5000) {
   const ref = await resolveBranchRef(dir, branch)

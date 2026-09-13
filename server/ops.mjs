@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas, commitMetasBatch as gitCommitMetasBatch } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -250,14 +250,19 @@ export async function getCombinedDiff(store, cids) {
     if (!repo) throw new AppError(CODES.REPO_NOT_REGISTERED, `仓库 ${repoName} 未登记（先 repo add）`, { repo: repoName })
     const dir = resolveRepoDir(repo)
 
-    // 每个 commit 的 stat + 时间 + 元信息，按时间升序（old 取最早、new 取最晚）
-    const withStat = []
-    for (const c of list) {
-      const stat = await gitCommitStat(dir, c.sha).catch(() => [])
-      const ts = await gitCommitTime(dir, c.sha).catch(() => 0)
-      const meta = await gitCommitMeta(dir, c.sha).catch(() => null)
-      withStat.push({ commit: c, stat, ts, meta })
+    // 【批量】一次 git log 拿全部提交的 stat/时间/元信息（替代逐条 3 次 git；64 条 192 次 → 1 次）
+    const metaBatch = await gitCommitMetasBatch(dir, list.map((c) => c.sha))
+    const findMeta = (sha) => {
+      if (metaBatch.has(sha)) return metaBatch.get(sha)
+      for (const [k, v] of metaBatch) {
+        if (k.startsWith(sha)) return v
+      }
+      return null
     }
+    const withStat = list.map((c) => {
+      const b = findMeta(c.sha)
+      return { commit: c, stat: b ? b.stat : [], ts: b && b.date ? Date.parse(b.date) || 0 : 0, meta: b }
+    })
     withStat.sort((a, b) => a.ts - b.ts)
 
     // 文件并集
@@ -277,30 +282,38 @@ export async function getCombinedDiff(store, cids) {
       }
     })
 
-    // 逐文件计算净变更 old/new
+    // 逐文件计算净变更 old/new（并发 8，替代串行）
     const files = []
-    for (const agg of filesMap.values()) {
-      const first = withStat[agg.firstIdx].commit
-      const last = withStat[agg.lastIdx].commit
-      let oldText = ''
-      let newText = ''
-      if (!agg.binary) {
-        const oldRaw = await gitShowFileAt(dir, `${first.sha}^`, agg.path)
-        if (oldRaw != null) oldText = oldRaw.slice(0, COMBINED_TEXT_LIMIT)
-        const newRaw = await gitShowFileAt(dir, last.sha, agg.path)
-        if (newRaw != null) newText = newRaw.slice(0, COMBINED_TEXT_LIMIT)
-      }
-      files.push({
-        path: agg.path,
-        additions: agg.additions,
-        deletions: agg.deletions,
-        binary: agg.binary,
-        old: oldText,
-        new: newText,
-        shas: agg.shas,
-        firstSha: first.sha,
-        lastSha: last.sha
-      })
+    const aggList = [...filesMap.values()]
+    const CONCURRENCY = 8
+    for (let i = 0; i < aggList.length; i += CONCURRENCY) {
+      const chunk = aggList.slice(i, i + CONCURRENCY)
+      const chunkResults = await Promise.all(
+        chunk.map(async (agg) => {
+          const first = withStat[agg.firstIdx].commit
+          const last = withStat[agg.lastIdx].commit
+          let oldText = ''
+          let newText = ''
+          if (!agg.binary) {
+            const oldRaw = await gitShowFileAt(dir, `${first.sha}^`, agg.path)
+            if (oldRaw != null) oldText = oldRaw.slice(0, COMBINED_TEXT_LIMIT)
+            const newRaw = await gitShowFileAt(dir, last.sha, agg.path)
+            if (newRaw != null) newText = newRaw.slice(0, COMBINED_TEXT_LIMIT)
+          }
+          return {
+            path: agg.path,
+            additions: agg.additions,
+            deletions: agg.deletions,
+            binary: agg.binary,
+            old: oldText,
+            new: newText,
+            shas: agg.shas,
+            firstSha: first.sha,
+            lastSha: last.sha
+          }
+        })
+      )
+      files.push(...chunkResults)
     }
     out.push({ repo: { name: repo.name, localPath: repo.localPath }, files })
     for (const w of withStat) {
