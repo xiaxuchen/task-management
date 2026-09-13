@@ -194,22 +194,31 @@ public class TaskBoardPanel extends JPanel {
             Files.createDirectories(dir);
             Files.writeString(dir.resolve("selected-snippets.md"), block.toString(),
                     java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
-            // 高亮标注"已加入上下文"（再按一次可解除）
+            // 高亮标注"已加入上下文"（直构 TextAttributes，强对比；再按一次可解除）
+            boolean highlighted = false;
             if (editor != null && !editor.isDisposed() && editor.getSelectionModel().hasSelection()) {
                 try {
-                    com.intellij.openapi.editor.markup.RangeHighlighter h = editor.getMarkupModel().addRangeHighlighter(
-                            com.intellij.openapi.editor.colors.EditorColors.SEARCH_RESULT_ATTRIBUTES,
-                            editor.getSelectionModel().getSelectionStart(),
-                            editor.getSelectionModel().getSelectionEnd(),
-                            com.intellij.openapi.editor.markup.HighlighterLayer.SELECTION - 1,
-                            com.intellij.openapi.editor.markup.HighlighterTargetArea.EXACT_RANGE);
+                    com.intellij.openapi.editor.markup.TextAttributes attrs =
+                            new com.intellij.openapi.editor.markup.TextAttributes();
+                    attrs.setBackgroundColor(new java.awt.Color(0xFF, 0xF3, 0xB0));
+                    attrs.setEffectType(com.intellij.openapi.editor.markup.EffectType.BOXED);
+                    attrs.setEffectColor(new java.awt.Color(0xF5, 0xA6, 0x23));
+                    com.intellij.openapi.editor.markup.RangeHighlighter h = editor.getMarkupModel()
+                            .addRangeHighlighter(
+                                    editor.getSelectionModel().getSelectionStart(),
+                                    editor.getSelectionModel().getSelectionEnd(),
+                                    com.intellij.openapi.editor.markup.HighlighterLayer.SELECTION - 1,
+                                    attrs,
+                                    com.intellij.openapi.editor.markup.HighlighterTargetArea.EXACT_RANGE);
                     addedMarks.put(textHash(text), new AddedMark(editor, h));
-                } catch (Throwable ignore) {
-                    // 高亮失败不影响加入
+                    highlighted = true;
+                } catch (Throwable t) {
+                    diag("highlighter failed: " + t);
                 }
             }
             int lines = text.split("\n", -1).length;
-            reviewSummary.setText("已加入上下文（高亮标注）：" + source + "（" + lines + " 行）——再按一次可解除");
+            reviewSummary.setText("已加入上下文" + (highlighted ? "（高亮标注）" : "") + "：" + source
+                    + "（" + lines + " 行）" + (highlighted ? "—再按一次可解除" : ""));
         } catch (Exception ex) {
             reviewSummary.setText("加入上下文失败：" + ex.getMessage());
         }
