@@ -47,22 +47,16 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 
 **踩坑**：diff 视图里用户实际选中的是"左右编辑器"（挂 diff 内容 vf，**不是** ChainDiff），首版只认 `ChainDiffVirtualFile` 类型 → 落入兜底标签"（虚拟文件）"，用户看起来像"没拿到文件"。教训：**同一个 diff 视图存在两种虚拟文件层级（tab 层 / 内容层），取值要做回退链**。
 
-## 手动加入上下文（快捷键）
+## 手动加入上下文（实验性，已回退）
 
-**动作**：`AddToContextAction`（快捷键 **Ctrl+Shift+Alt+C**（Mac：Control+Shift+Option+C）—— 避开被 IDEA 占用的 Cmd+Alt+C（Change Signature 重构会报 read-only 错）；也在编辑器右键菜单）
+> 用户实际使用后觉得"快捷键+高亮+解除"链路太重，已全部回退：**回到"选中即自动捕获"（零操作）**。本小节仅保留设计经验。
 
-**选中来源自动识别**：
-1. **编辑器选区**（代码 / **需求概设 Markdown** / diff 视图）→ `getSelectedTextEditor` 取选中
-2. **JCEF 网页**（**飞书 PRD 云文档** / Markdown 预览）→ `JBCefJSQuery` + `window.getSelection()`（异步回调）
-3. 都没有 → 状态栏提示
+**曾经实现**（已删除）：`AddToContextAction`（快捷键 Ctrl+Shift+Alt+C + 右键菜单）；编辑器选中加入后 `MarkupModel.addRangeHighlighter` 高亮（直构 TextAttributes 淡黄底+橙框）；再按同选区 toggle 解除；JCEF 云文档选中经 `JBCefJSQuery + window.getSelection()` 读取；池 `selected-snippets.md`（30 分钟新鲜无条件注入）。
 
-**多选累积**：每次快捷键 → 追加一条到 `selected-snippets.md`（含来源 + 时间）——**支持多个文档/文件同时选中**，池内可累积多条
-
-**高亮与解除（toggle）**：编辑器选中加入后 **高亮标注**（`MarkupModel.addRangeHighlighter` + `EditorColors.SEARCH_RESULT_ATTRIBUTES`，层次 `SELECTION-1`）；**再按一次同选区 → 解除**（移高亮 + `removeFromContextPool` 重写池文件）；内存索引 `textHash(文本) → AddedMark{editor, highlighter}`；JCEF 来源仅入池（无编辑器高亮）
-
-**注入策略**：池 **30 分钟内新鲜 → 无条件注入**（用户"挑了就是要用"）；旧池（≤2h）仅在触发词命中时带
-
-**类结构**：`PrdFileEditor.last()`（静态最近实例）+ `captureJcefSelection(cb)`；`TaskBoardPanel.lastInstance()` + `addSelectionToContextGlobal()` / `appendToContextPool()` / `sourceLabelOf()`
+**回退理由与经验**：
+- 快捷键与高亮引入的交互重量（记快捷键、看高亮、toggle 解除）超过收益；**自动捕获（选区监听 + 新鲜度注入）已经覆盖主场景**
+- 高亮在 diff 编辑器里渲染不可靠（scheme 键不渲染→直构 TextAttributes 也未能稳定可见），反复调试成本高
+- **经验：小体量、高价值的上下文捕获优先做"零操作"；需要用户主动管理的（多选/累积/解除）仅在明确高频需求下再加**
 
 ## 数据流
 
