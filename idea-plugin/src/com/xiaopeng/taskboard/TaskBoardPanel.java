@@ -828,6 +828,15 @@ public class TaskBoardPanel extends JPanel {
             }
 
             @Override
+            public void update(@NotNull AnActionEvent e) {
+                super.update(e);
+                // 勾选态可视化：☑/☐ 前缀 + 选中时的 Checked 图标
+                boolean on = isSelected(e);
+                e.getPresentation().setText((on ? "☑ " : "☐ ") + text);
+                e.getPresentation().setIcon(on ? AllIcons.Actions.Checked : null);
+            }
+
+            @Override
             public void setSelected(@NotNull AnActionEvent e, boolean state) {
                 setOn.accept(state);
                 if (reviewToolbar != null) {
