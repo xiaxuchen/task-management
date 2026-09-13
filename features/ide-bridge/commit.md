@@ -1,0 +1,1 @@
+- feat(ide-bridge): 网页 → IDEA 打开 diff 桥（ide_requests 队列 + claim/done；NodeDrawer 全部变更按钮 + DiffPane 在 IDEA 打开）

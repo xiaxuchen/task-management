@@ -24,6 +24,11 @@
 | dsh-charge 需求同步导入 | `dsh-import/` | 计划 3 配套 | server/import-dsh.mjs |
 | commit 在线预览（单 commit + 子树聚合，统一/分栏） | `diff-preview/` | 计划 4 | server/git.mjs、web/src/components/DiffPane.vue |
 | 分支合并追踪（测试 / 预发 / 上线） | `branch-track/` | 计划 4 | server/git.mjs、SettingsView、NodeDrawer |
+| commit 审查（审查状态 / 意见，三入口 1:1） | `commit-registry/` | 计划 4 增强 | server/store.mjs（commits review）+ NodeDrawer |
+| 多 commit 合并 diff（MR 式净变更 + commit 明细） | `commit-registry/` | 计划 4 增强 | server/ops.mjs（getCombinedDiff）|
+| agent 测试运行（qodercli + DeepSeek-Flash） | `agent-run/` | — | server/agent.mjs |
+| 网页 → IDEA 打开 diff（IDE 桥） | `ide-bridge/` | — | server/store.mjs（ide_requests）+ DiffPane/NodeDrawer |
+| 重复检测与一键去重（+ 需求分支标注） | `duplicates/` | — | server/ops.mjs（getNodeDuplicates）+ NodeDrawer |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 

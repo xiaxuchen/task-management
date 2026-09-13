@@ -33,3 +33,7 @@
 
 - 现有 `commit_list` 只读登记；本功能落地后新增 `diff` 工具（MCP / CLI / REST 1:1），
   AI 可读单 commit 或子树聚合的 diff 内容
+## commit 元信息增强（2026-09-13）
+
+- diff 响应补充：`authorEmail`（作者邮箱）与 `branches`（包含该提交的分支列表——`git branch -a --contains`，
+  去 origin/ 前缀、限 8 个）；元信息抽取为轻量 `commitMeta(dir, sha)` 供 commitDiff / combinedDiff 复用

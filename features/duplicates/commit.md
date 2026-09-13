@@ -1,0 +1,1 @@
+- feat(duplicates): 重复检测（same-sha/patch-id/merge 覆盖）+ 一键去重（安全校验）+ 需求分支属性与合入检测；网页提交列表展示分支/需求分支/重复标记
