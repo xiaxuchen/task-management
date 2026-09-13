@@ -321,8 +321,8 @@ onBeforeUnmount(() => destroyEditor())
   min-height: 0;
   overflow: auto;
 }
-/* 静态预览留白，避免贴边 */
-.vd-host :deep(.vditor-reset) {
-  padding: 12px 16px;
+/* 静态预览留白，避免贴边（Vditor.preview 会把 vditor-reset 类加到 .vd-host 同一元素上） */
+.vd-host.vditor-reset {
+  padding: 16px 24px;
 }
 </style>
