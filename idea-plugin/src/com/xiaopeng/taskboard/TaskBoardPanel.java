@@ -111,6 +111,85 @@ public class TaskBoardPanel extends JPanel {
         add(cards, BorderLayout.CENTER);
         startIdeBridgePolling();
         startSelectionCapture();
+        lastInstance = this;
+    }
+
+    /** 最近一个面板实例（供全局动作「加入 Qoder 上下文」调用） */
+    private static volatile TaskBoardPanel lastInstance;
+
+    public static TaskBoardPanel lastInstance() {
+        return lastInstance;
+    }
+
+    /** 全局：把"当前选中"（编辑器 / JCEF 云文档·预览）追加到上下文池（可多次累积） */
+    public void addSelectionToContextGlobal() {
+        try {
+            com.intellij.openapi.editor.Editor editor =
+                    FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+            String text = editor != null && editor.getSelectionModel().hasSelection()
+                    ? editor.getSelectionModel().getSelectedText() : null;
+            if (text != null && !text.trim().isEmpty()) {
+                appendToContextPool(text, sourceLabelOf(editor));
+                return;
+            }
+            // 无编辑器选中 → 尝试 JCEF（飞书云文档 / Markdown 预览）
+            PrdFileEditor prd = PrdFileEditor.last();
+            if (prd != null) {
+                prd.captureJcefSelection(t -> {
+                    if (t != null && !t.trim().isEmpty()) {
+                        appendToContextPool(t, "云文档/预览（JCEF）");
+                    } else {
+                        reviewSummary.setText("未获取到选中（编辑器/云文档均无选中）");
+                    }
+                });
+                return;
+            }
+            reviewSummary.setText("未获取到选中（先选中代码/文档内容再按快捷键）");
+        } catch (Throwable t) {
+            reviewSummary.setText("加入上下文失败：" + t.getMessage());
+        }
+    }
+
+    /** 追加一条选中到上下文池（可多次累积，多文档/多文件） */
+    private void appendToContextPool(String text, String source) {
+        try {
+            StringBuilder block = new StringBuilder();
+            block.append("\n### ").append(source).append("（")
+                    .append(java.time.LocalTime.now().withNano(0)).append("）\n```\n")
+                    .append(text).append("\n```\n");
+            Path dir = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard");
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve("selected-snippets.md"), block.toString(),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            int lines = text.split("\n", -1).length;
+            reviewSummary.setText("已加入上下文：" + source + "（" + lines + " 行，可继续选多处累积）——Qoder 提问时自动带上");
+        } catch (Exception ex) {
+            reviewSummary.setText("加入上下文失败：" + ex.getMessage());
+        }
+    }
+
+    /** 选中来源标签（编辑器/diff 真实文件路径；虚拟文件回退当前链式 diff） */
+    private String sourceLabelOf(com.intellij.openapi.editor.Editor editor) {
+        try {
+            VirtualFile vf = editor.getVirtualFile();
+            if (vf instanceof com.intellij.diff.editor.ChainDiffVirtualFile) {
+                String p = DiffOpener.currentDiffFilePath(vf);
+                return p != null ? p : "当前 review diff";
+            }
+            if (vf instanceof com.intellij.testFramework.LightVirtualFile) {
+                VirtualFile chainVf = DiffOpener.currentFile();
+                if (chainVf != null && chainVf.isValid()) {
+                    String p = DiffOpener.currentDiffFilePath(chainVf);
+                    if (p != null) {
+                        return p;
+                    }
+                }
+                return "当前 review diff";
+            }
+            return vf.getName();
+        } catch (Throwable t) {
+            return "编辑器";
+        }
     }
 
     // ---------- Qoder 联动：自动捕获编辑器选中（零点击） ----------

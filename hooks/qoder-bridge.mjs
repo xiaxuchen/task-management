@@ -139,16 +139,24 @@ async function buildTaskContext(prompt) {
       log('last-selection attached (fresh)')
     }
 
-    // 4) 片段池 + 任务简报：触发词门控（体量较大，避免泛滥）
+    // 4) 手动挑选的片段池：新鲜（≤30 分钟）无条件注入；触发词时放宽到 2h
+    const poolFresh = loadSnippetsPool(30 * 60 * 1000)
+    if (poolFresh) {
+      parts.push(poolFresh)
+      log('snippets pool attached (fresh)')
+    } else if (SNIPPET_TRIGGER.test(prompt) || REVIEW_TRIGGER.test(prompt)) {
+      const poolOld = loadSnippetsPool(2 * 60 * 60 * 1000)
+      if (poolOld) {
+        parts.push(poolOld)
+        log('snippets pool attached (trigger)')
+      }
+    }
+
+    // 5) 任务简报：触发词门控
     if (SNIPPET_TRIGGER.test(prompt) || REVIEW_TRIGGER.test(prompt)) {
       if (!reviewPushed && review && review.brief) {
         parts.push(review.brief)
         log('review brief attached')
-      }
-      const snippets = loadSnippetsPool()
-      if (snippets) {
-        parts.push(snippets)
-        log('snippets pool attached')
       }
     }
 
@@ -320,16 +328,16 @@ function loadLastSelectionFresh(maxAgeMs) {
   }
 }
 
-/** 手动记入的片段池（可能较大，上限截断；2 小时内有效；由触发词门控调用） */
-function loadSnippetsPool() {
+/** 手动挑选的片段池（快捷键「加入上下文」追加；可能较大，上限截断；maxAgeMs 内有效） */
+function loadSnippetsPool(maxAgeMs = 2 * 60 * 60 * 1000) {
   try {
     if (!fs.existsSync(SNIPPETS_FILE)) return null
     const st = fs.statSync(SNIPPETS_FILE)
-    if (Date.now() - st.mtimeMs > 2 * 60 * 60 * 1000) return null
+    if (Date.now() - st.mtimeMs > maxAgeMs) return null
     let c = fs.readFileSync(SNIPPETS_FILE, 'utf8')
     if (!c.trim()) return null
     if (c.length > 3000) c = '…（较早片段省略）\n' + c.slice(-3000)
-    return '## 你在 IDEA 里记入的选中代码片段（最近）\n' + c
+    return '## 你手动加入 Qoder 上下文的片段（可多个文件/文档）\n' + c
   } catch (e) {
     log('loadSnippetsPool error: ' + (e && e.message ? e.message : e))
     return null
