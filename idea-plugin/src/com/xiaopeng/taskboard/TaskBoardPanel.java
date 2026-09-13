@@ -302,6 +302,8 @@ public class TaskBoardPanel extends JPanel {
                     t.setRepeats(false);
                     t.start();
                     reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件，宽70%） + 右列（需求概设⇄PRD 用顶栏按钮切） + TaskBoard底部（高30%）");
+                    // 打开布局即注入当前上下文（任务/编号/当前+勾选 commit/文件/当前文件）给 Qoder
+                    writeReviewContext();
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
@@ -311,13 +313,14 @@ public class TaskBoardPanel extends JPanel {
 
     // ---------- Qoder 联动：当前 review 上下文 ----------
 
-    /** 把"当前 review 上下文"（节点/勾选提交/变更文件）写到固定文件，供 Qoder hook 桥注入 */
+    /** 把"当前 review 上下文"（节点/编号/当前+勾选提交/文件/当前展示文件）写到固定文件，供 Qoder hook 桥注入 */
     private void writeReviewContext() {
         try {
             JsonObject o = new JsonObject();
             o.addProperty("updatedAt", System.currentTimeMillis());
             o.addProperty("nodeId", currentNodeId);
             o.addProperty("nodeName", currentNodeName);
+            o.addProperty("nodeNo", currentNodeNo());
             JsonArray commits = new JsonArray();
             for (CommitItem it : checkedCommits()) {
                 JsonObject c = new JsonObject();
@@ -328,6 +331,15 @@ public class TaskBoardPanel extends JPanel {
                 commits.add(c);
             }
             o.add("checkedCommits", commits);
+            // 当前选中/查看的 commit
+            CommitItem cur = selectedCommit();
+            if (cur != null) {
+                JsonObject cc = new JsonObject();
+                cc.addProperty("sha", cur.sha == null ? "" : cur.sha);
+                cc.addProperty("note", cur.note == null ? "" : cur.note);
+                cc.addProperty("repo", cur.repo == null ? "" : cur.repo);
+                o.add("currentCommit", cc);
+            }
             JsonArray files = new JsonArray();
             if (aggregateFiles != null) {
                 for (DiffOpener.FileDiff f : aggregateFiles) {
@@ -335,12 +347,41 @@ public class TaskBoardPanel extends JPanel {
                 }
             }
             o.add("files", files);
+            // 当前 diff 正在展示的文件路径
+            String curFile = currentDiffFile();
+            if (curFile != null && !curFile.isEmpty()) {
+                o.addProperty("currentFile", curFile);
+            }
             Path dir = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard");
             Files.createDirectories(dir);
             Files.writeString(dir.resolve("current-review.json"), o.toString());
         } catch (Exception ignore) {
             // 上下文写入失败不影响 UI
         }
+    }
+
+    /** 当前 diff 正在展示的文件路径（链式 diff 当前页；回退内容反查） */
+    private String currentDiffFile() {
+        try {
+            VirtualFile chain = DiffOpener.currentFile();
+            if (chain != null && chain.isValid()) {
+                String p = DiffOpener.currentDiffFilePath(chain);
+                if (p != null && !p.isEmpty()) {
+                    return p;
+                }
+            }
+            com.intellij.openapi.editor.Editor ed =
+                    FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+            if (ed == null || ed.isDisposed()) {
+                ed = lastSelectionEditor;
+            }
+            if (ed != null && !ed.isDisposed()) {
+                return DiffOpener.filePathForEditor(ed);
+            }
+        } catch (Throwable ignore) {
+            // 忽略
+        }
+        return null;
     }
 
     // ---------- Qoder 联动：派任务给 Qoder IDE（前台 Agent） ----------

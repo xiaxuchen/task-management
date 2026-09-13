@@ -270,7 +270,13 @@ function loadReviewContext() {
     if (!o || !o.nodeName) return null
     const ageMin = Math.max(0, Math.round((Date.now() - Number(o.updatedAt || 0)) / 60000))
     const lines = [`## 当前 review 上下文（来自 IDEA TaskBoard 插件，更新于 ${ageMin} 分钟前）`]
-    lines.push(`- **当前节点**：${o.nodeName}（id=${o.nodeId}）`)
+    lines.push(`- **当前节点**：${o.nodeNo ? `[${o.nodeNo}] ` : ''}${o.nodeName}（id=${o.nodeId}）`)
+    if (o.currentCommit && o.currentCommit.sha) {
+      lines.push(`- **当前 commit**：${String(o.currentCommit.sha).slice(0, 10)} ${o.currentCommit.note || ''}（${o.currentCommit.repo || ''}）`)
+    }
+    if (o.currentFile) {
+      lines.push(`- **当前展示文件**：${o.currentFile}`)
+    }
     const commits = Array.isArray(o.checkedCommits) ? o.checkedCommits : []
     if (commits.length > 0) {
       lines.push(`- **勾选提交（${commits.length}）**：`)
@@ -296,7 +302,11 @@ function loadReviewContext() {
 function renderReviewBrief(o, commits, files) {
   const repos = [...new Set(commits.map((c) => c.repo).filter(Boolean))]
   const lines = ['## 当前任务（IDEA TaskBoard review，自动带入供定位上下文）']
-  lines.push(`- 任务：${o.nodeName}（id=${o.nodeId}）`)
+  lines.push(`- 任务：${o.nodeNo ? `[${o.nodeNo}] ` : ''}${o.nodeName}（id=${o.nodeId}）`)
+  if (o.currentCommit && o.currentCommit.sha) {
+    lines.push(`- 当前 commit：${String(o.currentCommit.sha).slice(0, 10)} ${o.currentCommit.note || ''}（${o.currentCommit.repo || ''}）`)
+  }
+  if (o.currentFile) lines.push(`- 当前展示文件：${o.currentFile}`)
   if (repos.length) lines.push(`- 代码项目：${repos.join('、')}`)
   if (commits.length) {
     lines.push(`- 相关 commit（${commits.length}）：`)
