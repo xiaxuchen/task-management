@@ -121,7 +121,26 @@ public class TaskBoardPanel extends JPanel {
         return lastInstance;
     }
 
-    /** 全局：把"当前选中"（编辑器 / JCEF 云文档·预览）追加到上下文池（可多次累积） */
+    /** 已加入上下文的标记（文本 hash → 高亮，供"再按一次解除"） */
+    private final java.util.Map<String, AddedMark> addedMarks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 一条已加入标记（高亮 + 所属编辑器） */
+    private static class AddedMark {
+        final com.intellij.openapi.editor.Editor editor;
+        final com.intellij.openapi.editor.markup.RangeHighlighter highlighter;
+
+        AddedMark(com.intellij.openapi.editor.Editor editor,
+                  com.intellij.openapi.editor.markup.RangeHighlighter highlighter) {
+            this.editor = editor;
+            this.highlighter = highlighter;
+        }
+    }
+
+    private static String textHash(String text) {
+        return Integer.toHexString(text.trim().hashCode());
+    }
+
+    /** 全局：把"当前选中"加入/解除上下文（toggle；编辑器选中加入后高亮标注，再按一次解除） */
     public void addSelectionToContextGlobal() {
         try {
             com.intellij.openapi.editor.Editor editor =
@@ -129,7 +148,21 @@ public class TaskBoardPanel extends JPanel {
             String text = editor != null && editor.getSelectionModel().hasSelection()
                     ? editor.getSelectionModel().getSelectedText() : null;
             if (text != null && !text.trim().isEmpty()) {
-                appendToContextPool(text, sourceLabelOf(editor));
+                String hash = textHash(text);
+                AddedMark existing = addedMarks.get(hash);
+                if (existing != null) {
+                    // 再按一次 = 解除该片段（移高亮 + 从池移除）
+                    try {
+                        existing.editor.getMarkupModel().removeHighlighter(existing.highlighter);
+                    } catch (Throwable ignore) {
+                        // 编辑器已关闭等情况忽略
+                    }
+                    addedMarks.remove(hash);
+                    removeFromContextPool(text);
+                    reviewSummary.setText("已从上下文移除该片段：" + sourceLabelOf(editor));
+                    return;
+                }
+                appendToContextPool(text, sourceLabelOf(editor), editor);
                 return;
             }
             // 无编辑器选中 → 尝试 JCEF（飞书云文档 / Markdown 预览）
@@ -137,7 +170,7 @@ public class TaskBoardPanel extends JPanel {
             if (prd != null) {
                 prd.captureJcefSelection(t -> {
                     if (t != null && !t.trim().isEmpty()) {
-                        appendToContextPool(t, "云文档/预览（JCEF）");
+                        appendToContextPool(t, "云文档/预览（JCEF）", null);
                     } else {
                         reviewSummary.setText("未获取到选中（编辑器/云文档均无选中）");
                     }
@@ -150,8 +183,8 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
-    /** 追加一条选中到上下文池（可多次累积，多文档/多文件） */
-    private void appendToContextPool(String text, String source) {
+    /** 追加一条选中到上下文池（可多次累积，多文档/多文件；编辑器来源时高亮标注） */
+    private void appendToContextPool(String text, String source, com.intellij.openapi.editor.Editor editor) {
         try {
             StringBuilder block = new StringBuilder();
             block.append("\n### ").append(source).append("（")
@@ -161,10 +194,50 @@ public class TaskBoardPanel extends JPanel {
             Files.createDirectories(dir);
             Files.writeString(dir.resolve("selected-snippets.md"), block.toString(),
                     java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            // 高亮标注"已加入上下文"（再按一次可解除）
+            if (editor != null && !editor.isDisposed() && editor.getSelectionModel().hasSelection()) {
+                try {
+                    com.intellij.openapi.editor.markup.RangeHighlighter h = editor.getMarkupModel().addRangeHighlighter(
+                            com.intellij.openapi.editor.colors.EditorColors.SEARCH_RESULT_ATTRIBUTES,
+                            editor.getSelectionModel().getSelectionStart(),
+                            editor.getSelectionModel().getSelectionEnd(),
+                            com.intellij.openapi.editor.markup.HighlighterLayer.SELECTION - 1,
+                            com.intellij.openapi.editor.markup.HighlighterTargetArea.EXACT_RANGE);
+                    addedMarks.put(textHash(text), new AddedMark(editor, h));
+                } catch (Throwable ignore) {
+                    // 高亮失败不影响加入
+                }
+            }
             int lines = text.split("\n", -1).length;
-            reviewSummary.setText("已加入上下文：" + source + "（" + lines + " 行，可继续选多处累积）——Qoder 提问时自动带上");
+            reviewSummary.setText("已加入上下文（高亮标注）：" + source + "（" + lines + " 行）——再按一次可解除");
         } catch (Exception ex) {
             reviewSummary.setText("加入上下文失败：" + ex.getMessage());
+        }
+    }
+
+    /** 从上下文池移除包含该文本的条目（重写文件） */
+    private void removeFromContextPool(String text) {
+        try {
+            Path file = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard", "selected-snippets.md");
+            if (!Files.exists(file)) {
+                return;
+            }
+            String all = Files.readString(file);
+            String key = text.trim();
+            if (key.length() > 100) {
+                key = key.substring(0, 100);
+            }
+            String[] parts = all.split("(?m)^### ");
+            StringBuilder sb = new StringBuilder();
+            for (String p : parts) {
+                if (p.trim().isEmpty() || p.contains(key)) {
+                    continue;
+                }
+                sb.append("### ").append(p);
+            }
+            Files.writeString(file, sb.toString());
+        } catch (Exception ex) {
+            reviewSummary.setText("移除上下文失败：" + ex.getMessage());
         }
     }
 
