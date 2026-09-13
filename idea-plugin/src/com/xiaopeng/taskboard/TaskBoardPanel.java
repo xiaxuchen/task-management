@@ -197,33 +197,55 @@ public class TaskBoardPanel extends JPanel {
                     if (docsVf != null && main != null) {
                         docWin = main.split(JSplitPane.HORIZONTAL_SPLIT, true, docsVf, true);
                     }
-                    // 3) 右侧：PRD（飞书，再右分屏）
+                    // 3) 右侧：PRD（飞书，在文档下方 → 右列上下结构）
                     if (finalPrdUrl != null) {
                         try {
                             PrdVirtualFile prdVf = PrdOpener.prepare(project, finalPrdUrl, nodeName);
                             EditorWindow base = docWin != null ? docWin : femEx.getCurrentWindow();
                             if (prdVf != null && base != null) {
-                                base.split(JSplitPane.HORIZONTAL_SPLIT, true, prdVf, true);
+                                base.split(JSplitPane.VERTICAL_SPLIT, true, prdVf, true);
                             }
                         } catch (Throwable ignore) {
                             // PRD 分屏失败不阻断
                         }
                     }
-                    // 4) 宽度：diff 主组约 58%（延迟等布局完成后设置）
+                    // 4) 宽度：diff 主组约 70%；并把 TaskBoard 工具窗停靠到底部（与 diff 上下）后设高度约 30%
                     final EditorWindow mainRef = main;
                     Timer t = new Timer(500, ev -> {
                         ((Timer) ev.getSource()).stop();
-                        applyTopSplitterProportion(mainRef, 0.58f);
+                        applyTopSplitterProportion(mainRef, 0.70f);
+                        applyTaskBoardBottom(project);
                     });
                     t.setRepeats(false);
                     t.start();
-                    reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件） + 需求概设"
-                            + (finalPrdUrl != null ? " + PRD" : "") + "（可拖分隔条调整宽度）");
+                    reviewSummary.setText("已铺对照布局：diff（" + finalFiles.size() + " 文件，宽70%） + 右列上下（需求概设/PRD） + TaskBoard底部（可拖分隔条调整）");
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> reviewSummary.setText("铺布局失败：" + ex.getMessage()));
             }
         });
+    }
+
+    /** 把 TaskBoard 工具窗停靠到底部并占约 30% 高度（与上方 diff 形成上下结构） */
+    private void applyTaskBoardBottom(Project project) {
+        try {
+            com.intellij.openapi.wm.ToolWindow tw = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                    .getToolWindow("TaskBoard");
+            if (tw == null) {
+                return;
+            }
+            if (tw.getAnchor() != com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM) {
+                tw.setAnchor(com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM, null);
+            }
+            tw.show();
+            if (tw instanceof com.intellij.openapi.wm.ex.ToolWindowEx twEx) {
+                java.awt.Window win = SwingUtilities.getWindowAncestor(tw.getComponent());
+                int frameH = win != null ? win.getHeight() : 900;
+                twEx.stretchHeight(Math.max(220, (int) (frameH * 0.30)));
+            }
+        } catch (Throwable ignore) {
+            // 工具窗停靠失败不阻断布局
+        }
     }
 
     /** 把窗口所在最外层 Splitter 的比例设为 p（调整分屏宽度分配），失败静默 */
