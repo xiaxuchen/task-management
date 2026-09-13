@@ -483,7 +483,37 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
-    /** 显示/隐藏右侧文档窗口（需求概设/PRD）：隐藏=关掉右列 tab（空组自动收起，diff 全宽）；再点=重建右列 */
+    /** 诊断日志（/tmp/taskboard-plugin.log；定位 tab 残留问题用） */
+    private static void diag(String msg) {
+        try {
+            Files.writeString(
+                    java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "taskboard-plugin.log"),
+                    "[" + java.time.LocalTime.now().withNano(0) + "] " + msg + "\n",
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Throwable ignore) {
+            // 诊断失败不影响业务
+        }
+    }
+
+    /** 枚举当前所有编辑器组的文件（诊断用） */
+    private String dumpWindows() {
+        try {
+            StringBuilder sb = new StringBuilder();
+            FileEditorManagerEx femEx = FileEditorManagerEx.getInstanceEx(project);
+            int i = 0;
+            for (EditorWindow w : femEx.getWindows()) {
+                sb.append("  [组").append(i++).append("] ");
+                for (VirtualFile f : w.getFiles()) {
+                    sb.append(f.getName()).append("(").append(f.getClass().getSimpleName()).append(") ");
+                }
+                sb.append("\n");
+            }
+            return sb.length() == 0 ? "  （无编辑器组）\n" : sb.toString();
+        } catch (Throwable t) {
+            return "  dump error: " + t + "\n";
+        }
+    }
+
     /** 文档窗口显隐（开关回调）：勾选=显示 */
     private void setDocsPaneVisible(boolean visible) {
         if (visible) {
@@ -491,6 +521,7 @@ public class TaskBoardPanel extends JPanel {
             return;
         }
         try {
+            diag("hideDocsPane 开始：\n" + dumpWindows());
             FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
             String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                     "taskboard-docs", "taskboard-需求概设.md").toString();
@@ -514,6 +545,7 @@ public class TaskBoardPanel extends JPanel {
                 fem.closeFile(docsVf);
             }
             PrdOpener.closeAll(project);
+            diag("closeAll 完成：\n" + dumpWindows());
             // 清理：若该组里残留"我们的 diff 副本"，关掉它（避免收起文档后露出重复 diff）
             VirtualFile diff = DiffOpener.currentFile();
             if (docWin != null && diff != null && diff.isValid()) {
