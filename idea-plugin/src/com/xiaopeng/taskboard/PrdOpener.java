@@ -32,7 +32,7 @@ public class PrdOpener {
         current = null;
     }
 
-    /** 关闭所有已打开的 PRD tab（含会话恢复/历史残留的多实例），并清空 current */
+    /** 关闭所有 PRD 相关 tab：我们的 PrdVirtualFile 实例 + 飞书网页编辑器（HttpVirtualFile，路径含 feishu.cn），并清空 current */
     public static void closeAll(Project project) {
         try {
             com.intellij.openapi.fileEditor.FileEditorManager fem =
@@ -40,7 +40,10 @@ public class PrdOpener {
             for (com.intellij.openapi.fileEditor.impl.EditorWindow w
                     : com.intellij.openapi.fileEditor.ex.FileEditorManagerEx.getInstanceEx(project).getWindows()) {
                 for (VirtualFile f : w.getFiles()) {
-                    if (f instanceof PrdVirtualFile) {
+                    boolean isPrd = f instanceof PrdVirtualFile;
+                    String p = f.getPath() == null ? "" : f.getPath();
+                    boolean isFeishuWeb = p.contains("feishu.cn");
+                    if (isPrd || isFeishuWeb) {
                         try {
                             fem.closeFile(f);
                         } catch (Throwable ignore) {
