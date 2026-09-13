@@ -47,6 +47,8 @@ export default {
   commitDelete: (cid) => api(`/commits/${cid}`, { method: 'DELETE' }),
   commitDiff: (cid) => api(`/commits/${cid}/diff`),
   nodeDiffs: (nodeId, scope) => api(`/nodes/${nodeId}/diffs?scope=${scope || 'self'}`),
+  commitTrack: (cid) => api(`/commits/${cid}/track`),
+  nodeTracks: (nodeId, scope) => api(`/nodes/${nodeId}/tracks?scope=${scope || 'self'}`),
 
   // 仓库
   repos: () => api('/repos'),

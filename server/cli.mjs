@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -32,6 +32,9 @@ const OPTIONS = {
   sort: { type: 'string' },
   'local-path': { type: 'string' },
   'gitlab-project': { type: 'string' },
+  'test-branch': { type: 'string' },
+  'pre-branch': { type: 'string' },
+  'release-branch': { type: 'string' },
   port: { type: 'string' },
   'gitlab-base': { type: 'string' },
   'gitlab-token': { type: 'string' },
@@ -49,7 +52,9 @@ const HELP = `task-board <命令>
   doc list <ref>
   commit list <ref> [--subtree]
   commit diff <cid>                  单个 commit 的 diff（文件列表 + patch）
+  commit track <cid>                 检测提交是否已合入测试/预发/上线分支
   node diffs <ref> [--scope self|subtree]   节点（含子树）聚合 diff（含来源节点）
+  node tracks <ref> [--scope self|subtree]  节点（含子树）分支合并状态聚合
   repo list
   config get
 
@@ -63,6 +68,7 @@ const HELP = `task-board <命令>
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
   repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>]
+  repo update <名|id> [--local-path p] [--test-branch b] [--pre-branch b] [--release-branch b]
   import --file <md 大纲> [--parent <path>] [--dry-run]
   batch --file <ops.json> [--dry-run]
   config set [--port 3210] [--gitlab-base <url>] [--gitlab-token <token>]
@@ -196,12 +202,31 @@ export async function run(argv) {
     case 'node diffs':
       json(await getNodeDiffs(store, ref, { scope: values.scope || 'self' }))
       break
+    case 'commit track':
+      json(await getCommitTrack(store, Number(ref)))
+      break
+    case 'node tracks':
+      json(await getNodeTracks(store, ref, { scope: values.scope || 'self' }))
+      break
     case 'repo list':
       json(store.listRepos())
       break
     case 'repo add':
-      json(store.addRepo({ name: values.name, localPath: values['local-path'], gitlabProject: values['gitlab-project'] }))
+      json(store.addRepo({ name: values.name, localPath: values['local-path'], gitlabProject: values['gitlab-project'], testBranch: values['test-branch'], preBranch: values['pre-branch'], releaseBranch: values['release-branch'] }))
       break
+    case 'repo update': {
+      const repo = store.listRepos().find((r) => r.name === ref || String(r.id) === String(ref))
+      if (!repo) throw new Error(`仓库不存在：${ref}`)
+      const patch = {}
+      if (values['local-path'] !== undefined) patch.localPath = values['local-path']
+      if (values['gitlab-project'] !== undefined) patch.gitlabProject = values['gitlab-project']
+      if (values.note !== undefined) patch.note = values.note
+      if (values['test-branch'] !== undefined) patch.testBranch = values['test-branch']
+      if (values['pre-branch'] !== undefined) patch.preBranch = values['pre-branch']
+      if (values['release-branch'] !== undefined) patch.releaseBranch = values['release-branch']
+      json(store.updateRepo(repo.id, patch))
+      break
+    }
     case 'import': {
       const md = readMaybeFile({ content: values.content, file: values.file })
       json(importOutline(store, md, { parentPath: values.parent, dryRun: !!values['dry-run'], by }))

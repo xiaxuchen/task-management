@@ -625,6 +625,9 @@ export function createStore(db, options = {}) {
       localPath: r.local_path,
       gitlabProject: r.gitlab_project,
       note: r.note,
+      testBranch: r.test_branch,
+      preBranch: r.pre_branch,
+      releaseBranch: r.release_branch,
       createdAt: r.created_at,
       updatedAt: r.updated_at
     }
@@ -634,15 +637,15 @@ export function createStore(db, options = {}) {
     return db.prepare('SELECT * FROM repos ORDER BY name').all().map(repoVO)
   }
 
-  function addRepo({ name, localPath = null, gitlabProject = null, note = null } = {}) {
+  function addRepo({ name, localPath = null, gitlabProject = null, note = null, testBranch = null, preBranch = null, releaseBranch = null } = {}) {
     const n = String(name || '').trim()
     if (!n) throw new AppError(CODES.VALIDATION_FAILED, '仓库名必填', { field: 'name' })
     const dup = db.prepare('SELECT id FROM repos WHERE name = ?').get(n)
     if (dup) throw new AppError(CODES.VALIDATION_FAILED, `仓库 ${n} 已登记`, { name: n })
     const ts = now()
     const info = db
-      .prepare('INSERT INTO repos (name,local_path,gitlab_project,note,created_at,updated_at) VALUES (?,?,?,?,?,?)')
-      .run(n, localPath, gitlabProject, note, ts, ts)
+      .prepare('INSERT INTO repos (name,local_path,gitlab_project,note,test_branch,pre_branch,release_branch,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(n, localPath, gitlabProject, note, testBranch, preBranch, releaseBranch, ts, ts)
     bumpRevision()
     return repoVO(db.prepare('SELECT * FROM repos WHERE id = ?').get(Number(info.lastInsertRowid)))
   }
@@ -652,7 +655,7 @@ export function createStore(db, options = {}) {
     if (!cur) throw new AppError(CODES.NOT_FOUND, `仓库 ${id} 不存在`, { id })
     const fields = []
     const args = []
-    const map = { localPath: 'local_path', gitlabProject: 'gitlab_project', note: 'note', name: 'name' }
+    const map = { localPath: 'local_path', gitlabProject: 'gitlab_project', note: 'note', name: 'name', testBranch: 'test_branch', preBranch: 'pre_branch', releaseBranch: 'release_branch' }
     for (const [k, col] of Object.entries(map)) {
       if (patch[k] !== undefined) {
         fields.push(`${col} = ?`)

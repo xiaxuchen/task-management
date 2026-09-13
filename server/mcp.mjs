@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks } from './ops.mjs'
 
 export function createMcpServer({ store }) {
   const cfg = loadConfig()
@@ -254,6 +254,26 @@ export function createMcpServer({ store }) {
   )
 
   server.tool(
+    'commit_track',
+    '检测单个 commit 是否已合入测试/预发/上线分支（需仓库配置三分支）',
+    { cid: z.number().describe('commit 登记 id（commit_list 返回的 id）') },
+    async ({ cid }) => {
+      const data = await getCommitTrack(store, cid)
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'node_tracks',
+    '节点（含子树）合并状态聚合：按 (repo, sha) 去重；contained=null 表示未配置或本地无该 ref',
+    { ref: z.string(), scope: z.enum(['self', 'subtree']).optional() },
+    async ({ ref, scope }) => {
+      const data = await getNodeTracks(store, ref, { scope: scope || 'self' })
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+    }
+  )
+
+  server.tool(
     'commit_add',
     '登记 commit',
     { ref: z.string(), sha: z.string(), repo: z.string().optional(), note: z.string().optional() },
@@ -276,16 +296,16 @@ export function createMcpServer({ store }) {
   server.tool(
     'repo_add',
     '新增仓库',
-    { name: z.string(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional() },
-    async ({ name, localPath, gitlabProject, note }) => {
-      return { content: [{ type: 'text', text: JSON.stringify(store.addRepo({ name, localPath, gitlabProject, note }), null, 2) }] }
+    { name: z.string(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
+    async ({ name, localPath, gitlabProject, note, testBranch, preBranch, releaseBranch }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.addRepo({ name, localPath, gitlabProject, note, testBranch, preBranch, releaseBranch }), null, 2) }] }
     }
   )
 
   server.tool(
     'repo_update',
-    '更新仓库',
-    { id: z.number(), name: z.string().optional(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional() },
+    '更新仓库（含测试/预发/上线分支配置）',
+    { id: z.number(), name: z.string().optional(), localPath: z.string().optional(), gitlabProject: z.string().optional(), note: z.string().optional(), testBranch: z.string().optional(), preBranch: z.string().optional(), releaseBranch: z.string().optional() },
     async ({ id, ...patch }) => {
       return { content: [{ type: 'text', text: JSON.stringify(store.updateRepo(id, patch), null, 2) }] }
     }

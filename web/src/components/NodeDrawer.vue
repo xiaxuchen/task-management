@@ -73,9 +73,16 @@
           </el-form-item>
         </el-form>
         <el-table v-if="commits.length" :data="commits" size="small" max-height="300">
-          <el-table-column prop="sha" label="SHA" width="90" />
-          <el-table-column prop="repo" label="仓库" width="100" />
-          <el-table-column prop="note" label="说明" min-width="120" />
+          <el-table-column prop="sha" label="SHA" width="84" />
+          <el-table-column prop="repo" label="仓库" width="96" />
+          <el-table-column prop="note" label="说明" min-width="100" />
+          <el-table-column label="合并" width="96">
+            <template #default="{ row }">
+              <span class="merge-badge" :class="badgeClass(trackOf(row).test)" :title="badgeTitle(trackOf(row).test, '测试')">测</span>
+              <span class="merge-badge" :class="badgeClass(trackOf(row).pre)" :title="badgeTitle(trackOf(row).pre, '预发')">预</span>
+              <span class="merge-badge" :class="badgeClass(trackOf(row).release)" :title="badgeTitle(trackOf(row).release, '上线')">上</span>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="64">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openDiff(row)">查看</el-button>
@@ -117,10 +124,39 @@ const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '�
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
 const diffCommit = ref(null)
+const trackMap = ref({})
 
 function openDiff(row) {
   diffCommit.value = row
   diffVisible.value = true
+}
+
+function trackOf(row) {
+  return trackMap.value[`${row.repo || ''}@${row.sha}`] || null
+}
+
+function badgeClass(t) {
+  if (!t || t.contained === null) return 'badge-unknown'
+  return t.contained ? 'badge-ok' : 'badge-no'
+}
+
+function badgeTitle(t, label) {
+  if (!t) return `${label}：未检测`
+  if (t.contained === null) {
+    return `${label}：${t.reason === 'ref-not-found' ? '本地无该分支（先 git fetch）' : '未配置分支'}`
+  }
+  return `${label}（${t.branch}）：${t.contained ? '已合入' : '未合入'}`
+}
+
+async function loadTracks() {
+  try {
+    const r = await api.nodeTracks(props.node.id)
+    const m = {}
+    for (const it of r.items) m[`${it.commit.repo || ''}@${it.commit.sha}`] = it.track
+    trackMap.value = m
+  } catch {
+    trackMap.value = {}
+  }
 }
 
 function toggleWidth() {
@@ -140,6 +176,7 @@ async function loadDetail() {
   attrDefs.value = allDefs.filter((d) => d.enabled !== false && d.nodeType === detail.type)
   const repoList = await api.repos()
   repos.value = repoList
+  loadTracks()
 }
 
 async function saveName() {
@@ -164,6 +201,7 @@ async function addCommit() {
   await api.commitAdd(props.node.id, commitForm.value)
   commitForm.value = { sha: '', repo: '', note: '' }
   commits.value = await api.commitList(props.node.id)
+  loadTracks()
 }
 
 function onChildClick(child) {
@@ -177,6 +215,29 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
 </script>
 
 <style scoped>
+.merge-badge {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  font-size: 11px;
+  margin-right: 6px;
+  cursor: default;
+}
+.badge-ok {
+  background: #e1f3d8;
+  color: #529b2e;
+}
+.badge-no {
+  background: #f4f4f5;
+  color: #909399;
+}
+.badge-unknown {
+  background: #fafafa;
+  color: #c0c4cc;
+}
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {
   display: flex;

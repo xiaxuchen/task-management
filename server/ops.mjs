@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -24,7 +24,9 @@ export const TOOLS = [
   'doc_reorder',
   'commit_list',
   'commit_diff',
+  'commit_track',
   'node_diffs',
+  'node_tracks',
   'commit_add',
   'commit_remove',
   'repo_list',
@@ -246,6 +248,63 @@ export async function getNodeDiffs(store, nodeRef, { scope = 'self' } = {}) {
       const dir = resolveRepoDir(repo)
       item.repo = { name: repo.name, localPath: repo.localPath }
       item.files = await gitCommitStat(dir, c.sha)
+    } catch (e) {
+      item.error = { code: e.code || 'ERROR', message: e.message }
+    }
+  }
+  return { scope, count: items.length, items }
+}
+
+/** 单个 commit 的分支合并状态（测试 / 预发 / 上线；需仓库配置 testBranch/preBranch/releaseBranch） */
+export async function getCommitTrack(store, cid) {
+  const commit = store.getCommit(cid)
+  const repo = commit.repo ? store.listRepos().find((r) => r.name === commit.repo) : null
+  if (!repo) {
+    throw new AppError(
+      CODES.REPO_NOT_REGISTERED,
+      commit.repo ? `仓库 ${commit.repo} 未登记（先 repo add）` : '该提交未标注仓库，无法定位本地仓库',
+      { repo: commit.repo }
+    )
+  }
+  const dir = resolveRepoDir(repo)
+  const branches = { test: repo.testBranch, pre: repo.preBranch, release: repo.releaseBranch }
+  const track = await gitCommitTrack(dir, commit.sha, branches)
+  return { commit, repo: { name: repo.name, localPath: repo.localPath, ...branches }, track }
+}
+
+/**
+ * 节点（含子树）聚合分支合并状态：按 (repo, sha) 去重、回填来源节点；
+ * contained=null 表示分支未配置或本地无该 ref（先 fetch）；单条失败带 error 不拖垮整体
+ */
+export async function getNodeTracks(store, nodeRef, { scope = 'self' } = {}) {
+  const node = store.resolveRef(nodeRef)
+  const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
+  const repos = new Map(store.listRepos().map((r) => [r.name, r]))
+  const items = []
+  const byKey = new Map()
+  for (const c of commits) {
+    const key = `${c.repo || ''}@${c.sha}`
+    const sourcePath = store.getNode(c.nodeId).path
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.sourceNodes.push({ nodeId: c.nodeId, path: sourcePath })
+      continue
+    }
+    const item = { commit: c, sourceNodes: [{ nodeId: c.nodeId, path: sourcePath }], repo: null, track: null, error: null }
+    byKey.set(key, item)
+    items.push(item)
+    try {
+      const repo = c.repo ? repos.get(c.repo) : null
+      if (!repo) {
+        throw new AppError(
+          CODES.REPO_NOT_REGISTERED,
+          c.repo ? `仓库 ${c.repo} 未登记（先 repo add）` : '该提交未标注仓库'
+        )
+      }
+      const dir = resolveRepoDir(repo)
+      const branches = { test: repo.testBranch, pre: repo.preBranch, release: repo.releaseBranch }
+      item.repo = { name: repo.name, ...branches }
+      item.track = await gitCommitTrack(dir, c.sha, branches)
     } catch (e) {
       item.error = { code: e.code || 'ERROR', message: e.message }
     }

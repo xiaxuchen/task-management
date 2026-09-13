@@ -22,6 +22,8 @@
 | 三入口：HTTP API / CLI / MCP | `entrypoints/` | 计划 2 | server/{http,cli,mcp,index,ops}.mjs、bin/taskboard.js |
 | 表格式展开树 + 右侧抽屉 + 文档区 | `tree-table-ui/` | 计划 3 | web/src/views/TreeView.vue、web/src/components/{NodeDrawer,DocPane}.vue |
 | dsh-charge 需求同步导入 | `dsh-import/` | 计划 3 配套 | server/import-dsh.mjs |
+| commit 在线预览（单 commit + 子树聚合，统一/分栏） | `diff-preview/` | 计划 4 | server/git.mjs、web/src/components/DiffPane.vue |
+| 分支合并追踪（测试 / 预发 / 上线） | `branch-track/` | 计划 4 | server/git.mjs、SettingsView、NodeDrawer |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 
@@ -39,7 +41,6 @@
 
 | 功能 | 目录 | 计划 | 代码位置（待建）|
 |---|---|---|---|
-| commit 在线预览（含子树聚合） | `diff-preview/` | 计划 4 | server/git.mjs、web DiffPane |
 | 代码集成（显式合并） | `merge-integration/` | 计划 4 | server/git.mjs、merges 表 |
 | 冲突检测与处理 | `conflict-resolution/` | 计划 4 | server/git.mjs、web ConflictPane |
 | 工作区准备（分支 / worktree / 开发提示词） | `workspace-setup/` | 计划 4 | server/git.mjs、unit_repos 表 |

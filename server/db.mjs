@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS repos (
   local_path TEXT,
   gitlab_project TEXT,
   note TEXT,
+  test_branch TEXT,
+  pre_branch TEXT,
+  release_branch TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -181,6 +184,23 @@ export function openDb(file = DB_PATH) {
   db.exec('PRAGMA foreign_keys = ON;')
   db.exec('PRAGMA busy_timeout = 5000;')
   db.exec(SCHEMA)
+  migrate(db)
   seed(db)
   return db
+}
+
+/** 轻量迁移：对已存在的库幂等补列（SCHEMA 里只对新建库生效） */
+function migrate(db) {
+  const cols = db
+    .prepare('PRAGMA table_info(repos)')
+    .all()
+    .map((c) => c.name)
+  const additions = [
+    ['test_branch', 'TEXT'],
+    ['pre_branch', 'TEXT'],
+    ['release_branch', 'TEXT']
+  ]
+  for (const [name, ddl] of additions) {
+    if (!cols.includes(name)) db.exec(`ALTER TABLE repos ADD COLUMN ${name} ${ddl}`)
+  }
 }

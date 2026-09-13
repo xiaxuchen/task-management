@@ -30,6 +30,19 @@ async function git(dir, args) {
   }
 }
 
+/** 不抛错的 git 执行（用于以退出码表达结果的命令，如 merge-base --is-ancestor） */
+async function gitTry(dir, args) {
+  try {
+    const { stdout } = await execFileP('git', ['-C', dir, ...args], { maxBuffer: MAX_BUFFER, encoding: 'utf8' })
+    return { ok: true, code: 0, stdout }
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      throw new AppError(CODES.GIT_UNAVAILABLE, '本机 git 不可用（命令不存在）')
+    }
+    return { ok: false, code: typeof e.code === 'number' ? e.code : 1, stderr: String((e && (e.stderr || e.message)) || '') }
+  }
+}
+
 /** 仓库解析：local_path 存在且是 git 仓库 → 返回目录；否则抛稳定错误码 */
 export function resolveRepoDir(repo) {
   if (!repo) throw new AppError(CODES.REPO_NOT_REGISTERED, '仓库未登记（先 repo add）')
@@ -115,4 +128,38 @@ export async function commitDiff(dir, sha) {
 /** 仅变更文件统计（子树聚合用，避免拉取全量 patch / old / new） */
 export async function commitStat(dir, sha) {
   return parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))
+}
+
+/** 解析分支 ref：优先 origin/<branch>，其次本地分支，最后按原样交给 git 解析 */
+async function resolveBranchRef(dir, branch) {
+  for (const ref of [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`, branch]) {
+    const r = await gitTry(dir, ['rev-parse', '--verify', '--quiet', ref])
+    if (r.ok && r.stdout.trim()) return ref
+  }
+  return null
+}
+
+/**
+ * 检测 commit 是否已合并（包含）到指定分支：
+ * - 未配置分支 → { contained: null, reason: 'not-configured' }
+ * - 本地无该 ref（未 fetch）→ { contained: null, reason: 'ref-not-found' }
+ * - 是/否包含 → { contained: true|false, ref }
+ */
+export async function branchContains(dir, sha, branch) {
+  if (!branch) return { branch: null, ref: null, contained: null, reason: 'not-configured' }
+  const ref = await resolveBranchRef(dir, branch)
+  if (!ref) return { branch, ref: null, contained: null, reason: 'ref-not-found' }
+  const r = await gitTry(dir, ['merge-base', '--is-ancestor', sha, ref])
+  if (r.code === 0) return { branch, ref, contained: true, reason: null }
+  if (r.code === 1) return { branch, ref, contained: false, reason: null }
+  return { branch, ref, contained: null, reason: 'git-error' }
+}
+
+/** 检测 commit 对三个分支的合并状态；branches: { test, pre, release }（值为分支名或空） */
+export async function commitTrack(dir, sha, branches) {
+  const out = {}
+  for (const [key, branch] of Object.entries(branches || {})) {
+    out[key] = await branchContains(dir, sha, branch)
+  }
+  return out
 }
