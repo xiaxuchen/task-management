@@ -335,6 +335,11 @@ public class TaskBoardApi {
         return getJson("/api/nodes/" + nodeId + "/tracks?scope=" + scope);
     }
 
+    /** 带分支标注的提交列表（含 mergedToReq：是否已合入需求分支） */
+    public JsonObject nodeTracks(long nodeId, String scope, boolean withBranches) throws Exception {
+        return getJson("/api/nodes/" + nodeId + "/tracks?scope=" + scope + (withBranches ? "&branches=true" : ""));
+    }
+
     /** 单 commit diff：{commit, repo, sha, subject, files:[{path, old, new, patch, ...}]} */
     public JsonObject commitDiff(long cid) throws Exception {
         return getJson("/api/commits/" + cid + "/diff");

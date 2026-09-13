@@ -426,8 +426,11 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self', branches =
         if (!repo) continue
         const dir = resolveRepoDir(repo)
         const branchList = await gitBranchesContaining(dir, c.sha).catch(() => [])
+        // 需求分支：优先子需求 reqBranch，回退需求的 demandBranch
+        const subreqAnc = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'subreq')
+        const subreqBranch = subreqAnc ? ((store.getAttrs(subreqAnc.id) || {}).reqBranch || null) : null
         const ancestor = store.findAncestorOfType(item.sourceNodes[0].nodeId, 'requirement')
-        const demandRaw = ancestor ? store.getAttrs(ancestor.id).demandBranch : null
+        const demandRaw = subreqBranch || (ancestor ? store.getAttrs(ancestor.id).demandBranch : null)
         const demandBranches = String(demandRaw || '')
           .split(',')
           .map((s) => s.trim())
@@ -446,6 +449,7 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self', branches =
         c.subBranches = subBranches.slice(0, 5)
         c.demandBranch = demandRaw || null
         c.demandContained = demandContained
+        c.mergedToReq = demandContained  // 是否已合入需求分支（插件/前端标注"未合并"用）
       } catch {
         // 单条失败忽略
       }

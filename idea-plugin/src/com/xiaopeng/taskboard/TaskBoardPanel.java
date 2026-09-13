@@ -2238,7 +2238,7 @@ public class TaskBoardPanel extends JPanel {
             try {
                 // 所属子需求的「需求分支」（subreq/自己的属性），拼到状态栏
                 String reqBranch = findReqBranch(d.id);
-                JsonObject res = api.nodeTracks(d.id, "subtree");
+                JsonObject res = api.nodeTracks(d.id, "subtree", true);
                 JsonArray items = res.getAsJsonArray("items");
                 SwingUtilities.invokeLater(() -> {
                     if (token != requestToken) return;
@@ -2247,8 +2247,13 @@ public class TaskBoardPanel extends JPanel {
                         for (JsonElement el : items) commitItems.add(CommitItem.from(el.getAsJsonObject()));
                     }
                     rebuildReviewTree();
+                    int unmerged = 0;
+                    for (CommitItem ci : commitItems) {
+                        if (ci.mergedToReq != null && !ci.mergedToReq) unmerged++;
+                    }
                     if (reqBranch != null && !reqBranch.isEmpty()) {
-                        reviewSummary.setText("【" + currentNodeNo() + "】" + d.name + "　🌿 需求分支：" + reqBranch);
+                        String u = unmerged > 0 ? "　⚠ 未合并 " + unmerged : "　✓ 全部已合入";
+                        reviewSummary.setText("【" + currentNodeNo() + "】" + d.name + "　🌿 需求分支：" + reqBranch + u);
                     } else {
                         reviewSummary.setText("【" + currentNodeNo() + "】" + d.name);
                     }
@@ -2788,6 +2793,8 @@ public class TaskBoardPanel extends JPanel {
         String test = "—";
         String pre = "—";
         String release = "—";
+        /** 是否已合入需求分支（branches=true 时服务端返回；null=未知） */
+        Boolean mergedToReq;
 
         static CommitItem from(JsonObject item) {
             CommitItem ci = new CommitItem();
@@ -2804,6 +2811,10 @@ public class TaskBoardPanel extends JPanel {
             ci.test = stateOf(track, "test");
             ci.pre = stateOf(track, "pre");
             ci.release = stateOf(track, "release");
+            // 是否已合入需求分支（branches=true 时服务端返回；null=未知）
+            if (c.has("mergedToReq") && !c.get("mergedToReq").isJsonNull()) {
+                ci.mergedToReq = c.get("mergedToReq").getAsBoolean();
+            }
             return ci;
         }
 
@@ -2816,7 +2827,8 @@ public class TaskBoardPanel extends JPanel {
         }
 
         String display() {
-            return reviewMark() + " " + sha + "  " + note;
+            String flag = (mergedToReq != null && !mergedToReq) ? "⚠未合并 " : "";
+            return flag + reviewMark() + " " + sha + "  " + note;
         }
 
         String reviewTooltip() {
