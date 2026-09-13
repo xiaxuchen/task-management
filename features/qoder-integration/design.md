@@ -34,6 +34,19 @@ Qoder IDE 插件          TaskBoard IDEA 插件（hook 桥脚本 / 派单 / 选�
 | 任务简报（选中随行） | 触发词（`这段/选中/片段`…）或 review 类词 | `renderReviewBrief`（任务 id/名称 + 代码项目 + commit + 文件） |
 | 片段池 | 触发词（同上） | `selected-snippets.md`（体量可能大，需门控；2h 内、截断 3000 字） |
 
+## 选中来源解析（如何拿到"真实文件路径"）
+
+选区捕获时按优先级取"来自哪个文件"：
+
+| 选中的位置 | 虚拟文件类型 | 取值方式 |
+|---|---|---|
+| **链式 diff 的 tab 自身** | `ChainDiffVirtualFile` | `currentDiffFilePath(vf)`：chain → `getListSelection().getSelectedIndex()` → 当前 request 的 title（格式 `<链标题> · <文件路径>`，取 `· ` 之后） |
+| **diff 的左右编辑器**（变更前/后） | `LightVirtualFile`（diff 内容 vf） | **回退到 `DiffOpener.currentFile()`**（当前链式 diff）再取真实路径 |
+| 普通文本编辑器 | 真实文件 | `vf.getName()` |
+| 兜底 | — | `（当前 review diff）` |
+
+**踩坑**：diff 视图里用户实际选中的是"左右编辑器"（挂 diff 内容 vf，**不是** ChainDiff），首版只认 `ChainDiffVirtualFile` 类型 → 落入兜底标签"（虚拟文件）"，用户看起来像"没拿到文件"。教训：**同一个 diff 视图存在两种虚拟文件层级（tab 层 / 内容层），取值要做回退链**。
+
 ## 数据流
 
 1. **提问链**：Qoder prompt → hook 桥 → SQLite/文件 → `additionalContext`（≤6000 字符，超长截断）
