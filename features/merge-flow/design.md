@@ -137,6 +137,11 @@
 - **教训**：**Swing JEditorPane 的 HTML 渲染（尤其 text/html + 复杂样式/中文）在 IDEA 嵌套容器里不可靠**，
   只读展示场景优先 JTextArea/Browser（JCEF）；排查 EDT 卡死第一步永远是 **jstack 看 AWT-EventQueue 栈**
 
+## Review 布局微调
+
+- **commit 列表操作移入列表头**：左列 commit 列表上方一行 —— 「全选⇄」「反选」「仅看待审」
+- **顶栏**：摘要左对齐 + 其余按钮组右对齐（BorderLayout：WEST=摘要 / EAST=toolbar）
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）

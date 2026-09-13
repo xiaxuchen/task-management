@@ -11,3 +11,4 @@
 - perf(combined-diff): 合并变更加载大提速——提交元信息批量化（一次 git log 替代 192 次）+ 文件 old/new 并发 8（≈1.5s）
 - feat(review-ux): ① 单击提交只看这一个（清空勾选→单提交详情）② 「全选⇄全不选」toggle + 「反选」 ③ 着色：已合入=绿 / 未合并=黄橙
 - fix(subreq-view): 修复单击节点 EDT 卡死——setCaretPosition(0) 触发 JEditorPane HTML BoxView 布局死循环（jstack 实锤）；改 scrollRectToVisible 安全滚动
+- feat(review-layout): commit 列表操作移入列表头（全选⇄/反选/仅看待审在列表上方）；顶栏摘要左 + 按钮组右对齐
