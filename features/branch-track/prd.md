@@ -6,9 +6,9 @@
 
 ## 需求
 
-- 仓库级配置三个追踪目标：测试（`testBranch`）、预发（`preBranch`）、上线（`releaseBranch`）——值可为**分支名或 tag 名**（如上线常用发布 tag）
+- **按标签配置追踪目标**：标签（如「前端」「后端」，可扩展更多）配置测试/预发/上线三个目标（值可为分支名或 tag 名）；仓库通过 `repos.tags` 继承（多标签取第一个有配置的）；**追踪目标一律以标签配置为准**
 - 对任意已登记的 commit，检测其是否已合入 / 包含在上述目标中
-- 展示：节点抽屉「提交」列表每行用 **el-tag** 显示 测试/预发/上线 状态（绿=已包含、橙=未包含、浅灰=未配置或本地无该 ref，悬停说明目标名与结果）；设置页配置目标
+- 展示：节点抽屉「提交」列表每行用 **el-tag** 显示 测试/预发/上线 状态（绿=已包含、橙=未包含、浅灰=未配置或本地无该 ref，悬停说明目标名与结果）；设置页配置标签与仓库
 
 ## 接口
 
@@ -16,10 +16,11 @@
 |---|---|---|
 | GET | `/api/commits/:cid/track` | 单 commit 三分支合并状态 |
 | GET | `/api/nodes/:id/tracks?scope=self\|subtree` | 节点（含子树）聚合状态（按 repo+sha 去重） |
-| PATCH | `/api/repos/:rid` | 仓库配置 testBranch / preBranch / releaseBranch |
+| GET/PUT/DELETE | `/api/branch-configs[/:tag]` | 标签级追踪目标 CRUD |
+| PATCH | `/api/repos/:rid` | 仓库配置 tags（及可选的仓库级覆盖） |
 
-CLI：`commit track <cid>`、`node tracks <ref> [--scope]`、`repo update <名|id> --test-branch b --pre-branch b --release-branch b`；
-MCP：`commit_track`、`node_tracks`（`repo_update` 支持分支字段）。
+CLI：`commit track <cid>`、`node tracks <ref> [--scope]`、`branch-config list/set/remove`、`repo update --tags ...`；
+MCP：`commit_track`、`node_tracks`、`branch_config_list/set/remove`、`repo_update`。
 
 ## 检测口径
 

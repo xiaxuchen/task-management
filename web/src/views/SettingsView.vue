@@ -21,7 +21,7 @@
     <el-divider content-position="left">标签分支 / Tag 配置</el-divider>
     <p class="branch-tip">
       按「标签」配置追踪目标（值可为分支名或 tag 名，如上线常用发布 tag）；仓库通过标签继承，
-      仓库行单独填写时优先于标签。以后可扩展更多标签（如小程序 / 数据）。
+      追踪目标一律以上表为准。以后可扩展更多标签（如小程序 / 数据）。
     </p>
     <el-table :data="branchConfigs" size="small">
       <el-table-column label="标签" width="150">
@@ -53,31 +53,16 @@
     </el-table>
     <el-button size="small" style="margin-top:8px" @click="addTagRow">+ 新增标签</el-button>
 
-    <el-divider content-position="left">仓库（通过标签继承，单填优先）</el-divider>
+    <el-divider content-position="left">仓库标签</el-divider>
     <p class="branch-tip">
-      仓库标签为逗号分隔（如“后端”）；下方分支留空则继承标签配置，单独填写时优先（适用特例仓库）。
+      为仓库打标签（逗号分隔，可多标签，取第一个有配置的标签）；分支 / Tag 追踪目标以「上表标签配置」为准。
       读取本机 git，目标有更新时请先 git fetch。
     </p>
     <el-table :data="repos" size="small">
-      <el-table-column prop="name" label="仓库" width="160" />
-      <el-table-column label="标签" width="150">
+      <el-table-column prop="name" label="仓库" width="240" />
+      <el-table-column label="标签（逗号分隔）">
         <template #default="{ row }">
           <el-input v-model="row.tags" size="small" placeholder="如 后端" />
-        </template>
-      </el-table-column>
-      <el-table-column label="测试分支 / Tag">
-        <template #default="{ row }">
-          <el-input v-model="row.testBranch" size="small" placeholder="继承标签配置" />
-        </template>
-      </el-table-column>
-      <el-table-column label="预发分支 / Tag">
-        <template #default="{ row }">
-          <el-input v-model="row.preBranch" size="small" placeholder="继承标签配置" />
-        </template>
-      </el-table-column>
-      <el-table-column label="上线分支 / Tag">
-        <template #default="{ row }">
-          <el-input v-model="row.releaseBranch" size="small" placeholder="继承标签配置" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="80">
@@ -139,12 +124,7 @@ async function removeBranchConfig(row) {
 }
 
 async function saveRepo(row) {
-  const saved = await api.repoUpdate(row.id, {
-    tags: row.tags || null,
-    testBranch: row.testBranch || null,
-    preBranch: row.preBranch || null,
-    releaseBranch: row.releaseBranch || null
-  })
+  const saved = await api.repoUpdate(row.id, { tags: row.tags || null })
   Object.assign(row, saved)
   ElMessage.success(`已保存：${row.name}`)
 }

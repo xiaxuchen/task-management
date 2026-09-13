@@ -6,3 +6,4 @@
 - feat(branch-track): 未配置状态显式显示 — 符号，合并列表头增加图例提示
 - feat(branch-track): 提交列表上方增加合并状态可见图例（✓/✗/— 含义）
 - feat(branch-track): 分支配置改为标签级（仓库 tags 继承、仓库级覆盖优先；branch-config 三入口 + 设置页双表）
+- feat(branch-track): 设置页仓库表移除分支列（追踪目标一律以标签配置为准）
