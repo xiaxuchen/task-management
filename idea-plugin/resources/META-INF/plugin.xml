@@ -13,6 +13,8 @@
     需本机运行 task-board 服务：<code>npm start</code>（127.0.0.1:3210）。
     ]]></description>
     <depends>com.intellij.modules.platform</depends>
+    <!-- 终端集成（「派给 Qoder」：在终端启动 qodercli） -->
+    <depends>com.intellij.modules.terminal</depends>
     <!-- 可选依赖：JCEF 被禁用时插件仍可用（「网页」视图自动跳过） -->
     <depends optional="true">com.intellij.modules.jcef</depends>
 

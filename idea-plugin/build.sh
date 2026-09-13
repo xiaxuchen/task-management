@@ -19,6 +19,8 @@ mkdir -p out dist/task-board-idea/lib
 CP=$(find "$LIBDIR" -name "*.jar" | tr '\n' ':')
 # JCEF 模块（内嵌网页视图用）
 CP="$CP$(find "$IDEA_APP/Contents/plugins/jcef-plugin/lib" -name '*.jar' 2>/dev/null | tr '\n' ':')"
+# 终端插件（派给 Qoder：TerminalView/ShellTerminalWidget）
+CP="$CP$(find "$IDEA_APP/Contents/plugins/terminal/lib" -name '*.jar' 2>/dev/null | tr '\n' ':')"
 echo "编译（javac: $("$JBR/bin/javac" -version 2>&1)，classpath: $(find "$LIBDIR" -name '*.jar' | wc -l | tr -d ' ') 个 lib jar + jcef）..."
 
 find src -name "*.java" > /tmp/tb-idea-sources.txt

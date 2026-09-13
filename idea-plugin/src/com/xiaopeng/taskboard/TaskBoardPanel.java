@@ -265,6 +265,88 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
+    // ---------- Qoder 联动：派任务给 Qoder Agent（终端） ----------
+
+    /** 派给 Qoder：生成任务提示词 → 新终端自动启动 qodercli 执行（可见可交互） */
+    private void dispatchToQoder() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个节点");
+            return;
+        }
+        final long nodeId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonArray docs = api.nodeDocuments(nodeId);
+                String prdUrl = null;
+                try {
+                    prdUrl = findPrdUrl(nodeId);
+                } catch (Exception ignore) {
+                    // 无 PRD 不阻断
+                }
+                final String prompt = buildDispatchPrompt(nodeName, docs, prdUrl);
+                Path dir = java.nio.file.Paths.get(System.getProperty("user.home"), ".taskboard");
+                Files.createDirectories(dir);
+                final Path file = dir.resolve("dispatch-prompt.md");
+                Files.writeString(file, prompt);
+                SwingUtilities.invokeLater(() -> {
+                    try {
+                        org.jetbrains.plugins.terminal.TerminalView tv =
+                                org.jetbrains.plugins.terminal.TerminalView.getInstance(project);
+                        String workDir = project.getBasePath() != null
+                                ? project.getBasePath() : System.getProperty("user.home");
+                        org.jetbrains.plugins.terminal.ShellTerminalWidget widget =
+                                tv.createLocalShellWidget(workDir, "Qoder·" + nodeName);
+                        widget.executeCommand("qodercli \"$(cat '" + file + "')\"");
+                        reviewSummary.setText("已派给 Qoder：新终端「Qoder·" + nodeName
+                                + "」正在启动执行（可在终端直接追问）");
+                    } catch (Throwable t) {
+                        reviewSummary.setText("派给 Qoder 失败：" + t.getMessage() + "（可改用「复制上下文」手动粘贴）");
+                    }
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("生成提示词失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 生成派单提示词：任务上下文（文档/PRD/已登记提交/当前变更文件）+ 执行要求 */
+    private String buildDispatchPrompt(String nodeName, JsonArray docs, String prdUrl) {
+        StringBuilder md = new StringBuilder();
+        md.append("你是 Qoder Agent。请执行下面来自 task-board 的任务。\n\n");
+        md.append("# 任务：").append(nodeName).append("\n\n");
+        if (prdUrl != null) {
+            md.append("- PRD（飞书）：").append(prdUrl).append("\n\n");
+        }
+        if (docs != null) {
+            for (JsonElement el : docs) {
+                JsonObject d = el.getAsJsonObject();
+                md.append("## ").append(str(d, "name", "文档")).append("\n\n");
+                md.append(str(d, "content", "")).append("\n\n---\n\n");
+            }
+        }
+        List<CommitItem> sel = checkedCommits();
+        if (!sel.isEmpty()) {
+            md.append("## 已登记提交（供参考）\n\n");
+            for (CommitItem it : sel) {
+                md.append("- `").append(it.sha == null ? "" : it.sha).append("` ")
+                        .append(it.note == null ? "" : it.note)
+                        .append("（").append(it.repo == null ? "" : it.repo).append("）\n");
+            }
+            md.append("\n");
+        }
+        if (aggregateFiles != null && !aggregateFiles.isEmpty()) {
+            md.append("## 当前变更文件（").append(aggregateFiles.size()).append("）\n\n");
+            for (DiffOpener.FileDiff f : aggregateFiles) {
+                md.append("- ").append(f.path).append("\n");
+            }
+            md.append("\n");
+        }
+        md.append("## 要求\n\n先阅读相关代码与上述上下文，按需修改；完成后给出变更摘要。\n");
+        md.append("\n（本提示词由 TaskBoard 插件生成，可继续在终端对话追问）\n");
+        return md.toString();
+    }
+
     /** 复制当前 review 上下文 markdown 到剪贴板（可粘贴到 Qoder 对话） */
     private void copyReviewContext() {
         try {
@@ -748,6 +830,7 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
         addAction(group, "布局设置", "设置对照布局比例（diff 宽度 / TaskBoard 高度；拖动分隔条也会自动记住）", AllIcons.General.Settings, this::openLayoutSettings);
         addAction(group, "复制上下文", "复制当前任务+review 上下文（节点/勾选提交/变更文件）到剪贴板，可直接粘贴给 Qoder", AllIcons.Actions.Copy, this::copyReviewContext);
+        addAction(group, "派给 Qoder", "生成任务提示词并在新终端启动 qodercli 执行（可见可交互，可继续追问）", AllIcons.Actions.RunAll, this::dispatchToQoder);
 
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         toolbar.setTargetComponent(this);
