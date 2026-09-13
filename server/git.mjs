@@ -88,8 +88,8 @@ async function showFileAt(dir, rev, filePath) {
 
 /** 单个 commit 的完整 diff：meta + 文件列表 + 每文件 patch / old / new */
 export async function commitDiff(dir, sha) {
-  const meta = await git(dir, ['show', '-s', '--format=%H%x1f%an%x1f%ad%x1f%s', '--date=iso', sha])
-  const [fullSha, author, date, subject] = meta.trimEnd().split('\x1f')
+  const meta = await git(dir, ['show', '-s', '--format=%H%x1f%an%x1f%ae%x1f%ad%x1f%s', '--date=iso', sha])
+  const [fullSha, author, authorEmail, date, subject] = meta.trimEnd().split('\x1f')
 
   const entries = parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))
 
@@ -122,7 +122,25 @@ export async function commitDiff(dir, sha) {
     })
   }
 
-  return { sha: fullSha, shortSha: fullSha.slice(0, 9), author, date, subject, files }
+  return { sha: fullSha, shortSha: fullSha.slice(0, 9), author, authorEmail, date, subject, branches: await branchesContaining(dir, fullSha), files }
+}
+
+/** 包含该提交的分支（本地 + 远程，去重去 origin/ 前缀，限 8 个） */
+export async function branchesContaining(dir, sha) {
+  const r = await gitTry(dir, ['branch', '-a', '--contains', sha, '--format=%(refname:short)'])
+  if (!r.ok) return []
+  const out = []
+  const seen = new Set()
+  for (const raw of r.stdout.split('\n')) {
+    let b = raw.trim()
+    if (!b || b.includes('HEAD detached')) continue
+    b = b.replace(/^remotes\/origin\//, '').replace(/^origin\//, '')
+    if (seen.has(b)) continue
+    seen.add(b)
+    out.push(b)
+    if (out.length >= 8) break
+  }
+  return out
 }
 
 /** 仅变更文件统计（子树聚合用，避免拉取全量 patch / old / new） */
