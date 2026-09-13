@@ -72,6 +72,9 @@
             <el-button type="primary" @click="addCommit">登记</el-button>
           </el-form-item>
         </el-form>
+        <div v-if="commits.length" style="display:flex;justify-content:flex-end;margin:4px 0">
+          <el-button size="small" @click="openAllInIdea">在 IDEA 查看全部变更（{{ commits.length }}）</el-button>
+        </div>
         <div v-if="commits.length" class="merge-legend">
           合并状态：<span class="legend-ok">✓ 已合入</span> · <span class="legend-no">✗ 未合入</span> · <span class="legend-unknown">— 未配置追踪目标（在顶部「设置」中配置）</span>
         </div>
@@ -106,6 +109,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
 import DiffPane from './DiffPane.vue'
@@ -132,6 +136,17 @@ const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '�
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
 const diffCommit = ref(null)
+
+/** 网页 → IDEA：请求插件打开该节点全部提交的合并变更 */
+async function openAllInIdea() {
+  if (!commits.value.length) return
+  try {
+    await api.ideOpenDiff({ cids: commits.value.map((c) => c.id), title: `节点「${props.node.name}」全部变更` })
+    ElMessage.success('已发送到 IDEA（若未弹出，请确认 IDEA 已打开且已加载 TaskBoard 插件）')
+  } catch (e) {
+    ElMessage.error('发送失败：' + (e.message || e))
+  }
+}
 const trackMap = ref({})
 
 function openDiff(row) {

@@ -13,6 +13,7 @@
         <span class="diff-title">提交 Diff</span>
         <span v-if="commit" class="diff-meta">{{ commit.repo }} · {{ commit.sha }}</span>
         <span v-if="data && data.subject" class="diff-subject">{{ data.subject }}</span>
+        <el-button size="small" style="margin-left:auto" @click="openInIdea">在 IDEA 打开</el-button>
       </div>
     </template>
     <div v-loading="loading" class="diff-body">
@@ -58,12 +59,24 @@
 
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { EditorView, basicSetup } from 'codemirror'
 import { EditorState } from '@codemirror/state'
 import { MergeView, unifiedMergeView } from '@codemirror/merge'
 import api from '../api.js'
 
 const props = defineProps({ visible: Boolean, commit: Object })
+
+/** 网页 → IDEA：请求插件打开该提交的 diff（定位到当前文件） */
+async function openInIdea() {
+  if (!props.commit) return
+  try {
+    await api.ideOpenDiff({ cids: [props.commit.id], path: currentPath.value || undefined, title: `提交 ${props.commit.sha}` })
+    ElMessage.success('已发送到 IDEA（若未弹出，请确认 IDEA 已打开且已加载 TaskBoard 插件）')
+  } catch (e) {
+    ElMessage.error('发送失败：' + (e.message || e))
+  }
+}
 defineEmits(['update:visible'])
 
 const loading = ref(false)

@@ -310,6 +310,27 @@ export function createApp({ store }) {
     wrap((req, res) => res.json(store.getAgentRun(Number(req.params.rid))))
   )
 
+  // ---------- 网页 → IDEA 打开请求（IDE 桥；插件轮询领取） ----------
+
+  app.post(
+    '/api/ide/open-diff',
+    wrap((req, res) => {
+      res.status(201).json(store.createIdeRequest('open-diff', req.body || {}, actorOf(req)))
+    })
+  )
+  app.get(
+    '/api/ide/requests/next',
+    wrap((req, res) => {
+      const r = store.claimNextIdeRequest()
+      if (!r) return res.status(204).end()
+      res.json(r)
+    })
+  )
+  app.post(
+    '/api/ide/requests/:id/complete',
+    wrap((req, res) => res.json(store.completeIdeRequest(Number(req.params.id), req.body || {})))
+  )
+
   // ---------- 仓库登记 ----------
 
   app.get('/api/repos', wrap((req, res) => res.json(store.listRepos())))

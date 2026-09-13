@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_node ON agent_runs(node_id);
 
+CREATE TABLE IF NOT EXISTS ide_requests (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL DEFAULT 'open-diff',
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  handled_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ide_requests_status ON ide_requests(status);
+
 CREATE TABLE IF NOT EXISTS merges (
   id INTEGER PRIMARY KEY,
   node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,

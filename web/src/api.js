@@ -50,6 +50,9 @@ export default {
   commitTrack: (cid) => api(`/commits/${cid}/track`),
   nodeTracks: (nodeId, scope) => api(`/nodes/${nodeId}/tracks?scope=${scope || 'self'}`),
 
+  // IDE 桥：请求 IDEA 打开 diff（插件轮询领取）
+  ideOpenDiff: (payload) => api('/ide/open-diff', { method: 'POST', body: JSON.stringify(payload) }),
+
   // 仓库
   repos: () => api('/repos'),
   repoCreate: (data) => api('/repos', { method: 'POST', body: JSON.stringify(data) }),

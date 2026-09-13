@@ -724,6 +724,70 @@ export function createStore(db, options = {}) {
     return { cleared: info.changes }
   }
 
+  // ---------- 网页 → IDEA 打开请求（IDE 桥） ----------
+
+  function ideRequestVO(r) {
+    let payload = {}
+    try {
+      payload = JSON.parse(r.payload || '{}')
+    } catch {
+      payload = {}
+    }
+    return { id: r.id, kind: r.kind, status: r.status, ...payload, createdAt: r.created_at, handledAt: r.handled_at }
+  }
+
+  /** 网页端：请求 IDEA 打开 diff（cids 必填；commits 明细在此补全供插件直接使用） */
+  function createIdeRequest(kind, payload, by = 'user') {
+    if (kind !== 'open-diff') {
+      throw new AppError(CODES.VALIDATION_FAILED, `不支持的 kind: ${kind}`, { kind })
+    }
+    const cids = ((payload && Array.isArray(payload.cids)) ? payload.cids : []).map((n) => Number(n)).filter(Number.isFinite)
+    if (cids.length === 0) throw new AppError(CODES.VALIDATION_FAILED, 'cids 不能为空', {})
+    const commits = cids.map((cid) => {
+      const c = getCommit(cid)
+      return { cid: c.id, sha: c.sha, repo: c.repo, note: c.note }
+    })
+    const body = JSON.stringify({
+      cids,
+      commits,
+      path: (payload && payload.path) || null,
+      title: (payload && payload.title) || null,
+      requestedBy: actor(by)
+    })
+    const info = db
+      .prepare('INSERT INTO ide_requests (kind,payload,status,created_at) VALUES (?,?,?,?)')
+      .run(kind, body, 'pending', now())
+    bumpRevision()
+    return ideRequestVO(db.prepare('SELECT * FROM ide_requests WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  const IDE_REQUEST_TTL_MS = 10 * 60 * 1000
+  const IDE_PROCESSING_TIMEOUT_MS = 30 * 1000
+
+  /** IDEA 插件轮询领取：重置卡住的 processing + 过期清理 + 领最早的 pending 置为 processing */
+  function claimNextIdeRequest() {
+    const ts = now()
+    db.prepare("UPDATE ide_requests SET status='pending' WHERE status='processing' AND handled_at < ?")
+      .run(new Date(Date.now() - IDE_PROCESSING_TIMEOUT_MS).toISOString())
+    db.prepare("UPDATE ide_requests SET status='expired', handled_at=? WHERE status IN ('pending','processing') AND created_at < ?")
+      .run(ts, new Date(Date.now() - IDE_REQUEST_TTL_MS).toISOString())
+    const row = db.prepare("SELECT * FROM ide_requests WHERE status='pending' ORDER BY id LIMIT 1").get()
+    if (!row) return null
+    db.prepare("UPDATE ide_requests SET status='processing', handled_at=? WHERE id=?").run(ts, row.id)
+    return ideRequestVO({ ...row, status: 'processing' })
+  }
+
+  /** 插件处理完成回报（done / failed） */
+  function completeIdeRequest(id, { status = 'done' } = {}) {
+    if (!['done', 'failed'].includes(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `status 非法：${status}`, { status })
+    }
+    const cur = db.prepare('SELECT * FROM ide_requests WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `ide 请求 ${id} 不存在`, { id })
+    db.prepare('UPDATE ide_requests SET status=?, handled_at=? WHERE id=?').run(status, now(), cur.id)
+    return ideRequestVO(db.prepare('SELECT * FROM ide_requests WHERE id = ?').get(cur.id))
+  }
+
   // ---------- repos（仓库登记） ----------
 
   function repoVO(r) {
@@ -891,6 +955,10 @@ export function createStore(db, options = {}) {
     getAgentRun,
     listAgentRuns,
     failStaleAgentRuns,
+    // IDE 桥（网页 → IDEA 打开 diff）
+    createIdeRequest,
+    claimNextIdeRequest,
+    completeIdeRequest,
     // repos
     listRepos,
     addRepo,
