@@ -310,25 +310,46 @@ public class TaskBoardPanel extends JPanel {
         return false;
     }
 
-    /** 把 TaskBoard 工具窗停靠到底部并占约 30% 高度（与上方 diff 形成上下结构） */
+    /** 把 TaskBoard 工具窗停靠到底部并占约配置比例高度（与上方 diff 形成上下结构） */
     private void applyTaskBoardBottom(Project project) {
         try {
-            com.intellij.openapi.wm.ToolWindow tw = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+            final com.intellij.openapi.wm.ToolWindow tw = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
                     .getToolWindow("TaskBoard");
             if (tw == null) {
                 return;
             }
             if (tw.getAnchor() != com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM) {
-                tw.setAnchor(com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM, null);
+                // postRunnable：停靠完成后立即设一次高度
+                tw.setAnchor(com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM, () -> setToolWindowHeight(tw));
             }
             tw.show();
-            if (tw instanceof com.intellij.openapi.wm.ex.ToolWindowEx twEx) {
-                java.awt.Window win = SwingUtilities.getWindowAncestor(tw.getComponent());
-                int frameH = win != null ? win.getHeight() : 900;
-                twEx.stretchHeight(Math.max(220, (int) (frameH * LayoutPrefs.toolWindowRatio())));
+            // 停靠动画可能延迟回写尺寸：多个时间点重复设置高度
+            for (int delay : new int[]{350, 1000, 1800, 2800}) {
+                Timer t = new Timer(delay, ev -> {
+                    ((Timer) ev.getSource()).stop();
+                    setToolWindowHeight(tw);
+                });
+                t.setRepeats(false);
+                t.start();
             }
         } catch (Throwable ignore) {
             // 工具窗停靠失败不阻断布局
+        }
+    }
+
+    /** 按配置比例设置 TaskBoard 高度（仅当已停靠底部时生效） */
+    private void setToolWindowHeight(com.intellij.openapi.wm.ToolWindow tw) {
+        try {
+            if (tw.getAnchor() != com.intellij.openapi.wm.ToolWindowAnchor.BOTTOM) {
+                return;
+            }
+            if (tw instanceof com.intellij.openapi.wm.ex.ToolWindowEx twEx) {
+                java.awt.Window win = SwingUtilities.getWindowAncestor(tw.getComponent());
+                int frameH = win != null ? win.getHeight() : 900;
+                twEx.stretchHeight(Math.max(200, (int) (frameH * LayoutPrefs.toolWindowRatio())));
+            }
+        } catch (Throwable ignore) {
+            // 忽略
         }
     }
 
