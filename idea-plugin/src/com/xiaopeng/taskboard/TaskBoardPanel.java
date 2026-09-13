@@ -247,7 +247,7 @@ public class TaskBoardPanel extends JPanel {
                     // 0) 清场：关掉上次开的三类 tab + 合并分屏 → 保证每次都是干净三栏（不堆叠）
                     try {
                         DiffOpener.closeCurrent(project);
-                        PrdOpener.closeCurrent(project);
+                        PrdOpener.closeAll(project);
                         String docsPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                                 "taskboard-docs", "taskboard-需求概设.md").toString();
                         VirtualFile docsOld = LocalFileSystem.getInstance().findFileByPath(docsPath);
@@ -513,7 +513,7 @@ public class TaskBoardPanel extends JPanel {
             if (docsVf != null) {
                 fem.closeFile(docsVf);
             }
-            PrdOpener.closeCurrent(project);
+            PrdOpener.closeAll(project);
             // 清理：若该组里残留"我们的 diff 副本"，关掉它（避免收起文档后露出重复 diff）
             VirtualFile diff = DiffOpener.currentFile();
             if (docWin != null && diff != null && diff.isValid()) {

@@ -32,6 +32,29 @@ public class PrdOpener {
         current = null;
     }
 
+    /** 关闭所有已打开的 PRD tab（含会话恢复/历史残留的多实例），并清空 current */
+    public static void closeAll(Project project) {
+        try {
+            com.intellij.openapi.fileEditor.FileEditorManager fem =
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project);
+            for (com.intellij.openapi.fileEditor.impl.EditorWindow w
+                    : com.intellij.openapi.fileEditor.ex.FileEditorManagerEx.getInstanceEx(project).getWindows()) {
+                for (VirtualFile f : w.getFiles()) {
+                    if (f instanceof PrdVirtualFile) {
+                        try {
+                            fem.closeFile(f);
+                        } catch (Throwable ignore) {
+                            // 已关闭则忽略
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignore) {
+            // 忽略
+        }
+        current = null;
+    }
+
     /** 准备 PRD 虚拟文件（先关掉上次的，避免堆积）；不负责打开 */
     public static PrdVirtualFile prepare(Project project, String url, String nodeName) {
         try {
