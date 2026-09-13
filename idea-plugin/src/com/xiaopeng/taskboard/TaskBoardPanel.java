@@ -2224,7 +2224,7 @@ public class TaskBoardPanel extends JPanel {
         if (commits != null) {
             for (int i = commits.size() - 1; i >= 0; i--) {
                 JsonObject c = commits.get(i).getAsJsonObject();
-                infos.add(commitInfoHtml(str(c, "note", ""), str(c, "sha", ""), str(c, "author", ""), str(c, "date", ""), c.getAsJsonArray("branches")));
+                infos.add(commitInfoHtml(str(c, "note", ""), str(c, "sha", ""), str(c, "author", ""), str(c, "date", ""), c.getAsJsonArray("branches"), currentNodeNo()));
             }
         }
         if (infos.isEmpty()) {
@@ -2319,7 +2319,7 @@ public class TaskBoardPanel extends JPanel {
         for (int i = 0; i < detailTree.getRowCount(); i++) detailTree.expandRow(i);
 
         List<String> infos = new ArrayList<>();
-        infos.add(commitInfoHtml(ci.note, ci.sha, str(diff, "author", ""), str(diff, "date", ""), diff.getAsJsonArray("branches")));
+        infos.add(commitInfoHtml(ci.note, ci.sha, str(diff, "author", ""), str(diff, "date", ""), diff.getAsJsonArray("branches"), currentNodeNo()));
         if ("issue".equals(ci.reviewStatus) && ci.reviewNote != null && !ci.reviewNote.isEmpty()) {
             infos.add("<html><font color='#D43A3A'><b>⚠ 问题：</b></font>" + esc(ci.reviewNote) + "</html>");
         }
@@ -2327,6 +2327,17 @@ public class TaskBoardPanel extends JPanel {
     }
 
     // ---------- 信息区（下方 commit 信息列表） ----------
+
+    /** 当前节点编号（节点名开头 N / N.M / N.M.P；无则空）——编号直接取自节点名，无需人工维护 */
+    private String currentNodeNo() {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("^\\s*(\\d+(?:\\.\\d+)*)").matcher(currentNodeName == null ? "" : currentNodeName);
+            return m.find() ? m.group(1) : "";
+        } catch (Throwable t) {
+            return "";
+        }
+    }
 
     /** 展示一组 commit 信息（每项一段 HTML；空列表显示占位） */
     private void setCommitInfos(List<String> htmls) {
@@ -2353,8 +2364,11 @@ public class TaskBoardPanel extends JPanel {
     }
 
     /** 单条 commit 信息 HTML：标题 / sha·作者·时间 / 分支 */
-    private static String commitInfoHtml(String note, String sha, String author, String dateIso, JsonArray branches) {
+    private static String commitInfoHtml(String note, String sha, String author, String dateIso, JsonArray branches, String nodeNo) {
         StringBuilder h = new StringBuilder("<html>");
+        if (nodeNo != null && !nodeNo.isEmpty()) {
+            h.append("<font color='#5C6BC0'>[").append(esc(nodeNo)).append("]</font> ");
+        }
         h.append("<b>").append(esc(note == null ? "" : note)).append("</b>");
         StringBuilder line2 = new StringBuilder();
         if (sha != null && !sha.isEmpty()) line2.append(sha.length() > 9 ? sha.substring(0, 9) : sha);
