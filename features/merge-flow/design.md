@@ -98,6 +98,14 @@
   2. 文件 old/new 串行 → **并发 8**
 - 实测：64 条合并变更 → **≈1.5s**
 
+### 单提交 diff 优化
+
+- **问题**：每文件 3 次 git（patch / 父版本 / 本版本）——10 文件提交 = 30 次进程
+- **修复**：
+  1. 一次 `git show <sha> --format= --no-renames` 拿全量 patch，按 `diff --git` 拆分
+  2. `git cat-file --batch`（spawn + stdin）一次取全部 `sha^:path` / `sha:path` 内容
+- 实测：300-600ms（与文件数基本无关）
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
