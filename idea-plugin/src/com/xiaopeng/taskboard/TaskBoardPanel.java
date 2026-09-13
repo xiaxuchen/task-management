@@ -1714,6 +1714,11 @@ public class TaskBoardPanel extends JPanel {
         // 布局：左树右详情
         selectDetailPane.setEditable(false);
         selectDetailPane.setContentType("text/html");
+        // 根治 EDT 卡死：禁用 caret（否则 DefaultCaret.repaintNewCaret → HTML BoxView 布局死循环）
+        selectDetailPane.setFocusable(false);
+        if (selectDetailPane.getCaret() instanceof javax.swing.text.DefaultCaret dc) {
+            dc.setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
+        }
         selectDetailPane.setText("<html><body style='padding:10px;color:#888'>单击节点查看详情（需求 / 设计 / 文档 / PRD）<br><br>双击进入 Review</body></html>");
         selectDetailPane.addHyperlinkListener(ev -> {
             if (ev.getEventType() == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
