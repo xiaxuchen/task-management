@@ -460,11 +460,7 @@ public class TaskBoardPanel extends JPanel {
                 reviewSummary.setText("已显示 diff 栏");
                 return;
             }
-            if (fem.getWindows().length <= 1) {
-                reviewSummary.setText("正在恢复对照布局（diff 栏）…");
-                openReviewLayout();
-                return;
-            }
+            // 只开 diff（不重铺、不连带文档；需要完整布局时用「对照布局」）
             List<DiffOpener.FileDiff> files = aggregateFiles;
             if (files != null && !files.isEmpty()) {
                 DiffOpener.openCombined(project, aggregateTitle, files, null);
