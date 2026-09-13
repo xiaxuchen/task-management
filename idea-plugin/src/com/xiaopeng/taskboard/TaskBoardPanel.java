@@ -1873,7 +1873,14 @@ public class TaskBoardPanel extends JPanel {
                     h.append("</body></html>");
                     long t1 = System.currentTimeMillis();
                     selectDetailPane.setText(h.toString());
-                    selectDetailPane.setCaretPosition(0);
+                    // 注意：不能调 setCaretPosition(0)——会触发 DefaultCaret.repaintNewCaret → HTML BoxView 布局死循环（EDT 卡死）
+                    SwingUtilities.invokeLater(() -> {
+                        try {
+                            selectDetailPane.scrollRectToVisible(new java.awt.Rectangle(0, 0, 1, 1));
+                        } catch (Throwable ignore) {
+                            // 滚动失败不影响
+                        }
+                    });
                     diag("loadSelectDetail 已 setText id=" + id + " 渲染 " + (System.currentTimeMillis() - t1) + "ms htmlLen=" + h.length());
                 });
             } catch (Exception ex) {
