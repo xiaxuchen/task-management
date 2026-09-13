@@ -149,6 +149,9 @@ public class TaskBoardPanel extends JPanel {
             if (editor == null || editor.isDisposed()) {
                 return;
             }
+            if (editor.getSelectionModel().hasSelection()) {
+                lastSelectionEditor = editor;
+            }
             String text = editor.getSelectionModel().hasSelection()
                     ? editor.getSelectionModel().getSelectedText() : null;
             if (text == null || text.trim().length() < 10) {
@@ -452,7 +455,14 @@ public class TaskBoardPanel extends JPanel {
         }
         com.intellij.openapi.editor.Editor editor =
                 FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
-        if (editor == null) {
+        if (editor == null || editor.isDisposed() || !editor.getSelectionModel().hasSelection()) {
+            // 回退：点按钮时焦点已离开编辑器，用"最近有选区"的编辑器
+            com.intellij.openapi.editor.Editor fallback = lastSelectionEditor;
+            if (fallback != null && !fallback.isDisposed() && fallback.getSelectionModel().hasSelection()) {
+                editor = fallback;
+            }
+        }
+        if (editor == null || editor.isDisposed() || !editor.getSelectionModel().hasSelection()) {
             reviewSummary.setText("请在 diff 编辑器里选中要评论的行");
             return;
         }
@@ -1085,6 +1095,8 @@ public class TaskBoardPanel extends JPanel {
     private String selectDetailLoadedName = "";
     /** 选区捕获防抖定时器 */
     private Timer selectionTimer;
+    /** 最近一次有选区的编辑器（点按钮时焦点已离开编辑器，getSelectedTextEditor 会变 null） */
+    private volatile com.intellij.openapi.editor.Editor lastSelectionEditor;
     /** 用户拖动分隔条时自动记住 diff 宽度比例 */
     private static final java.beans.PropertyChangeListener RATIO_SAVER = evt -> {
         if ("proportion".equals(evt.getPropertyName()) && evt.getSource() == lastTopSplitter
