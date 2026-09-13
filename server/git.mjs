@@ -86,10 +86,16 @@ export async function showFileAt(dir, rev, filePath) {
   }
 }
 
-/** 单个 commit 的完整 diff：meta + 文件列表 + 每文件 patch / old / new */
-export async function commitDiff(dir, sha) {
+/** commit 元信息（轻量：不拉 patch）：sha/作者/邮箱/时间/主题 + 包含该提交的分支 */
+export async function commitMeta(dir, sha) {
   const meta = await git(dir, ['show', '-s', '--format=%H%x1f%an%x1f%ae%x1f%ad%x1f%s', '--date=iso', sha])
   const [fullSha, author, authorEmail, date, subject] = meta.trimEnd().split('\x1f')
+  return { sha: fullSha, author, authorEmail, date, subject, branches: await branchesContaining(dir, fullSha) }
+}
+
+/** 单个 commit 的完整 diff：meta + 文件列表 + 每文件 patch / old / new */
+export async function commitDiff(dir, sha) {
+  const meta = await commitMeta(dir, sha)
 
   const entries = parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))
 
@@ -122,7 +128,7 @@ export async function commitDiff(dir, sha) {
     })
   }
 
-  return { sha: fullSha, shortSha: fullSha.slice(0, 9), author, authorEmail, date, subject, branches: await branchesContaining(dir, fullSha), files }
+  return { ...meta, shortSha: meta.sha.slice(0, 9), files }
 }
 
 /** commit 时间戳（秒） */

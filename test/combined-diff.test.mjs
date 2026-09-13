@@ -62,6 +62,12 @@ test('combined-diff：文件并集、old=最早 commit 父版本、new=最新 co
   const res = await ops.getCombinedDiff(store, [c1.id, c2.id])
   assert.equal(res.count, 2)
   assert.equal(res.repos.length, 1)
+  // commit 明细（供 UI 展示：作者/时间/报告分支）
+  assert.equal(res.commits.length, 2)
+  const mc1 = res.commits.find((c) => c.sha === sha1)
+  assert.equal(mc1.author, 't')
+  assert.ok(mc1.date)
+  assert.equal(mc1.repo, 'demo')
   const files = res.repos[0].files
   assert.equal(files.length, 2)
 

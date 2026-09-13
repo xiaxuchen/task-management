@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, showFileAt as gitShowFileAt } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -242,17 +242,19 @@ export async function getCombinedDiff(store, cids) {
   }
 
   const out = []
+  const allMeta = []
   for (const [repoName, list] of byRepo) {
     const repo = reposByName.get(repoName)
     if (!repo) throw new AppError(CODES.REPO_NOT_REGISTERED, `仓库 ${repoName} 未登记（先 repo add）`, { repo: repoName })
     const dir = resolveRepoDir(repo)
 
-    // 每个 commit 的 stat + 时间，按时间升序（old 取最早、new 取最晚）
+    // 每个 commit 的 stat + 时间 + 元信息，按时间升序（old 取最早、new 取最晚）
     const withStat = []
     for (const c of list) {
       const stat = await gitCommitStat(dir, c.sha).catch(() => [])
       const ts = await gitCommitTime(dir, c.sha).catch(() => 0)
-      withStat.push({ commit: c, stat, ts })
+      const meta = await gitCommitMeta(dir, c.sha).catch(() => null)
+      withStat.push({ commit: c, stat, ts, meta })
     }
     withStat.sort((a, b) => a.ts - b.ts)
 
@@ -299,9 +301,22 @@ export async function getCombinedDiff(store, cids) {
       })
     }
     out.push({ repo: { name: repo.name, localPath: repo.localPath }, files })
+    for (const w of withStat) {
+      allMeta.push({
+        cid: w.commit.id,
+        sha: w.commit.sha,
+        note: w.commit.note,
+        repo: repoName,
+        author: w.meta ? w.meta.author : null,
+        authorEmail: w.meta ? w.meta.authorEmail : null,
+        date: w.meta ? w.meta.date : null,
+        branches: w.meta ? w.meta.branches : []
+      })
+    }
   }
 
-  return { count: commits.length, repos: out }
+  allMeta.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+  return { count: commits.length, commits: allMeta, repos: out }
 }
 
 /**
