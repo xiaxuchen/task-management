@@ -218,6 +218,49 @@ export async function pickBranchForCommit(dir, sha) {
   return all[0]
 }
 
+/**
+ * 主仓库合并：把 source 合入 target（--no-ff）。
+ * 前置安全判定：① 当前工作区无未解决冲突（UU/AA/DD 等）② 能切到 target。
+ * 返回：{ ok, alreadyMerged?, conflict?, reason?, unmerged?, mergeSha?, message? }
+ */
+export async function mergeBranch(dir, source, target, message) {
+  // ① 未解决冲突检查
+  const st = await gitTry(dir, ['status', '--porcelain'])
+  if (st.ok) {
+    const unmerged = st.stdout
+      .split('\n')
+      .filter((l) => /^(UU|AA|DD|AU|UA|DU|UD) /.test(l))
+      .slice(0, 10)
+    if (unmerged.length) {
+      return { ok: false, conflict: true, reason: 'unresolved_conflicts', unmerged }
+    }
+  }
+  // ② 已合入判定（source 的 tip 是否为 target 祖先）
+  const anc = await gitTry(dir, ['merge-base', '--is-ancestor', source, target])
+  if (anc.ok && anc.code === 0) {
+    return { ok: true, alreadyMerged: true, reason: 'already_merged' }
+  }
+  // ③ 切到 target
+  const co = await gitTry(dir, ['checkout', target])
+  if (!co.ok) {
+    return { ok: false, conflict: false, reason: 'checkout_failed', message: String(co.stderr || '').slice(0, 1000) }
+  }
+  // ④ merge --no-ff
+  const m = await gitTry(dir, ['merge', '--no-ff', source, '-m', message || `merge: ${source} -> ${target}`])
+  if (m.ok) {
+    const head = await gitTry(dir, ['rev-parse', 'HEAD'])
+    return { ok: true, mergeSha: head.ok ? head.stdout.trim() : null, message: String(m.stdout || '').slice(0, 500) }
+  }
+  const out = String(m.stderr || '') + String(m.stdout || '')
+  const conflicted = /CONFLICT|Automatic merge failed/i.test(out)
+  return {
+    ok: false,
+    conflict: conflicted,
+    reason: conflicted ? 'merge_conflict' : 'merge_failed',
+    message: out.slice(0, 2000)
+  }
+}
+
 /** 仅变更文件统计（子树聚合用，避免拉取全量 patch / old / new） */
 export async function commitStat(dir, sha) {
   return parseNumstat(await git(dir, ['show', sha, '--numstat', '--no-renames', '--format=']))

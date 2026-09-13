@@ -1,6 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -594,6 +594,52 @@ export async function getNodeDuplicates(store, nodeRef, { scope = 'self' } = {})
     })
   }
   return { scope, groupCount: groupKeys.size, itemCount: items.length, items }
+}
+
+/**
+ * 审批合并：把子任务（含子树）的提交所在开发分支，合并到所属子需求的「需求分支」（主仓库执行）。
+ * 安全判定：① 已合入→跳过（防重复 merge）② 未解决冲突→拒绝（防带冲突 merge）。
+ */
+export async function approveAndMerge(store, nodeRef, { by = 'user' } = {}) {
+  const node = store.resolveRef(String(nodeRef))
+  const subreq = store.findAncestorOfType(node.id, 'subreq')
+  if (!subreq) {
+    throw new AppError(CODES.VALIDATION_FAILED, '未找到所属子需求（无法确定需求分支）', { node: node.name })
+  }
+  const reqBranch = (store.getAttrs(subreq.id) || {}).reqBranch
+  if (!reqBranch) {
+    throw new AppError(CODES.VALIDATION_FAILED, `子需求「${subreq.name}」未填「需求分支」`, { subreq: subreq.name })
+  }
+  // 收集该子任务（含子树）的提交，按 (repo, branch) 去重
+  const commits = store.listCommits(node.id, { subtree: true })
+  const pairs = new Map()
+  for (const c of commits) {
+    if (!c.repo || !c.branch) continue
+    pairs.set(`${c.repo}||${c.branch}`, { repo: c.repo, branch: c.branch })
+  }
+  if (pairs.size === 0) {
+    return { node: { id: node.id, name: node.name }, subreq: { id: subreq.id, name: subreq.name }, reqBranch, results: [], note: '无带分支的提交（先登记提交/补分支）' }
+  }
+  const results = []
+  for (const { repo, branch } of pairs.values()) {
+    if (branch === reqBranch) {
+      results.push({ repo, branch, target: reqBranch, ok: true, alreadyMerged: true, reason: 'same_branch' })
+      continue
+    }
+    const repoRow = store.listRepos().find((r) => r.name === repo)
+    if (!repoRow || !repoRow.localPath) {
+      results.push({ repo, branch, target: reqBranch, ok: false, reason: 'no_local_path' })
+      continue
+    }
+    try {
+      const dir = resolveRepoDir(repoRow)
+      const r = await gitMergeBranch(dir, branch, reqBranch, `merge: ${branch} -> ${reqBranch}（task-board 审批合并）`)
+      results.push({ repo, branch, target: reqBranch, ...r })
+    } catch (e) {
+      results.push({ repo, branch, target: reqBranch, ok: false, reason: 'error', message: String((e && e.message) || e).slice(0, 500) })
+    }
+  }
+  return { node: { id: node.id, name: node.name }, subreq: { id: subreq.id, name: subreq.name }, reqBranch, results }
 }
 
 /**

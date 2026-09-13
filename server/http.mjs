@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge } from './ops.mjs'
 import { startAgentRun } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -314,49 +314,12 @@ export function createApp({ store }) {
     '/api/nodes/:id/tracks',
     wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self', branches: req.query.branches === 'true' })))
   )
-
-  // ---------- comments（diff 行级评论） ----------
+  // ---------- 审批合并（同意 → 开发分支合入所属子需求的「需求分支」；主仓库执行） ----------
   app.post(
-    '/api/nodes/:id/comments',
-    wrap((req, res) => {
+    '/api/nodes/:id/merge',
+    wrap(async (req, res) => {
       const node = store.resolveRef(refOf(req))
-      const b = req.body || {}
-      res.status(201).json(store.createComment(node.id, {
-        repo: b.repo,
-        filePath: b.filePath,
-        commitSha: b.commitSha,
-        lineStart: b.lineStart,
-        lineEnd: b.lineEnd,
-        snippet: b.snippet,
-        content: b.content
-      }, actorOf(req)))
-    })
-  )
-  app.get(
-    '/api/nodes/:id/comments',
-    wrap((req, res) => {
-      const node = store.resolveRef(refOf(req))
-      res.json(store.listComments(node.id, { filePath: req.query.filePath || null }))
-    })
-  )
-  app.get(
-    '/api/comments',
-    wrap((req, res) => {
-      res.json(store.listCommentsByFile(req.query.filePath || '', { commitSha: req.query.commitSha || null }))
-    })
-  )
-  app.patch(
-    '/api/comments/:cid',
-    wrap((req, res) => {
-      const b = req.body || {}
-      res.json(store.updateComment(Number(req.params.cid), { status: b.status, content: b.content }))
-    })
-  )
-  app.delete(
-    '/api/comments/:cid',
-    wrap((req, res) => {
-      store.deleteComment(Number(req.params.cid))
-      res.json({ ok: true })
+      res.json(await approveAndMerge(store, node.id, { by: actorOf(req) }))
     })
   )
 

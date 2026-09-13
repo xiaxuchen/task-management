@@ -2179,7 +2179,54 @@ public class TaskBoardPanel extends JPanel {
             Messages.showWarningDialog(project, sb.toString(), "无法标记通过");
             return;
         }
-        markChecked("approved", null);
+        // ② 合并：把子任务开发分支合入所属子需求的「需求分支」（主仓库；已合入跳过、冲突拒绝）
+        final long mergeNid = currentNodeId;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                JsonObject res = api.mergeNode(mergeNid);
+                JsonArray results = res.getAsJsonArray("results");
+                StringBuilder sb = new StringBuilder();
+                boolean anyFail = false;
+                if (results != null) {
+                    for (JsonElement el : results) {
+                        JsonObject r = el.getAsJsonObject();
+                        String repo = str(r, "repo", "");
+                        String br = str(r, "branch", "");
+                        boolean ok = r.has("ok") && r.get("ok").getAsBoolean();
+                        if (ok) {
+                            if (r.has("alreadyMerged") && r.get("alreadyMerged").getAsBoolean()) {
+                                sb.append("✓ ").append(repo).append(" ").append(br).append("（已合入，跳过）\n");
+                            } else {
+                                sb.append("✓ ").append(repo).append(" ").append(br).append(" → ").append(str(r, "target", "")).append("\n");
+                            }
+                        } else {
+                            anyFail = true;
+                            sb.append("✗ ").append(repo).append(" ").append(br).append("：").append(str(r, "reason", "")).append("\n");
+                            String msg = str(r, "message", "");
+                            if (!msg.isEmpty()) {
+                                sb.append("    ").append(msg.split("\n")[0]).append("\n");
+                            }
+                        }
+                    }
+                } else if (res.has("note")) {
+                    sb.append(res.get("note").getAsString());
+                }
+                final String text = "合并结果（目标分支 " + str(res, "reqBranch", "") + "）：\n\n" + sb;
+                final boolean fail = anyFail;
+                SwingUtilities.invokeLater(() -> {
+                    if (fail) {
+                        Messages.showWarningDialog(project,
+                                text + "\n有冲突/失败——请先在终端解决（或修复后重试），解决后再标记通过。",
+                                "无法标记通过");
+                        return;
+                    }
+                    reviewSummary.setText("合并完成，已标记通过");
+                    markChecked("approved", null);
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("合并失败（未通过）：" + ex.getMessage()));
+            }
+        });
     }
 
     private void markCheckedWithNote() {

@@ -72,6 +72,20 @@ public class TaskBoardApi {
 
     // ---------- nodes / documents（登记缺陷等） ----------
 
+    /**
+     * 审批合并：把当前节点（子任务）的开发分支合入所属子需求的「需求分支」（主仓库执行）。
+     * 服务端会做安全判定：已合入→跳过；有未解决冲突→拒绝。
+     */
+    public JsonObject mergeNode(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/merge"))
+                .timeout(Duration.ofSeconds(120))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        return send(req);
+    }
+
     /** 创建节点（如缺陷：type=defect） */
     public JsonObject createNode(long parentId, String type, String name) throws Exception {
         JsonObject body = new JsonObject();
