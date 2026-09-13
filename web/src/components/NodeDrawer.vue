@@ -72,6 +72,9 @@
             <el-button type="primary" @click="addCommit">登记</el-button>
           </el-form-item>
         </el-form>
+        <div v-if="commits.length" class="merge-legend">
+          合并状态：<span class="legend-ok">✓ 已合入</span> · <span class="legend-no">✗ 未合入</span> · <span class="legend-unknown">— 未配置追踪目标（在顶部「设置」中配置）</span>
+        </div>
         <el-table v-if="commits.length" :data="commits" size="small" max-height="300">
           <el-table-column prop="sha" label="SHA" width="84" />
           <el-table-column prop="repo" label="仓库" width="96" />
@@ -235,6 +238,20 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
 </script>
 
 <style scoped>
+.merge-legend {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  color: #909399;
+}
+.legend-ok {
+  color: #529b2e;
+}
+.legend-no {
+  color: #c77a08;
+}
+.legend-unknown {
+  color: #a8abb2;
+}
 .tag-gap {
   margin-left: 4px;
 }

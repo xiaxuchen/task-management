@@ -4,3 +4,4 @@
 - feat(branch-track): 追踪目标支持 tag（分支或 tag 均可配置与检测），合并状态改为 el-tag 展示
 - feat(branch-track): 合并状态标签增加 ✓/✗ 符号，静态即可辨别未合入/已合入
 - feat(branch-track): 未配置状态显式显示 — 符号，合并列表头增加图例提示
+- feat(branch-track): 提交列表上方增加合并状态可见图例（✓/✗/— 含义）
