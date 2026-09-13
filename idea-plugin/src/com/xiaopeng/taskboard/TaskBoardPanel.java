@@ -352,31 +352,6 @@ public class TaskBoardPanel extends JPanel {
         }
     }
 
-    /** 打开需求 PRD：编辑器区新开一个 JCEF tab（形如普通文件），首次需在 tab 内登录飞书，登录态持久 */
-    private void openPrd() {
-        if (currentNodeId < 0) {
-            reviewSummary.setText("请先从节点树进入一个节点");
-            return;
-        }
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            try {
-                String url = findPrdUrl(currentNodeId);
-                if (url == null) {
-                    SwingUtilities.invokeLater(() -> Messages.showInfoMessage(project,
-                            "未找到 PRD 链接（在需求节点属性 feishu_url 中配置）", "PRD"));
-                    return;
-                }
-                final String u = url;
-                SwingUtilities.invokeLater(() -> {
-                    PrdOpener.open(project, u, currentNodeName);
-                    reviewSummary.setText("已在编辑器区打开 PRD（新 tab）：" + u);
-                });
-            } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> reviewSummary.setText("打开 PRD 失败：" + ex.getMessage()));
-            }
-        });
-    }
-
     /** 上溯到需求节点取飞书 PRD 链接；节点（或需求节点）配置 prdAnchor 时拼接锚点 */
     private String findPrdUrl(long startId) throws Exception {
         long id = startId;
@@ -419,30 +394,6 @@ public class TaskBoardPanel extends JPanel {
         return attrs != null && attrs.has(key) && !attrs.get(key).isJsonNull() ? attrs.get(key).getAsString() : null;
     }
 
-    /** 把当前节点的全部文档（需求内容/设计方案）合并为 markdown，在旁侧编辑器打开对照 diff */
-    private void openDocsBeside() {
-        if (currentNodeId < 0) {
-            reviewSummary.setText("请先从节点树进入一个节点");
-            return;
-        }
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            try {
-                JsonArray docs = api.nodeDocuments(currentNodeId);
-                String prdUrl = null;
-                try {
-                    prdUrl = findPrdUrl(currentNodeId);
-                } catch (Exception ignore) {
-                    // 无 PRD 链接不阻断文档打开
-                }
-                final JsonArray finalDocs = docs;
-                final String finalPrdUrl = prdUrl;
-                SwingUtilities.invokeLater(() -> openDocsBesideWith(finalDocs, finalPrdUrl));
-            } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> reviewSummary.setText("打开文档失败：" + ex.getMessage()));
-            }
-        });
-    }
-
     /** 构建合并 markdown（固定单文件，含 PRD 链接行与节点标题）并返回 VirtualFile；失败返回 null */
     private VirtualFile buildDocsFile(JsonArray docs, String prdUrl) {
         try {
@@ -469,32 +420,6 @@ public class TaskBoardPanel extends JPanel {
         } catch (Exception ex) {
             reviewSummary.setText("构建文档失败：" + ex.getMessage());
             return null;
-        }
-    }
-
-    /** 构建合并 markdown（含 PRD 链接行）并在右侧分屏打开（EDT 调用） */
-    private void openDocsBesideWith(JsonArray docs, String prdUrl) {
-        try {
-            if (docs == null || docs.size() == 0) {
-                Messages.showInfoMessage(project, "该节点暂无文档（需求内容 / 设计方案）", "需求+概设");
-                return;
-            }
-            VirtualFile vf = buildDocsFile(docs, prdUrl);
-            if (vf == null) {
-                reviewSummary.setText("打开文档失败（临时文件未刷新）");
-                return;
-            }
-            FileEditorManagerEx fem = FileEditorManagerEx.getInstanceEx(project);
-            EditorWindow window = fem.getCurrentWindow();
-            if (window != null) {
-                // 分屏（左右），并在新分屏中打开合并文档 → 与 diff 并排对照
-                window.split(JSplitPane.HORIZONTAL_SPLIT, true, vf, true);
-            } else {
-                new OpenFileDescriptor(project, vf).navigate(true);
-            }
-            reviewSummary.setText("已打开「" + currentNodeName + "」文档（" + docs.size() + " 份），可与 diff 对照查看");
-        } catch (Exception ex) {
-            reviewSummary.setText("打开文档失败：" + ex.getMessage());
         }
     }
 
@@ -694,8 +619,6 @@ public class TaskBoardPanel extends JPanel {
             new TestRunnerDialog(project, api, currentNodeId, currentNodeName).show();
         });
         group.add(Separator.getInstance());
-        addAction(group, "需求+概设", "在旁侧编辑器打开该节点的需求内容/设计方案，与 diff 对照查看", AllIcons.Actions.Preview, this::openDocsBeside);
-        addAction(group, "PRD", "在编辑器区打开该需求对应的飞书 PRD（节点属性 prdAnchor 可配锚点）", AllIcons.General.Web, this::openPrd);
         addAction(group, "对照布局", "一键铺排：左侧 diff（宽70%） + 右列（需求概设⇄PRD） + TaskBoard底部", AllIcons.Actions.SplitVertically, this::openReviewLayout);
         addAction(group, "文档/PRD", "在需求概设与飞书 PRD 之间切换（右列同一位置）", AllIcons.Actions.Show, this::toggleDocsPrd);
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
