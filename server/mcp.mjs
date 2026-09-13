@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs } from './ops.mjs'
 
 export function createMcpServer({ store }) {
   const cfg = loadConfig()
@@ -230,6 +230,26 @@ export function createMcpServer({ store }) {
     async ({ ref, subtree }) => {
       const node = store.resolveRef(ref)
       return { content: [{ type: 'text', text: JSON.stringify(store.listCommits(node.id, { subtree: !!subtree }), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'commit_diff',
+    '单个 commit 的 diff 预览（文件列表 + 每文件 patch / old / new；仓库读本机 git）',
+    { cid: z.number().describe('commit 登记 id（commit_list 返回的 id）') },
+    async ({ cid }) => {
+      const data = await getCommitDiff(store, cid)
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'node_diffs',
+    '节点（含子树）聚合 diff：按 (repo, sha) 去重、回填来源节点；单条失败带 error 字段',
+    { ref: z.string(), scope: z.enum(['self', 'subtree']).optional() },
+    async ({ ref, scope }) => {
+      const data = await getNodeDiffs(store, ref, { scope: scope || 'self' })
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
     }
   )
 

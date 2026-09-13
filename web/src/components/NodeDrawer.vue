@@ -76,16 +76,24 @@
           <el-table-column prop="sha" label="SHA" width="90" />
           <el-table-column prop="repo" label="仓库" width="100" />
           <el-table-column prop="note" label="说明" min-width="120" />
+          <el-table-column label="操作" width="64">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openDiff(row)">查看</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </el-tab-pane>
     </el-tabs>
   </el-drawer>
+
+  <DiffPane v-model:visible="diffVisible" :commit="diffCommit" />
 </template>
 
 <script setup>
 import { ref, watch } from 'vue'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
+import DiffPane from './DiffPane.vue'
 
 const props = defineProps({ node: Object, visible: Boolean, initialTab: { type: String, default: 'info' } })
 const emit = defineEmits(['close', 'updated'])
@@ -107,6 +115,13 @@ const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测�
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
 
 const commitForm = ref({ sha: '', repo: '', note: '' })
+const diffVisible = ref(false)
+const diffCommit = ref(null)
+
+function openDiff(row) {
+  diffCommit.value = row
+  diffVisible.value = true
+}
 
 function toggleWidth() {
   drawerWidth.value = drawerWidth.value === '760px' ? '70vw' : '760px'

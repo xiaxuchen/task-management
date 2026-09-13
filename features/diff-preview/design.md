@@ -2,9 +2,17 @@
 
 ## 模块位置
 
-- `server/git.mjs`（待建）：本机 git 操作（show / diff / log）
-- `web/src/components/DiffPane.vue`（待建）：diff 渲染
-- 依赖已有：`commits` 表（§4.4）、`repos` 表（§4.7）、`store.listCommits({subtree:true})`
+- `server/git.mjs`（已建）：本机 git 操作 —— 用 `child_process.execFile` 直调 git（参数数组、不经 shell），替代原计划的 simple-git（零新增后端依赖）
+- `web/src/components/DiffPane.vue`（已建）：CodeMirror 6 + `@codemirror/merge` 渲染（统一 / 分栏、未变行折叠）
+- 依赖已有：`commits` 表（§4.4）、`repos` 表（§4.7）、`store.getCommit / listCommits({subtree})`
+
+## 实现说明（2026-09-13 落地）
+
+- 取数：`git show <sha> --numstat` 文件列表；每文件 `git show <sha> --format= -- path` 取 patch、`<sha>^:path` / `<sha>:path` 取 old/new（单文件 512KB 截断）
+- 接口：`GET /api/commits/:cid/diff`（单 commit 全量）；`GET /api/nodes/:id/diffs?scope=self|subtree`（聚合：按 (repo,sha) 去重、回填 sourceNodes、单条失败带 error 不拖垮整体）
+- 三入口 1:1：CLI `commit diff <cid>` / `node diffs <ref> [--scope]`；MCP `commit_diff` / `node_diffs`
+- 前端：提交 tab 每行「查看」→ DiffPane 弹窗（左侧文件列表 + 右侧 MergeView；切换文件/视图重建实例）
+- 未做（后续增强）：GitLab API 兜底（计划 5）、语言语法高亮、F7/Shift+F7 跳变更快捷键
 
 ## 设计要点
 

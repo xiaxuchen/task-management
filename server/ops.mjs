@@ -1,5 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -22,6 +23,8 @@ export const TOOLS = [
   'doc_remove',
   'doc_reorder',
   'commit_list',
+  'commit_diff',
+  'node_diffs',
   'commit_add',
   'commit_remove',
   'repo_list',
@@ -193,6 +196,61 @@ export function importOutline(store, md, { parentPath = null, dryRun = false, by
     visit(outline, null)
   }
   return { dryRun, count: steps.length, steps }
+}
+
+/** 单个 commit 的 diff 预览（HTTP / CLI / MCP 共用） */
+export async function getCommitDiff(store, cid) {
+  const commit = store.getCommit(cid)
+  const repo = commit.repo ? store.listRepos().find((r) => r.name === commit.repo) : null
+  if (!repo) {
+    throw new AppError(
+      CODES.REPO_NOT_REGISTERED,
+      commit.repo ? `仓库 ${commit.repo} 未登记（先 repo add）` : '该提交未标注仓库，无法定位本地仓库',
+      { repo: commit.repo }
+    )
+  }
+  const dir = resolveRepoDir(repo)
+  const diff = await gitCommitDiff(dir, commit.sha)
+  return { commit, repo: { name: repo.name, localPath: repo.localPath }, ...diff }
+}
+
+/**
+ * 节点（含子树）聚合 diff：按 (repo, sha) 去重、回填来源节点；
+ * 单条失败不影响整体（该项带 error 字段，便于部分仓库不可用时仍可浏览其他提交）
+ */
+export async function getNodeDiffs(store, nodeRef, { scope = 'self' } = {}) {
+  const node = store.resolveRef(nodeRef)
+  const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
+  const repos = new Map(store.listRepos().map((r) => [r.name, r]))
+  const items = []
+  const byKey = new Map()
+  for (const c of commits) {
+    const key = `${c.repo || ''}@${c.sha}`
+    const sourcePath = store.getNode(c.nodeId).path
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.sourceNodes.push({ nodeId: c.nodeId, path: sourcePath })
+      continue
+    }
+    const item = { commit: c, sourceNodes: [{ nodeId: c.nodeId, path: sourcePath }], repo: null, files: [], error: null }
+    byKey.set(key, item)
+    items.push(item)
+    try {
+      const repo = c.repo ? repos.get(c.repo) : null
+      if (!repo) {
+        throw new AppError(
+          CODES.REPO_NOT_REGISTERED,
+          c.repo ? `仓库 ${c.repo} 未登记（先 repo add）` : '该提交未标注仓库'
+        )
+      }
+      const dir = resolveRepoDir(repo)
+      item.repo = { name: repo.name, localPath: repo.localPath }
+      item.files = await gitCommitStat(dir, c.sha)
+    } catch (e) {
+      item.error = { code: e.code || 'ERROR', message: e.message }
+    }
+  }
+  return { scope, count: items.length, items }
 }
 
 /**

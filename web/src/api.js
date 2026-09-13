@@ -45,6 +45,8 @@ export default {
   commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),
   commitAdd: (nodeId, data) => api(`/nodes/${nodeId}/commits`, { method: 'POST', body: JSON.stringify(data) }),
   commitDelete: (cid) => api(`/commits/${cid}`, { method: 'DELETE' }),
+  commitDiff: (cid) => api(`/commits/${cid}/diff`),
+  nodeDiffs: (nodeId, scope) => api(`/nodes/${nodeId}/diffs?scope=${scope || 'self'}`),
 
   // 仓库
   repos: () => api('/repos'),

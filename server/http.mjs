@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs } from './ops.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 
 const STATUS_BY_CODE = {
@@ -255,6 +255,17 @@ export function createApp({ store }) {
   app.delete(
     '/api/commits/:cid',
     wrap((req, res) => res.json(store.removeCommit(Number(req.params.cid))))
+  )
+
+  // ---------- commit diff 预览 ----------
+
+  app.get(
+    '/api/commits/:cid/diff',
+    wrap(async (req, res) => res.json(await getCommitDiff(store, Number(req.params.cid))))
+  )
+  app.get(
+    '/api/nodes/:id/diffs',
+    wrap(async (req, res) => res.json(await getNodeDiffs(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })))
   )
 
   // ---------- 仓库登记 ----------

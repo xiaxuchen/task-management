@@ -19,9 +19,12 @@
     "dev": "npm run prepare:vditor && vite"
   },
   "dependencies": {
+    "@codemirror/merge": "^6.12.2",
+    "@codemirror/state": "^6.7.4",
     "@element-plus/icons-vue": "^2.3.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vitejs/plugin-vue": "^6.0.8",
+    "codemirror": "^6.0.2",
     "element-plus": "^2.14.5",
     "express": "^5.2.1",
     "sortablejs": "^1.15.7",

@@ -574,6 +574,12 @@ export function createStore(db, options = {}) {
     return { id: r.id, nodeId: r.node_id, repo: r.repo, sha: r.sha, note: r.note, createdAt: r.created_at }
   }
 
+  function getCommit(id) {
+    const r = db.prepare('SELECT * FROM commits WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `提交记录 ${id} 不存在`, { id })
+    return commitVO(r)
+  }
+
   function listCommits(nodeId, { subtree = false } = {}) {
     rawNode(nodeId)
     const ids = subtree ? subtreeIds(nodeId) : [nodeId]
@@ -696,6 +702,7 @@ export function createStore(db, options = {}) {
     reorderDocuments,
     docPresetNames,
     // commits
+    getCommit,
     listCommits,
     addCommit,
     removeCommit,

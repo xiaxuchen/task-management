@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs } from './ops.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -20,6 +20,7 @@ const OPTIONS = {
   repo: { type: 'string' },
   note: { type: 'string' },
   subtree: { type: 'boolean' },
+  scope: { type: 'string' },
   confirm: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   actor: { type: 'string' },
@@ -47,6 +48,8 @@ const HELP = `task-board <命令>
   attr list [--type <nodeType>]
   doc list <ref>
   commit list <ref> [--subtree]
+  commit diff <cid>                  单个 commit 的 diff（文件列表 + patch）
+  node diffs <ref> [--scope self|subtree]   节点（含子树）聚合 diff（含来源节点）
   repo list
   config get
 
@@ -187,6 +190,12 @@ export async function run(argv) {
       json(store.addCommit(node.id, { repo: values.repo, sha: values.sha, note: values.note }, by))
       break
     }
+    case 'commit diff':
+      json(await getCommitDiff(store, Number(ref)))
+      break
+    case 'node diffs':
+      json(await getNodeDiffs(store, ref, { scope: values.scope || 'self' }))
+      break
     case 'repo list':
       json(store.listRepos())
       break
