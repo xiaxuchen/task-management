@@ -570,6 +570,16 @@ public class TaskBoardPanel extends JPanel {
                     // 平台可能已自动移除
                 }
             }
+            // 收起后把焦点落回 diff（避免平台跳到无关文件，如用户之前打开过的源码）
+            try {
+                VirtualFile diffKeep = DiffOpener.currentFile();
+                if (diffKeep != null && diffKeep.isValid() && fem.getEditors(diffKeep).length > 0) {
+                    fem.openFile(diffKeep, true);
+                }
+            } catch (Throwable ignore) {
+                // 焦点恢复失败不影响主体
+            }
+            diag("hideDocsPane 完成：\n" + dumpWindows());
             reviewSummary.setText("已隐藏文档窗口（勾选「文档」可恢复）");
         } catch (Exception ex) {
             reviewSummary.setText("隐藏文档窗口失败：" + ex.getMessage());
