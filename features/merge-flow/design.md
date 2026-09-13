@@ -43,6 +43,19 @@
   - 越权/无本地路径 → ✗ 原因
   - API：`POST /api/nodes/:id/merge-preview`（ops.previewMerges / git.previewMerge）
 
+## 上跳合并：子需求 → feature-merge（已交付）
+
+两跳合并链：**子任务 → 子需求分支（reqBranch）→ feature-merge**。
+
+- **入口**：子需求节点 Review →「**合并到 feature-merge**」按钮
+- **行为**（`ops.mergeUpstream`）：source = subreq.reqBranch，target = feature-merge（可传参覆盖）
+  - 收集子树提交涉及的仓库 → 逐仓库 `mergeBranch(source, target)`
+  - **已合入 → 跳过**；**有新内容 → 再 merge**（增量重复合）
+  - 冲突/失败 → 弹窗报明细
+- **API**：`POST /api/nodes/:id/merge-upstream { targetBranch? }`（默认 feature-merge）
+- **实测**（子需求 119）：2 仓库"已合入跳过"（xp-thor-project/xp-thor-par-construction）+
+  1 仓库有新内容实合并（xp-thor-mgnt，mergeSha f4afa21c）——正是"增量再合"行为
+
 ## 边界与候选
 
 - merge 在主仓库执行（会改本地分支状态；**不 push**——推送仍由人工/GitLab 流程）
