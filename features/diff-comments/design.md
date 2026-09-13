@@ -25,6 +25,8 @@
 
 - **取"评论上下文"**（`diffFileAndLines`）：复用「选中来源解析」的 diff 虚拟文件回退链
   （ChainDiff → `currentDiffFilePath`；diff 内容 vf → 回退当前链式 diff），取选中起始/结束行与片段
+- **编辑器回退（踩坑）**：点顶栏按钮时焦点已离开编辑器，`getSelectedTextEditor()` 会变 null
+  → 选区监听里维护 `lastSelectionEditor`（最近有选区者），无焦点选区时回退用它
 - **「评论」按钮**：`Messages.showMultilineInputDialog` 输入 → `api.addComment`（单选提交时附带 sha）
 - **「评论列表」按钮**：`api.listComments(nodeId)` → 弹窗（●待处理/✓已处理 + 计数 + 文件 L 行号）
 
