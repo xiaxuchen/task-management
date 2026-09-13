@@ -567,18 +567,15 @@ public class TaskBoardPanel extends JPanel {
         if (editor != null && !editor.isDisposed()) {
             info = diffFileAndLines(editor);
         }
-        String title = Messages.showInputDialog(project, "缺陷标题：", "登记缺陷", null);
-        if (title == null || title.trim().isEmpty()) {
+        // 单窗口填写标题+描述（位置只读展示）
+        DefectDialog dlg = new DefectDialog(project, info);
+        if (!dlg.showAndGet()) {
             return;
-        }
-        String desc = Messages.showMultilineInputDialog(project, "缺陷描述（可空）：", "登记缺陷", "", null, null);
-        if (desc == null) {
-            desc = "";
         }
         final String[] finfo = info;
         final long parentId = currentNodeId;
-        final String fTitle = title.trim();
-        final String fDesc = desc;
+        final String fTitle = dlg.getDefectTitle();
+        final String fDesc = dlg.getDefectDesc();
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 JsonObject created = api.createNode(parentId, "defect", fTitle);
@@ -600,10 +597,13 @@ public class TaskBoardPanel extends JPanel {
                     reviewSummary.setText("已登记缺陷 #" + defectId + "：" + fTitle + "（可在树中查看）");
                     SwingUtilities.invokeLater(() -> {
                         int r = Messages.showDialog(project,
-                                "缺陷 #" + defectId + " 已登记：\n" + fTitle + "\n\n是否立即派给 Qoder 修复？",
-                                "登记缺陷", new String[]{"派给 Qoder", "稍后"}, 0, null);
+                                "缺陷 #" + defectId + " 已登记：\n" + fTitle + "\n\n下一步：派 Qoder 做根因分析与修复方案（批准后才允许修复）",
+                                "登记缺陷", new String[]{"分析根因", "稍后"}, 0, null);
                         if (r == 0) {
-                            dispatchDefectToQoder(defectId, fTitle, fDesc, finfo);
+                            // 进入缺陷流程：先分析根因（批准后才允许修复）
+                            currentNodeId = defectId;
+                            currentNodeName = fTitle;
+                            analyzeDefectWithQoder();
                         }
                     });
                 });
@@ -612,6 +612,195 @@ public class TaskBoardPanel extends JPanel {
             }
         });
     }
+
+    /** 拉取提示词模板（服务不可用等失败时用内置兜底） */
+    private String loadPromptTemplate(String key, String fallback) {
+        try {
+            JsonObject tpls = api.getPromptTemplates();
+            if (tpls.has(key) && !tpls.get(key).isJsonNull()) {
+                String t = tpls.get(key).getAsString();
+                if (t != null && !t.trim().isEmpty()) {
+                    return t;
+                }
+            }
+        } catch (Exception ignore) {
+            // 用兜底
+        }
+        return fallback;
+    }
+
+    /** 模板变量注入（{{key}} → 值） */
+    private static String applyTemplate(String tpl, java.util.Map<String, String> vars) {
+        String out = tpl;
+        for (java.util.Map.Entry<String, String> e : vars.entrySet()) {
+            out = out.replace("{" + "{" + e.getKey() + "}}", e.getValue() == null ? "" : e.getValue());
+        }
+        return out;
+    }
+
+    /** 构建「位置」段落（文件/行号/选中代码） */
+    private static String buildLocationSection(String[] info) {
+        if (info == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("## 位置\n\n- 文件：`").append(info[0])
+                .append("`\n- 行号：L").append(info[1]).append("-").append(info[2]).append("\n");
+        if (!info[3].isEmpty()) {
+            sb.append("\n## 选中代码\n\n```\n").append(info[3]).append("\n```\n");
+        }
+        return sb.toString();
+    }
+
+    /** 读缺陷节点的某份文档内容（不存在返回空串） */
+    private String defectDocContent(long defectId, String docName) {
+        try {
+            JsonArray docs = api.nodeDocuments(defectId);
+            for (JsonElement el : docs) {
+                JsonObject d = el.getAsJsonObject();
+                if (docName.equals(str(d, "name", ""))) {
+                    return str(d, "content", "");
+                }
+            }
+        } catch (Exception ignore) {
+            // 忽略
+        }
+        return "";
+    }
+
+    /** 缺陷：派 Qoder 做根因分析（defect_analyze 模板）——结果由 Qoder 经 MCP 回写"根因与修复方案"文档 */
+    private void analyzeDefectWithQoder() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个缺陷节点");
+            return;
+        }
+        final long defectId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                String desc = defectDocContent(defectId, "缺陷描述");
+                String[] info = null;
+                com.intellij.openapi.editor.Editor editor =
+                        FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+                if (editor == null || editor.isDisposed() || !editor.getSelectionModel().hasSelection()) {
+                    com.intellij.openapi.editor.Editor fb = lastSelectionEditor;
+                    if (fb != null && !fb.isDisposed() && fb.getSelectionModel().hasSelection()) {
+                        editor = fb;
+                    }
+                }
+                if (editor != null && !editor.isDisposed()) {
+                    info = diffFileAndLines(editor);
+                }
+                String tpl = loadPromptTemplate("defect_analyze", DEFAULT_DEFECT_ANALYZE);
+                java.util.Map<String, String> vars = new java.util.HashMap<>();
+                vars.put("defectId", String.valueOf(defectId));
+                vars.put("title", nodeName);
+                vars.put("desc", desc.trim().isEmpty() ? "（见节点文档「缺陷描述」）" : desc);
+                vars.put("locationSection", buildLocationSection(info));
+                final String prompt = applyTemplate(tpl, vars);
+                SwingUtilities.invokeLater(() -> {
+                    boolean ok = QoderOpener.dispatch(project, prompt);
+                    reviewSummary.setText(ok
+                            ? "已派 Qoder 分析根因（defect #" + defectId + "）——⌘V+回车发送；分析结果请回写到文档「根因与修复方案」"
+                            : "分析提示词已复制——请手动打开 Qoder 粘贴");
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("派分析失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 缺陷：批准修复方案（需已存在「根因与修复方案」文档）——合法提交的前置环节 */
+    private void approveDefectFix() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个缺陷节点");
+            return;
+        }
+        final long defectId = currentNodeId;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                String analysis = defectDocContent(defectId, "根因与修复方案");
+                if (analysis.trim().isEmpty()) {
+                    SwingUtilities.invokeLater(() -> reviewSummary.setText(
+                            "尚无「根因与修复方案」——请先「分析根因」（或手动写入该文档）再批准"));
+                    return;
+                }
+                int r = Messages.showDialog(project,
+                        "确认批准以下修复方案？\n\n" + (analysis.length() > 800 ? analysis.substring(0, 800) + "…" : analysis),
+                        "批准修复方案", new String[]{"批准", "取消"}, 0, null);
+                if (r != 0) {
+                    return;
+                }
+                String who = System.getProperty("user.name", "user");
+                String stamp = java.time.LocalDateTime.now().withNano(0).toString();
+                api.upsertDocument(defectId, "修复方案审批",
+                        "已批准\n\n- 审批人：" + who + "\n- 时间：" + stamp + "\n");
+                SwingUtilities.invokeLater(() -> reviewSummary.setText(
+                        "已批准修复方案（defect #" + defectId + "）——现在可「按方案修复」"));
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("批准失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    /** 缺陷：按已批准方案修复（未批准拦截）——派 Qoder 实施（defect_dispatch 模板） */
+    private void fixDefectWithQoder() {
+        if (currentNodeId < 0) {
+            reviewSummary.setText("请先从节点树进入一个缺陷节点");
+            return;
+        }
+        final long defectId = currentNodeId;
+        final String nodeName = currentNodeName;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                String approval = defectDocContent(defectId, "修复方案审批");
+                if (!approval.contains("已批准")) {
+                    SwingUtilities.invokeLater(() -> reviewSummary.setText(
+                            "该缺陷尚未批准修复方案——请先「分析根因」并「批准修复方案」（合法提交前置要求）"));
+                    return;
+                }
+                String desc = defectDocContent(defectId, "缺陷描述");
+                String analysis = defectDocContent(defectId, "根因与修复方案");
+                String[] info = null;
+                com.intellij.openapi.editor.Editor editor =
+                        FileEditorManagerEx.getInstanceEx(project).getSelectedTextEditor();
+                if (editor == null || editor.isDisposed() || !editor.getSelectionModel().hasSelection()) {
+                    com.intellij.openapi.editor.Editor fb = lastSelectionEditor;
+                    if (fb != null && !fb.isDisposed() && fb.getSelectionModel().hasSelection()) {
+                        editor = fb;
+                    }
+                }
+                if (editor != null && !editor.isDisposed()) {
+                    info = diffFileAndLines(editor);
+                }
+                String tpl = loadPromptTemplate("defect_dispatch", DEFAULT_DEFECT_DISPATCH);
+                java.util.Map<String, String> vars = new java.util.HashMap<>();
+                vars.put("defectId", String.valueOf(defectId));
+                vars.put("title", nodeName);
+                vars.put("desc", desc.trim().isEmpty() ? "（见节点文档「缺陷描述」）" : desc);
+                vars.put("locationSection", buildLocationSection(info));
+                vars.put("analysisSection", analysis.trim().isEmpty() ? "" : ("## 已批准的根因与修复方案\n\n" + analysis + "\n"));
+                final String prompt = applyTemplate(tpl, vars);
+                SwingUtilities.invokeLater(() -> {
+                    boolean ok = QoderOpener.dispatch(project, prompt);
+                    reviewSummary.setText(ok
+                            ? "已派 Qoder 修复（defect #" + defectId + "）——⌘V+回车发送；修复提交后登记到该缺陷节点"
+                            : "修复提示词已复制——请手动打开 Qoder 粘贴");
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> reviewSummary.setText("派修复失败：" + ex.getMessage()));
+            }
+        });
+    }
+
+    private static final String DEFAULT_DEFECT_ANALYZE =
+            "你是 Qoder Agent。请对以下 task-board 缺陷（defect #{{defectId}}）做根因分析与修复方案设计（先不要改代码）。\n\n"
+                    + "# 缺陷：{{title}}\n\n{{desc}}\n\n{{locationSection}}\n"
+                    + "## 输出要求\n\n1. 根因（Root Cause）：定位到具体文件/函数/逻辑\n2. 修复方案：改动点清单 + 影响面 + 验证方式\n3. 风险与备选方案（如有）\n";
+
+    private static final String DEFAULT_DEFECT_DISPATCH =
+            "你是 Qoder Agent。以下 task-board 缺陷（defect #{{defectId}}）的根因与修复方案已经审核批准，请按方案实施修复。\n\n"
+                    + "# 缺陷：{{title}}\n\n{{desc}}\n\n{{locationSection}}\n{{analysisSection}}\n"
+                    + "## 要求\n\n严格按已批准的修复方案实施；完成后给出变更摘要与验证方式。\n";
 
     /** 把缺陷派给 Qoder（提示词 = 缺陷 + 位置 + 选中代码 + 要求） */
     private void dispatchDefectToQoder(long defectId, String title, String desc, String[] info) {
@@ -1667,6 +1856,9 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "评论", "在 diff 选中处添加评论（记录文件+行号，存入 task-board）", AllIcons.General.Note, this::addCommentOnDiff);
         addAction(group, "评论列表", "查看本节点的全部评论", AllIcons.Actions.Show, this::showComments);
         addAction(group, "登记缺陷", "在当前节点下登记缺陷（自动带 diff 位置与片段，可一键派给 Qoder 修复）", AllIcons.General.InspectionsError, this::reportDefect);
+        addAction(group, "分析根因", "缺陷节点：派 Qoder 做根因分析与修复方案（结果回写文档）", AllIcons.Actions.Find, this::analyzeDefectWithQoder);
+        addAction(group, "批准修复", "缺陷节点：批准「根因与修复方案」（批准后才允许派单修复）", AllIcons.Actions.Checked, this::approveDefectFix);
+        addAction(group, "按方案修复", "缺陷节点：按已批准的方案派 Qoder 实施修复（未批准会被拦截）", AllIcons.Actions.Execute, this::fixDefectWithQoder);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         ActionToolbar toolbar = reviewToolbar;

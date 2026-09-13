@@ -22,6 +22,51 @@ export const DEFAULT_CONFIG = {
   },
   worktreeRoot: '',
   branchTemplate: '{base_branch}-{slug}',
+  // 提示词模板（各环节派单；变量 {{...}} 由插件/调用方注入）
+  promptTemplates: {
+    // 缺陷修复派单：{{defectId}} {{title}} {{desc}} {{locationSection}}（位置+选中代码段落，自动生成）
+    defect_analyze: [
+      '你是 Qoder Agent。请对以下 task-board 缺陷（defect #{{defectId}}）做**根因分析与修复方案设计**（先不要改代码）。',
+      '',
+      '# 缺陷：{{title}}',
+      '',
+      '{{desc}}',
+      '',
+      '{{locationSection}}',
+      '## 输出要求',
+      '1. 根因（Root Cause）：定位到具体文件/函数/逻辑，解释为什么错',
+      '2. 修复方案：改动点清单 + 影响面 + 验证方式',
+      '3. 风险与备选方案（如有）',
+      '',
+      '（请用 task-board MCP 工具将结论回写到节点文档）'
+    ].join('\n'),
+    // 缺陷修复派单：root cause/方案已批准后才使用
+    defect_dispatch: [
+      '你是 Qoder Agent。以下 task-board 缺陷（defect #{{defectId}}）的根因与修复方案**已经审核批准**，请按方案实施修复。',
+      '',
+      '# 缺陷：{{title}}',
+      '',
+      '{{desc}}',
+      '',
+      '{{locationSection}}',
+      '{{analysisSection}}',
+      '## 要求',
+      '严格按已批准的修复方案实施；如需偏离请先说明原因；完成后给出变更摘要与验证方式。'
+    ].join('\n'),
+    // 任务派单（「派给 Qoder」）：{{taskName}} {{taskId}} {{prdSection}} {{docs}} {{commitsSection}} {{filesSection}}
+    task_dispatch: [
+      '你是 Qoder Agent。请执行下面来自 task-board 的任务。',
+      '',
+      '# 任务：{{taskName}}',
+      '',
+      '{{prdSection}}',
+      '{{docs}}',
+      '{{commitsSection}}',
+      '{{filesSection}}',
+      '## 要求',
+      '先阅读相关代码与上述上下文，按需修改；完成后给出变更摘要。'
+    ].join('\n')
+  },
   status: {
     labels: { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' },
     allowed: {

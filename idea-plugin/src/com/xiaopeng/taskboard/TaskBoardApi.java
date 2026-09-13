@@ -89,6 +89,18 @@ public class TaskBoardApi {
         return send(req);
     }
 
+    /** 读取提示词模板（/api/config 的 promptTemplates 段） */
+    public JsonObject getPromptTemplates() throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/config"))
+                .timeout(Duration.ofSeconds(10))
+                .header("x-taskboard-actor", "idea")
+                .GET()
+                .build();
+        JsonObject cfg = send(req);
+        return cfg.has("promptTemplates") && cfg.get("promptTemplates").isJsonObject()
+                ? cfg.getAsJsonObject("promptTemplates") : new JsonObject();
+    }
+
     /** 写入/覆盖节点文档 */
     public JsonObject upsertDocument(long nodeId, String name, String content) throws Exception {
         JsonObject body = new JsonObject();
