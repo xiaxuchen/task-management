@@ -2095,6 +2095,9 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "分析根因", "缺陷节点：派 Qoder 做根因分析与修复方案（结果回写文档）", AllIcons.Actions.Find, this::analyzeDefectWithQoder);
         addAction(group, "批准修复", "缺陷节点：批准「根因与修复方案」（批准后才允许派单修复）", AllIcons.Actions.Checked, this::approveDefectFix);
         addAction(group, "按方案修复", "缺陷节点：按已批准的方案派 Qoder 实施修复（未批准会被拦截）", AllIcons.Actions.Execute, this::fixDefectWithQoder);
+        group.add(Separator.getInstance());
+        addAction(group, "全选⇄全不选", "勾选全部提交（已全选时点一下变全不选）", AllIcons.Actions.Checked, this::toggleSelectAll);
+        addAction(group, "反选", "已勾选与未勾选互换", AllIcons.Actions.Rollback, this::invertChecks);
 
         reviewToolbar = ActionManager.getInstance().createActionToolbar("TaskBoardReview", group, true);
         ActionToolbar toolbar = reviewToolbar;
@@ -2118,6 +2121,12 @@ public class TaskBoardPanel extends JPanel {
                 Object user = value instanceof DefaultMutableTreeNode n ? n.getUserObject() : null;
                 if (user instanceof CommitItem ci) {
                     getTextRenderer().append(ci.display());
+                    // 着色：已合入需求分支 → 绿色；未合并 → 黄橙色（亮底可读）
+                    if (ci.mergedToReq != null) {
+                        getTextRenderer().setForeground(ci.mergedToReq
+                                ? new java.awt.Color(0x2E7D32)
+                                : new java.awt.Color(0xB8860B));
+                    }
                 }
             }
         }, reviewRoot);
@@ -2458,9 +2467,57 @@ public class TaskBoardPanel extends JPanel {
     // ================= 详情区 =================
 
     private void onCommitSelected(TreeSelectionEvent e) {
-        if (checkedCommits().size() >= 1) return; // 有勾选时由勾选决定右侧，选中不干扰
         CommitItem ci = selectedCommit();
-        if (ci != null) showCommitDetail(ci);
+        if (ci == null) return;
+        // 单击提交：只看这一个（先清空勾选，右侧切到单提交详情）
+        if (!checkedCommits().isEmpty()) {
+            clearAllChecks();
+        }
+        showCommitDetail(ci);
+    }
+
+    /** 全部取消勾选（界面同步） */
+    private void clearAllChecks() {
+        setAllChecked(false);
+    }
+
+    /** 全选 ⇄ 全不选（按钮 toggle） */
+    private void toggleSelectAll() {
+        int visible = 0;
+        Enumeration<?> e = reviewRoot.breadthFirstEnumeration();
+        while (e.hasMoreElements()) {
+            if (e.nextElement() instanceof CheckedTreeNode cn && cn.getUserObject() instanceof CommitItem) visible++;
+        }
+        boolean allChecked = visible > 0 && checkedCommits().size() >= visible;
+        setAllChecked(!allChecked);
+    }
+
+    /** 反选（已勾选与未勾选互换） */
+    private void invertChecks() {
+        Enumeration<?> e = reviewRoot.breadthFirstEnumeration();
+        while (e.hasMoreElements()) {
+            Object o = e.nextElement();
+            if (o instanceof CheckedTreeNode cn && cn.getUserObject() instanceof CommitItem) {
+                cn.setChecked(!cn.isChecked());
+            }
+        }
+        reviewModel().nodeStructureChanged(reviewRoot);
+        refreshDetailForChecked();
+        writeReviewContext();
+    }
+
+    /** 将所有可见提交勾选状态统一置为 checked（界面同步） */
+    private void setAllChecked(boolean checked) {
+        Enumeration<?> e = reviewRoot.breadthFirstEnumeration();
+        while (e.hasMoreElements()) {
+            Object o = e.nextElement();
+            if (o instanceof CheckedTreeNode cn && cn.getUserObject() instanceof CommitItem) {
+                cn.setChecked(checked);
+            }
+        }
+        reviewModel().nodeStructureChanged(reviewRoot);
+        refreshDetailForChecked();
+        writeReviewContext();
     }
 
     /** 勾选变化（防抖后） */
