@@ -1,0 +1,22 @@
+# 提交记录 · 对照布局与面板显隐
+
+- feat(idea-plugin): 对照布局三栏（diff + 需求概设 + PRD）与宽度比例调整；tab 全复用防堆积
+- fix(idea-plugin): 对照布局 diff 改为实时拉取当前节点全量变更（修复切换节点后误用上一个节点缓存的问题）
+- fix(idea-plugin): 对照布局重铺前清场（关旧 tab + unsplitAllWindow 合并分屏），修复多次点击分屏组堆叠
+- feat(idea-plugin): 对照布局改为 diff(宽70%) + 右列上下(需求概设/PRD) + TaskBoard 停靠底部(高30%)
+- feat(idea-plugin): 右列改为文档/PRD 切换展示（同组双 tab + 顶栏「文档/PRD」切换按钮），TaskBoard 保持底部 30%
+- chore(idea-plugin): 移除冗余按钮「需求+概设」「PRD」（已被对照布局/文档-PRD切换覆盖）
+- feat(idea-plugin): 布局比例可自定义（「布局设置」对话框 + 拖拽自动记忆；默认 diff 50% / TaskBoard 30%）
+- fix(idea-plugin): 修正 stretchHeight 语义（平台是增量非目标值，改传差值——真正控制 TaskBoard 高度）；PrdFileEditor 补 getFile 覆写
+- fix(idea-plugin): 限制面板偏好尺寸（避免底部停靠时内容 preferred 撑高工具窗，真正管住 TaskBoard 高度）
+- feat(idea-plugin): 「文档窗口」显示/隐藏按钮——隐藏时关右列 tab（空组自动收起、diff 全宽），再点重建右列（需求概设+PRD）
+- feat(idea-plugin): 「diff 窗口」显示/隐藏按钮——隐藏=关 diff tab（空组自动收起），显示=重铺对照布局恢复
+- feat(idea-plugin): diff/文档 改 ToggleAction 开关（勾选=显示，状态实时反映）；删冗余「文档/PRD」按钮；diff 图标换 Diff 与对照布局区分
+- fix(idea-plugin): 开关可视化——ToggleAction 加 ☑/☐ 前缀与 Checked 图标（真正看得出勾选态）
+- fix(idea-plugin): 收起文档时清掉组内残留的 diff 副本并移除空分屏；显示 diff 时激活已有实例不再开副本
+- fix(idea-plugin): PRD 关闭改为通杀（closeAll 遍历所有组按 PrdVirtualFile 类型关闭）——修复取消勾选文档后会话恢复/历史残留的重复 PRD tab 关不干净
+- fix(idea-plugin): closeAll 增加飞书网页编辑器判断（HttpVirtualFile 路径含 feishu.cn）——修复收起文档后残留的飞书 PRD 网页 tab（诊断日志实锤：残留为 HttpVirtualFileImpl 而非 PrdVirtualFile）
+- fix(idea-plugin): 收起文档后焦点主动落回 diff——修复关掉右列后平台跳到无关文件（用户曾打开的源码）的问题
+- fix(idea-plugin): 勾选 diff 不再连带恢复文档——移除 showDiffPane 的「组数≤1 就重铺对照布局」分支，显示 diff 只显示 diff（完整布局请用「对照布局」）
+- chore(idea-plugin): 增加 tab 残留诊断日志（hideDocsPane 前后枚举编辑器组，写 taskboard-plugin.log）
+- feat(idea-plugin): 节点树顶部新增按钮行——拷贝上下文（选中节点→文档+PRD 到剪贴板）/ 拷贝节点ID / 搜索定位（名称匹配展开选中）；状态行独立第二行

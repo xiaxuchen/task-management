@@ -6,7 +6,7 @@
 
 | 区域 | 能力 |
 |---|---|
-| **任务视图（工具窗）** | 需求树双击进入 Review；另含「网页」（内嵌 task-board 前端）tab；对照布局时自动停靠底部（高 30% 可调） |
+| **任务视图（工具窗）** | 需求树双击进入 Review；树顶按钮行：**拷贝上下文 / 拷贝节点ID / 搜索定位**（+刷新）；另含「网页」（内嵌 task-board 前端）tab；对照布局时自动停靠底部（高 30% 可调） |
 | **Review 工作区** | 默认全选 commit → 右侧展示**合并变更**（文件并集 + 净 old/new，按仓库分组、路径压缩、原生图标与绿/红统计）；「提交列表」展开勾选调整范围 |
 | **commit 审查** | 勾选后批量：标记通过 / 标记有问题（意见）/ 重置待审；汇总计数与「仅看待审」 |
 | **链式 Diff** | 编辑器区打开全部文件 diff（`SimpleDiffRequestChain`，上一/下一文件导航 + F7）；多 commit 走合并变更 |
@@ -43,3 +43,6 @@ cp -r dist/task-board-idea "$HOME/Library/Application Support/JetBrains/IntelliJ
 - 开关观感：`ToggleAction` 覆写 `update()` 加 ☑/☐ 前缀 + Checked 图标；点击后 `ActionToolbar.updateActionsImmediately()` 即时刷新
 - 选区捕获：`EditorFactory.getEventMulticaster().addSelectionListener(listener, project)`（project 作为 Disposable 自动清理）
 - Qoder 边界：插件无"程序化发送消息"契约 API；派单止步于"面板+剪贴板"，最后一步人工 ⌘V+回车（详见 `features/qoder-integration/design.md`）
+- 面板清理：关 PRD 相关 tab 要按**内容特征**（类 `PrdVirtualFile` **或** 路径含 `feishu.cn` 的 HttpVirtualFile），不能只按自家类；收起后需**主动把焦点落回 diff**（平台默认给相邻 tab）
+- 显隐与铺排边界：「对照布局」是唯一动整体布局的入口；`showDiffPane/showDocsPane` 只开/关自己（曾有"组数≤1 重铺"分支导致勾 diff 连带文档，已删）
+- 诊断：`TaskBoardPanel.diag()/dumpWindows()` 写 `taskboard-plugin.log`（枚举编辑器组+类名，tab 类问题先抓现场）——详细踩坑见 `features/layout-panes/design.md`
