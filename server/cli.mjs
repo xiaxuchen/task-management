@@ -44,6 +44,7 @@ const OPTIONS = {
   'cli-session': { type: 'string' },
   'work-dir': { type: 'string' },
   'exit-code': { type: 'string' },
+  'max-attempts': { type: 'string' },
   title: { type: 'string' },
   'since-seq': { type: 'string' },
   ids: { type: 'string' },
@@ -110,7 +111,7 @@ const HELP = `task-board <命令>
   agent session new <ref> [--agent qodercli] [--title <标题>]   新建会话（不复用旧的）
   agent session get <sid> / agent session archive <sid>
   agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>] [--agent qodercli]
-                                    [--session <sid>] [--resume] [--runtime <id>]   触发任务（异步；--resume 续跑会话）
+                                    [--session <sid>] [--resume] [--runtime <id>] [--max-attempts N]   触发任务（异步；--resume 续跑会话）
   agent runs <ref> [--session <sid>]              任务历史（含输出与状态）
   agent run get <rid> / agent run messages <rid> [--since-seq N]
   agent run cancel <rid> [--reason <原因>] / agent run retry <rid>
@@ -357,7 +358,8 @@ export async function run(argv) {
             cwd: values.cwd,
             sessionId: values.session ? Number(values.session) : null,
             resume: !!values.resume,
-            runtimeId: values.runtime ? Number(values.runtime) : null
+            runtimeId: values.runtime ? Number(values.runtime) : null,
+            maxAttempts: values['max-attempts'] != null ? Number(values['max-attempts']) : null
           },
           by
         )

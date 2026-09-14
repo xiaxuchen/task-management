@@ -86,7 +86,7 @@ export function resolveRunCwd(store, nodeId) {
 export function startAgentRun(
   store,
   nodeId,
-  { prompt, agent = DEFAULT_AGENT, model = DEFAULT_MODEL, cwd = null, ideMode = false, sessionId = null, resume = false, runtimeId = null } = {},
+  { prompt, agent = DEFAULT_AGENT, model = DEFAULT_MODEL, cwd = null, ideMode = false, sessionId = null, resume = false, runtimeId = null, maxAttempts = null } = {},
   by = 'user'
 ) {
   const dir = cwd || resolveRunCwd(store, nodeId)
@@ -115,7 +115,8 @@ export function startAgentRun(
         cwd: effectiveCwd,
         sessionId: session.id,
         runtimeId: runtime.id,
-        resumed: !!cliSessionId
+        resumed: !!cliSessionId,
+        ...(maxAttempts != null ? { maxAttempts: Number(maxAttempts) } : {})
       },
       by
     )
@@ -145,7 +146,8 @@ export function startAgentRun(
       cwd: effectiveCwd,
       sessionId: session.id,
       runtimeId: runtime.id,
-      resumed: !!cliSessionId
+      resumed: !!cliSessionId,
+      ...(maxAttempts != null ? { maxAttempts: Number(maxAttempts) } : {})
     },
     by
   )

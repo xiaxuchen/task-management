@@ -318,6 +318,54 @@ test('run：重试新建 attempt+1 子任务并指向原任务；未结束不能
   assert.equal(r2.prompt, '做某事')
 })
 
+test('run：max_attempts 是硬上限——用满最后一次尝试后重试被拒绝', async (t) => {
+  const { tmp, store } = await setup()
+  t.after(() => tmp.cleanup())
+  const { t: task } = makeTask(store)
+
+  // maxAttempts=2：首次 + 1 次重试
+  const r1 = store.createAgentRun(task.id, { prompt: 'p', cwd: '/tmp', maxAttempts: 2 })
+  assert.equal(r1.attempt, 1)
+  assert.equal(r1.maxAttempts, 2)
+
+  store.finishAgentRun(r1.id, { status: 'failed', failureReason: 'timeout' })
+  const r2 = store.retryAgentRun(r1.id)
+  assert.equal(r2.attempt, 2)
+  assert.equal(r2.maxAttempts, 2) // 上限沿重试链继承，不被重置
+
+  store.finishAgentRun(r2.id, { status: 'failed', failureReason: 'timeout' })
+  assert.throws(
+    () => store.retryAgentRun(r2.id),
+    (e) => e.code === 'VALIDATION_FAILED' && e.details.attempt === 2 && e.details.maxAttempts === 2
+  )
+  // 拒绝后不落库：仍只有两条记录
+  assert.equal(store.listAgentRuns(task.id).length, 2)
+})
+
+test('run：显式 maxAttempts=1 时首次重试即被拒绝', async (t) => {
+  const { tmp, store } = await setup()
+  t.after(() => tmp.cleanup())
+  const { t: task } = makeTask(store)
+  const r = store.createAgentRun(task.id, { prompt: 'p', cwd: '/tmp', maxAttempts: 1 })
+  store.finishAgentRun(r.id, { status: 'failed', failureReason: 'agent_error.nonzero_exit' })
+  assert.throws(() => store.retryAgentRun(r.id), (e) => e.code === 'VALIDATION_FAILED')
+})
+
+test('run：默认 maxAttempts=3，可重试到 attempt=3 后拒绝', async (t) => {
+  const { tmp, store } = await setup()
+  t.after(() => tmp.cleanup())
+  const { t: task } = makeTask(store)
+  const r1 = store.createAgentRun(task.id, { prompt: 'p', cwd: '/tmp' })
+  assert.equal(r1.maxAttempts, 3)
+  store.finishAgentRun(r1.id, { status: 'failed', failureReason: 'timeout' })
+  const r2 = store.retryAgentRun(r1.id)
+  store.finishAgentRun(r2.id, { status: 'failed', failureReason: 'timeout' })
+  const r3 = store.retryAgentRun(r2.id)
+  assert.equal(r3.attempt, 3)
+  store.finishAgentRun(r3.id, { status: 'failed', failureReason: 'timeout' })
+  assert.throws(() => store.retryAgentRun(r3.id), (e) => e.code === 'VALIDATION_FAILED')
+})
+
 test('run：失败原因分类落库并可查询', async (t) => {
   const { tmp, store } = await setup()
   t.after(() => tmp.cleanup())

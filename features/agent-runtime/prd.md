@@ -21,5 +21,7 @@
 - 任务结束后 `cliSessionId` / `workDir` 写回会话；`resume` 派单会带上 `--resume`
 - 任务消息流按 `seq` 严格递增，`sinceSeq` 能增量拉取
 - 取消未完成任务会置 `cancelled` 并终止本地子进程；重试生成 `attempt+1` 且 `parentRunId` 指向原任务
+- `max_attempts` 是**硬上限**（缺省 3，含首次执行）：尝试次数用满后重试被 `VALIDATION_FAILED` 拒绝，
+  上限沿重试链继承、不被重置
 - 有未完成任务时删除运行时被拒；删除后历史任务解绑保留
 - 服务重启把残留 `running` 任务置 `failed(runtime_recovery)`，并把在线运行时收敛为离线

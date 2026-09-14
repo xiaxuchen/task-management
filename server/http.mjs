@@ -444,7 +444,8 @@ export function createApp({ store }) {
             ideMode: !!b.ideMode,
             sessionId: b.sessionId,
             resume: !!b.resume,
-            runtimeId: b.runtimeId
+            runtimeId: b.runtimeId,
+            maxAttempts: b.maxAttempts
           },
           actorOf(req)
         )

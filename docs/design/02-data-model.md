@@ -287,7 +287,7 @@ index：`idx_agent_sessions_node(node_id)`、`idx_agent_sessions_activity(status
 | status | TEXT | `running` / `success` / `failed` / `timeout` / `cancelled` |
 | output | TEXT | 合并输出（限 200KB，兼容旧读取方式） |
 | exit_code | INTEGER | 子进程退出码 |
-| attempt / max_attempts | INTEGER | 第几次尝试 / 上限（重试用） |
+| attempt / max_attempts | INTEGER | 第几次尝试 / 重试硬上限（缺省 3，含首次执行；用满后重试被 `VALIDATION_FAILED` 拒绝，沿重试链继承） |
 | parent_run_id | INTEGER NULL | FK → agent_runs(id) ON DELETE SET NULL，重试链回指 |
 | failure_reason | TEXT | 失败分类（`timeout` / `runtime_recovery` / `agent_error.*` …） |
 | cli_session_id / work_dir | TEXT | 本次任务落定的 CLI 会话号 / 工作目录（回填到 session） |

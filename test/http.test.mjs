@@ -358,6 +358,43 @@ test('任务：取消未结束任务 / 重试已结束任务（attempt+1 指向�
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+test('任务：重试超过 maxAttempts 硬上限时 HTTP 400 拒绝（VALIDATION_FAILED）', async () => {
+  const { tmp, store, base, get, post, close } = await setup()
+  const task = makeTree(store)
+  const run = store.createAgentRun(task.id, { prompt: 'p', agent: 'echo', cwd: '/tmp', maxAttempts: 1 })
+  store.finishAgentRun(run.id, { status: 'failed', failureReason: 'timeout' })
+
+  const res = await fetch(`${base}/api/agent-runs/${run.id}/retry`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}'
+  })
+  assert.equal(res.status, 400)
+  const body = await res.json()
+  assert.equal(body.error.code, 'VALIDATION_FAILED')
+  assert.equal(body.error.details.maxAttempts, 1)
+
+  // 拒绝后不落库
+  assert.equal((await get(`/api/nodes/${task.id}/agent-runs`)).length, 1)
+
+  await close()
+  tmp.cleanup()
+})
+
+test('任务：派单可显式指定 maxAttempts，回读一致', async () => {
+  const { tmp, store, post, close } = await setup()
+  const task = makeTree(store)
+  const run = await post(`/api/nodes/${task.id}/agent-runs`, { prompt: 'p', agent: 'echo', cwd: '/tmp', maxAttempts: 5 })
+  assert.equal(run.maxAttempts, 5)
+
+  // 非法值拒绝
+  const bad = await post(`/api/nodes/${task.id}/agent-runs`, { prompt: 'p', agent: 'echo', cwd: '/tmp', maxAttempts: 0 })
+  assert.equal(bad.error.code, 'VALIDATION_FAILED')
+
+  await close()
+  tmp.cleanup()
+})
+
 test('任务：回写（PATCH）置终态并沉淀 cliSessionId', async () => {
   const { tmp, store, get, patch, close } = await setup()
   const task = makeTree(store)

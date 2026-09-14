@@ -77,7 +77,7 @@
 | GET | `/api/agent-runs/:rid/messages` | 任务消息流 `?sinceSeq=`（按 seq 增量拉取） |
 | POST | `/api/agent-runs/:rid/messages` | 追加一条消息 `{type, tool?, content?, input?, output?}` |
 | POST | `/api/agent-runs/:rid/cancel` | 取消未完成任务并终止本地子进程 `{reason?}` |
-| POST | `/api/agent-runs/:rid/retry` | 重试已结束任务（新建 attempt+1 子任务，回指原任务） |
+| POST | `/api/agent-runs/:rid/retry` | 重试已结束任务（新建 attempt+1 子任务，回指原任务）；`attempt >= maxAttempts` 时 `400` 拒绝 |
 | PATCH | `/api/agent-runs/:rid` | 回写终态 `{status, output?, exitCode?, failureReason?, cliSessionId?, workDir?}` |
 
 状态码：参数/父子类型/必填校验失败 → `400`；资源不存在 → `404`；唯一约束冲突 / 路径歧义 → `409`；GitLab 侧错误 → `502`（`details` 带原始信息）。破坏性操作未显式确认 → `400`，`code = CONFIRM_REQUIRED`。合并预检发现冲突不改工作区，返回 `200` + 冲突清单（`state = precheck_conflict`）；本机 git 不可用 / 失败 → `500`（`GIT_UNAVAILABLE` / `GIT_FAILED`）。

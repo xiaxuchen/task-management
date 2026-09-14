@@ -1,1 +1,2 @@
 - feat(agent-runtime): agent 运行时三层模型（运行时/会话/任务 + 消息流）对齐 multica——心跳、续跑（--resume）、重试链（attempt/parentRunId）、取消、失败分类；三入口 1:1；IDEA 插件 AgentConsoleDialog（运行时状态条 + 会话选择 + 任务状态胶囊 + 消息流增量拉取）
+- fix(agent-runtime): max_attempts 改为重试硬上限（缺省 3，含首次执行）——retryAgentRun 在 attempt>=max_attempts 时抛 VALIDATION_FAILED（details 带 attempt/maxAttempts），上限沿重试链继承；三入口补 maxAttempts 入参；老库一次性回填旧默认 1 → 3（meta.agent_max_attempts_v2 标记）；补 UT

@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   output TEXT,
   exit_code INTEGER,
   attempt INTEGER NOT NULL DEFAULT 1,
-  max_attempts INTEGER NOT NULL DEFAULT 1,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
   parent_run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
   failure_reason TEXT,
   cli_session_id TEXT,
@@ -390,7 +390,7 @@ function migrate(db) {
     ['session_id', 'INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL'],
     ['runtime_id', 'INTEGER REFERENCES agent_runtimes(id) ON DELETE SET NULL'],
     ['attempt', 'INTEGER NOT NULL DEFAULT 1'],
-    ['max_attempts', 'INTEGER NOT NULL DEFAULT 1'],
+    ['max_attempts', 'INTEGER NOT NULL DEFAULT 3'],
     ['parent_run_id', 'INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL'],
     ['failure_reason', 'TEXT'],
     ['cli_session_id', 'TEXT'],
@@ -400,6 +400,14 @@ function migrate(db) {
     ['wait_reason', 'TEXT']
   ])
   db.exec('CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id, id)')
+
+  // max_attempts 从「死字段」升级为硬上限（默认 3）。老库的历史行都带着旧的默认 1，
+  // 若直接按硬上限判定会全部不可重试；用 meta 标记做一次性回填（只跑一次，避免误伤显式传 1 的新行）。
+  const attemptsMigrated = db.prepare("SELECT value FROM meta WHERE key = 'agent_max_attempts_v2'").get()
+  if (!attemptsMigrated) {
+    db.prepare('UPDATE agent_runs SET max_attempts = 3 WHERE max_attempts IS NULL OR max_attempts < 3').run()
+    db.prepare("INSERT OR REPLACE INTO meta (key,value) VALUES ('agent_max_attempts_v2','1')").run()
+  }
 }
 
 function addColumns(db, table, additions) {

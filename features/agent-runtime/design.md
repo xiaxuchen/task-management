@@ -25,6 +25,9 @@
   下次 `startAgentRun({resume:true})` 取出会话里的 `cliSessionId`，qodercli 参数追加 `--resume <id>`。
 - **重试链**：`retryAgentRun` 复制原任务为 `attempt+1` 的子任务，`parent_run_id` 回指原任务，
   挂同一会话——不新建对话。
+- **重试上限**：`max_attempts` 是硬上限（缺省 3，含首次执行）。`retryAgentRun` 在建子任务前先判定
+  `attempt >= max_attempts` → 抛 `VALIDATION_FAILED`（`details` 带 `attempt` / `maxAttempts`），
+  上限沿重试链继承、不被重置；老库一次性把历史行的旧默认 1 回填为 3（`meta.agent_max_attempts_v2` 标记）。
 - **消息流**：`appendChunk` 把子进程输出按行切成 `text` 消息落库（同时仍写 `output` 整块，兼容旧读取）；
   `seq` 由服务端在插入前 `MAX(seq)+1` 生成，UI 用 `sinceSeq` 增量拉取。
 - **取消**：`cancelAgentRun` 置 `cancelled`；后台执行的 `startAgentRun` 有 2s cancel-watch，

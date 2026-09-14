@@ -98,13 +98,21 @@ test('旧库迁移：旧 schema 直接打开，补出新列与索引且保留历
   assert.equal(row.output, '历史输出')
   assert.equal(row.status, 'success')
   assert.equal(row.attempt, 1)
+  // max_attempts 从旧默认 1 回填为新的硬上限默认 3（否则历史行会被硬上限锁死不能重试）
+  assert.equal(row.max_attempts, 3)
   assert.equal(row.session_id, null)
   assert.equal(db.prepare('SELECT name FROM nodes WHERE id = 1').get().name, '历史项目')
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key='agent_max_attempts_v2'").get().value, '1')
 
   // 再次打开幂等
   db.close()
   const db2 = tmp.openDb(file)
   assert.equal(db2.prepare('SELECT prompt FROM agent_runs WHERE id = 7').get().prompt, '历史任务')
+  // 二次打开不再回填：显式传 1 的新行不会被误升级
+  db2.prepare('UPDATE agent_runs SET max_attempts = 1 WHERE id = 7').run()
   db2.close()
+  const db3 = tmp.openDb(file)
+  assert.equal(db3.prepare('SELECT max_attempts FROM agent_runs WHERE id = 7').get().max_attempts, 1)
+  db3.close()
   tmp.cleanup()
 })

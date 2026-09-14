@@ -10,6 +10,8 @@ const SQLITE_BUSY_RETRIES = 5
 const SQLITE_BUSY_RETRY_MS = 40
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 const isSqliteBusy = (e) => /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i.test(String((e && e.message) || e))
+/** 任务默认重试上限（含首次执行）：attempt 1 → 最多可重试到 3；超限重试被硬性拒绝 */
+const DEFAULT_MAX_ATTEMPTS = 3
 
 /** 预置文档名（与 config.docPresets 默认值一致） */
 const DEFAULT_DOC_PRESETS = {
@@ -1058,7 +1060,7 @@ export function createStore(db, options = {}) {
       sessionId = null,
       runtimeId = null,
       attempt = 1,
-      maxAttempts = 1,
+      maxAttempts = DEFAULT_MAX_ATTEMPTS,
       parentRunId = null,
       priority = 0,
       resumed = false
@@ -1068,6 +1070,14 @@ export function createStore(db, options = {}) {
     rawNode(nodeId)
     const p = String(prompt || '').trim()
     if (!p) throw new AppError(CODES.VALIDATION_FAILED, 'prompt 不能为空', { field: 'prompt' })
+    const maxA = Number(maxAttempts)
+    if (!Number.isInteger(maxA) || maxA < 1) {
+      throw new AppError(CODES.VALIDATION_FAILED, `maxAttempts 必须是 ≥1 的整数，收到：${maxAttempts}`, { maxAttempts })
+    }
+    const attemptA = Number(attempt)
+    if (!Number.isInteger(attemptA) || attemptA < 1) {
+      throw new AppError(CODES.VALIDATION_FAILED, `attempt 必须是 ≥1 的整数，收到：${attempt}`, { attempt })
+    }
     const ts = now()
     let sid = sessionId ? Number(sessionId) : null
     if (sid) {
@@ -1083,7 +1093,7 @@ export function createStore(db, options = {}) {
       )
       .run(
         Number(nodeId), sid, runtimeId ? Number(runtimeId) : null, agent, model, p, cwd,
-        'running', Number(attempt) || 1, Number(maxAttempts) || 1,
+        'running', attemptA, maxA,
         parentRunId ? Number(parentRunId) : null, Number(priority) || 0, resumed ? 1 : 0, ts, actor(by)
       )
     touchSession(sid, ts)
@@ -1253,6 +1263,16 @@ export function createStore(db, options = {}) {
     if (!TERMINAL_RUN_STATUSES.has(cur.status)) {
       throw new AppError(CODES.VALIDATION_FAILED, `任务 ${id} 尚未结束（${cur.status}），不能重试`, { status: cur.status })
     }
+    // max_attempts 是硬上限：已用满最后一次尝试后拒绝重试，避免无限重试链
+    const attempt = Number(cur.attempt) || 1
+    const maxAttempts = Number(cur.max_attempts) || 1
+    if (attempt >= maxAttempts) {
+      throw new AppError(
+        CODES.VALIDATION_FAILED,
+        `任务 ${id} 已达重试上限（第 ${attempt} 次 / 上限 ${maxAttempts} 次），不能再重试`,
+        { attempt, maxAttempts }
+      )
+    }
     return createAgentRun(
       cur.node_id,
       {
@@ -1262,8 +1282,8 @@ export function createStore(db, options = {}) {
         cwd: cur.cwd,
         sessionId: cur.session_id,
         runtimeId: cur.runtime_id,
-        attempt: (cur.attempt || 1) + 1,
-        maxAttempts: cur.max_attempts || 1,
+        attempt: attempt + 1,
+        maxAttempts,
         parentRunId: cur.id,
         priority: cur.priority || 0,
         // 会话已有 CLI 会话号时，重试即续跑同一段对话

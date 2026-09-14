@@ -335,16 +335,17 @@ export function createMcpServer({ store }) {
       cwd: z.string().optional(),
       sessionId: z.number().optional(),
       resume: z.boolean().optional(),
-      runtimeId: z.number().optional()
+      runtimeId: z.number().optional(),
+      maxAttempts: z.number().optional()
     },
-    async ({ ref, prompt, agent, model, cwd, sessionId, resume, runtimeId }) => {
+    async ({ ref, prompt, agent, model, cwd, sessionId, resume, runtimeId, maxAttempts }) => {
       const node = store.resolveRef(ref)
       return {
         content: [
           {
             type: 'text',
             text: JSON.stringify(
-              startAgentRun(store, node.id, { prompt, agent, model, cwd, sessionId, resume, runtimeId }, 'ai'),
+              startAgentRun(store, node.id, { prompt, agent, model, cwd, sessionId, resume, runtimeId, maxAttempts }, 'ai'),
               null,
               2
             )
