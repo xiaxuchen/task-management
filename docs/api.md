@@ -360,6 +360,24 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-checks \
 > 解析不到该用例结论时按 run 终态回落：成功 → `blocked`（不伪造成 `pass`）、超时/取消 → `cancelled`、
 > 失败 → `error`。自动结论打 `autoFinalized:true`，人工可直接改正（无需 `overwrite`）。
 
+## 需求就绪门禁（需求管理闭环的前置判定）
+
+```bash
+# 门禁结论：需求内容 / 概要设计 / 可回归用例三条是否齐备
+# 注：新建节点会预置**空白**「需求内容」文档，必须真正填写才算通过
+curl -s http://127.0.0.1:3210/api/nodes/1/readiness
+
+# 连子树的需求一起判定（挂在项目 / 需求上）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?scope=subtree'
+
+# markdown 可直接贴进 issue / 评审记录
+curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js readiness check "项目A/需求1" [--scope self|subtree] [--format json|md]
+# MCP: requirement_readiness { node, scope?, format? }
+```
+
 ## 错误码速查
 
 | HTTP | code | 场景 |

@@ -44,6 +44,7 @@ export const TOOLS = [
   'test_report_get',
   'test_report_finish',
   'acceptance_report',
+  'requirement_readiness',
   'release_item_list',
   'release_item_upsert',
   'release_item_update',
@@ -83,6 +84,7 @@ export function buildSchema(store, config) {
     nodeTypes: Object.entries(CHILD_TYPES).map(([type, children]) => ({ type, allowedChildren: children })),
     status: config.status,
     docPresets: config.docPresets,
+    readiness: config.readiness,
     branchTemplate: config.branchTemplate,
     attrDefs: store.listAttrDefs(undefined, { includeDisabled: true }),
     tools: TOOLS
@@ -912,6 +914,33 @@ export function renderAcceptanceMd(report) {
   ]
   for (const i of report.items) {
     lines.push(`| ${i.name} | ${i.kind} | ${i.latestStatus} | ${i.latestReportId ?? '—'} |`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * 需求就绪门禁导出：把 buildRequirementReadiness 的聚合结果渲染成可贴进 issue / 评审记录的 markdown。
+ * 与 renderAcceptanceMd / renderReleaseChecklistMd 同风格，便于三段结论一起贴进同一条记录。
+ */
+export function renderReadinessMd(readiness) {
+  const t = readiness.totals
+  const lines = [
+    `# 需求就绪门禁：${readiness.node.name}`,
+    '',
+    `- 范围：${readiness.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 需求：${t.units} · 就绪：${t.readyUnits} · 未就绪：${t.pendingUnits} · 门禁项：${t.checks}（通过 ${t.passed} / 未过 ${t.failed}）`,
+    `- 就绪结论：${readiness.ready == null ? '—（没有可判定的需求）' : readiness.ready ? '可进入回归测试' : '尚不可进入回归测试'}`,
+    ''
+  ]
+  if (readiness.blockers.length > 0) {
+    lines.push('## 阻塞项', '', '| 需求 | 门禁 | 说明 |', '|---|---|---|')
+    for (const b of readiness.blockers) lines.push(`| ${b.name} | ${b.label} | ${b.detail} |`)
+    lines.push('')
+  }
+  lines.push('## 需求明细', '', '| 需求 | 类型 | 就绪 | 未过门禁 |', '|---|---|---|---|')
+  for (const u of readiness.units) {
+    const failed = u.checks.filter((c) => !c.passed).map((c) => c.label)
+    lines.push(`| ${u.name} | ${u.type} | ${u.ready ? '是' : '否'} | ${failed.length ? failed.join('、') : '—'} |`)
   }
   return lines.join('\n')
 }

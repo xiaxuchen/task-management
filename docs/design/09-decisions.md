@@ -33,3 +33,5 @@
 | 26 | 测试执行复用 agent 运行时，不新建执行器 | `runTestCases` 只做「拼提示词 → `startAgentRun` 派单 → 开 running 报告」，不阻塞等结果；任务结束后由前台执行者 / 收尾钩子 `test_report_finish` 回写终态。后台（qodercli）与前台（Qoder IDE ideMode）走同一条链路 |
 | 27 | 验收通过率以「已完结用例」为分母 | 分桶总数守恒（`pass+fail+blocked+error+cancelled+running+notRun=cases`）；`running`（已派单未回写）与 `notRun`（从未派单）都不计入分母，`settled` = 五种终态之和；`error`/`cancelled` 从 `blocked` 拆出单列；无完结时 `passRate = null` 而非 0（避免「已派单/没跑 = 未通过」压低结论） |
 | 28 | 报告状态机由应用层强制（不只靠 DB CHECK） | `running → 终态` 单向；终态重复提交同状态幂等（只更新摘要，`finished_at` 不变）；终态互转 / 回退 running 默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），需显式 `overwrite:true`；非法 status 拦成 `VALIDATION_FAILED`（不把 DB CHECK 错误当 500 泄漏外部）。同时 `createTestReport` 校验 `caseId` 同节点、`runId` 存在，保证引用完整性 |
+| 29 | 需求就绪门禁不落表，由既有数据推导 | 门禁（需求内容文档 / 概要设计文档 / 可回归用例）是**结论**而非业务数据，落库会产生两处真相；仿 `acceptance_report` 做纯读聚合，**不写库、不动 revision**（AI 可高频轮询做看板而不制造变更噪声）。文档判定口径是「存在且正文非空」——`createNode` 预置空白文档，只判存在会让新建需求立刻“就绪” |
+| 30 | 门禁口径配置化（`config.readiness`） | 文档名与「视为可回归」的用例类型是值域而非硬编码，团队改用「详细设计」等命名只改配置、不改代码；与 `docPresets` / `status` 同一条「本机配置驱动」原则 |

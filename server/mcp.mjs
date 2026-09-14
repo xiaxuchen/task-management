@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -732,6 +732,18 @@ export function createMcpServer({ store }) {
     }
   )
 
+  server.tool(
+    'requirement_readiness',
+    '需求就绪门禁：判定节点（含可选子树）的需求内容 / 概要设计 / 可回归用例是否齐备，给出能否进入回归测试的结论；format=md 返回可贴进 issue 的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
+    async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const readiness = store.buildRequirementReadiness(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const text = format === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
+      return { content: [{ type: 'text', text }] }
+    }
+  )
+
   // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
 
   server.tool(
@@ -906,7 +918,7 @@ export function createMcpServer({ store }) {
 export async function runMcp() {
   const cfg = loadConfig()
   const db = openDb()
-  const store = createStore(db, { docPresets: cfg.docPresets })
+  const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness })
   const server = createMcpServer({ store })
   const transport = new StdioServerTransport()
   await server.connect(transport)

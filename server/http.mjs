@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -531,6 +531,22 @@ export function createApp({ store }) {
         return
       }
       res.json(report)
+    })
+  )
+
+  // ---------- 需求就绪门禁（需求管理闭环的前置判定） ----------
+  app.get(
+    '/api/nodes/:id/readiness',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const readiness = store.buildRequirementReadiness(node.id, {
+        scope: req.query.scope === 'subtree' ? 'subtree' : 'self'
+      })
+      if (req.query.format === 'md') {
+        res.type('text/markdown').send(renderReadinessMd(readiness))
+        return
+      }
+      res.json(readiness)
     })
   )
 

@@ -72,6 +72,12 @@
 | PATCH | `/api/test-reports/:rid` | 回写报告 `{status, summary?, detail?, runId?, overwrite?}`；`running → 终态` 单向，终态同状态幂等；终态互转默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），`overwrite:true` 才覆盖；**自动收尾（`autoFinalized=true`）的终态可无需 `overwrite` 直接改正**；非法 `status` → 400 `VALIDATION_FAILED` |
 | GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR）。分桶总数守恒（`pass+fail+blocked+error+cancelled+running+notRun=cases`）；`running`/`notRun` 不计入通过率分母 |
 
+### 需求就绪门禁（需求管理闭环的前置判定）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/readiness` | 需求就绪门禁：`?scope=self\|subtree`，`?format=json\|md`。判定需求内容 / 概要设计 / 可回归用例三条门禁；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；无待判定需求时 `ready=null`；**纯读聚合，不写库、不动 revision** |
+
 ### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
 
 | Method | Path | 说明 |

@@ -108,3 +108,27 @@ test('缺陷5回归：CLI test report finish 支持 --overwrite（终态互转�
     tmp.cleanup()
   }
 })
+
+test('需求就绪门禁：CLI readiness check 全链路（未就绪 → 补齐 → 就绪）', async () => {
+  const { tmp, home } = await setup()
+  try {
+    // 新建需求：预置空白「需求内容」不算通过
+    let out = await cli(home, ['readiness', 'check', 'P/R'])
+    assert.equal(out.ready, false)
+    assert.equal(out.totals.units, 1)
+    assert.equal(out.totals.failed, 3)
+
+    await cli(home, ['doc', 'upsert', 'P/R', '--name', '需求内容', '--content', '需求正文'])
+    await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', '设计正文'])
+    await cli(home, ['test', 'case', 'upsert', 'P/R', '--name', '回归用例', '--prompt', '跑单测'])
+    out = await cli(home, ['readiness', 'check', 'P/R'])
+    assert.equal(out.ready, true)
+    assert.equal(out.totals.readyUnits, 1)
+
+    // 非需求节点 self 拒绝，提示改用 subtree
+    const rejected = await cliFail(home, ['readiness', 'check', 'P'])
+    assert.match(rejected.stderr, /scope=subtree/)
+  } finally {
+    tmp.cleanup()
+  }
+})

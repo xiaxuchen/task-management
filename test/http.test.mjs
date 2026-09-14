@@ -693,3 +693,61 @@ test('上线治理：清单 md 输出可贴进上线单', async () => {
   await close()
   tmp.cleanup()
 })
+
+// ---------- 需求就绪门禁（需求管理闭环的前置判定） ----------
+
+test('就绪门禁：全链路（未就绪 → 补文档 + 用例 → 就绪）', async () => {
+  const { tmp, post, get, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+
+  // 新建需求：预置空白「需求内容」不算通过（存在 ≠ 写完）
+  let out = await get(`/api/nodes/${r.id}/readiness`)
+  assert.equal(out.ready, false)
+  assert.equal(out.totals.units, 1)
+  assert.equal(out.totals.failed, 3)
+
+  await post(`/api/nodes/${r.id}/documents/upsert`, { name: '需求内容', content: '需求正文' })
+  out = await get(`/api/nodes/${r.id}/readiness`)
+  assert.equal(out.ready, false)
+  assert.equal(out.items.find((i) => i.key === 'requirement_doc').passed, true)
+
+  await post(`/api/nodes/${r.id}/documents/upsert`, { name: '概要设计', content: '设计正文' })
+  await post(`/api/nodes/${r.id}/test-cases/upsert`, { name: '回归用例', prompt: '跑单测' })
+  out = await get(`/api/nodes/${r.id}/readiness`)
+  assert.equal(out.ready, true)
+  assert.equal(out.totals.readyUnits, 1)
+  assert.deepEqual(out.blockers, [])
+
+  await close()
+  tmp.cleanup()
+})
+
+test('就绪门禁：scope=subtree 汇总 + md 输出', async () => {
+  const { tmp, post, base, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+  const s = await post('/api/nodes', { parentId: r.id, type: 'subreq', name: 'S' })
+  for (const [n, body] of [
+    [r.id, { name: '需求内容', content: '正文' }],
+    [r.id, { name: '概要设计', content: '设计' }],
+    [s.id, { name: '需求内容', content: '正文' }]
+  ]) {
+    await post(`/api/nodes/${n}/documents/upsert`, body)
+  }
+  await post(`/api/nodes/${r.id}/test-cases/upsert`, { name: '回归用例', prompt: '跑单测' })
+
+  const subtree = await fetch(`${base}/api/nodes/${p.id}/readiness?scope=subtree`).then((x) => x.json())
+  assert.equal(subtree.totals.units, 2)
+  assert.equal(subtree.totals.readyUnits, 1)
+  assert.equal(subtree.ready, false)
+
+  const res = await fetch(`${base}/api/nodes/${p.id}/readiness?scope=subtree&format=md`)
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type') || '', /text\/markdown/)
+  const md = await res.text()
+  assert.ok(md.startsWith('# 需求就绪门禁'))
+  assert.ok(md.includes('阻塞项'))
+  await close()
+  tmp.cleanup()
+})

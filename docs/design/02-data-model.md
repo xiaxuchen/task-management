@@ -187,6 +187,7 @@ v1 中所有属性值均由用户编辑；系统自动写入的数据只有 MR �
   "port": 3210,
   "gitlab": { "base_url": "", "token": "" },
   "docPresets": { "project": ["描述"], "requirement": ["需求内容"], "subreq": ["需求内容"], "group": [], "task": [], "defect": ["描述", "复现步骤"] },
+  "readiness": { "requirementDoc": "需求内容", "designDoc": "概要设计", "caseKinds": ["regression", "acceptance"] },
   "worktreeRoot": "",
   "branchTemplate": "{base_branch}-{slug}",
   "status": {
@@ -197,6 +198,9 @@ v1 中所有属性值均由用户编辑；系统自动写入的数据只有 MR �
 ```
 
 约束：token 只存本机文件，不写库、不进 git；接口返回时打码。
+
+`readiness` 是**需求就绪门禁**的口径（见 §4.16）：文档名与「视为可回归」的用例类型都是值域，
+团队改用「详细设计」等命名时只改配置、不改代码。
 
 ### 4.11 merges（合并尝试与冲突）
 
@@ -400,3 +404,22 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 **执行语义复用 `test_cases` 的 kind 扩展轴**：`code_check` / `biz_check` / `release_check` 三类用例
 经 `runReleaseChecks` 拼提示词派单给 agent（复用 agent 运行时），与 `release_items` 的清单一起进上线单；
 上线 SQL / 配置的**真正执行**不在本工具内，本表只做登记与检查。
+
+### 4.16 需求就绪门禁（需求管理闭环的前置判定，不落表）
+
+闭环后半段已有结论：验收报告（测完没有）、上线清单（能不能上线）。本节补**起点判定**——
+一份需求进入回归测试前，需求内容 / 概要设计 / 可回归用例是否齐备。
+
+门禁**不建表**：它从既有数据推导结论（文档在不在、用例有没有），落库会造成两处真相并需同步维护。
+由 `buildRequirementReadiness(nodeId, { scope })` 纯读聚合，**不写库、不动 revision**
+（与 `buildAcceptanceReport` 不落表同一条设计原则）。
+
+| 门禁 | 判定依据 | 口径 |
+|---|---|---|
+| 需求内容文档 | 节点下存在 `config.readiness.requirementDoc` 同名文档 | **存在 ≠ 写完**：`createNode` 会预置空白文档，必须 `content.trim()` 非空才通过 |
+| 概要设计文档 | 节点下存在 `config.readiness.designDoc` 同名文档 | 同上，正文非空白才通过 |
+| 可回归测试用例 | 节点下存在 ≥1 条启用中的用例，`kind ∈ config.readiness.caseKinds` | 默认 `regression` / `acceptance`；停用用例与 `code_check` 等不算 |
+
+判定单元只有 `requirement` / `subreq` 两类（项目不承载需求正文，任务组 / 子任务 / 缺陷是拆分产物）；
+`scope=subtree` 在子树里挑出这两类逐单元判定。结论口径：全部单元就绪 → `ready=true`，
+任一未就绪 → `false`，**无待判定需求 → `null`**（不用 `false` 冒充未就绪）。

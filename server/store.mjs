@@ -24,6 +24,16 @@ const DEFAULT_DOC_PRESETS = {
 }
 
 /**
+ * 需求就绪门禁口径（与 config.readiness 默认值一致）。
+ * 门禁只判「需求两层」：项目不承载需求正文，任务组 / 子任务 / 缺陷是拆分产物。
+ */
+const DEFAULT_READINESS = {
+  requirementDoc: '需求内容',
+  designDoc: '概要设计',
+  caseKinds: ['regression', 'acceptance']
+}
+
+/**
  * 解析 agent 输出里的逐条测试结论。
  * 契约来自 ops.composeTestPrompt / composeReleaseCheckPrompt：
  *   `<用例名>: PASS|FAIL|BLOCKED - <依据>`
@@ -63,6 +73,7 @@ function parseRunVerdicts(text) {
 
 export function createStore(db, options = {}) {
   const docPresets = options.docPresets || DEFAULT_DOC_PRESETS
+  const readiness = options.readiness || DEFAULT_READINESS
   const stmt = (sql) => db.prepare(sql)
 
   let bumpDepth = 0
@@ -1196,6 +1207,136 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 需求就绪门禁（需求管理闭环的前置判定） ----------
+  //
+  // 闭环后半段已有结论：验收报告（测完没有）、上线清单（能不能上线）。
+  // 这里补起点判定：一份需求进入回归测试前，需求内容 / 概要设计 / 可回归用例是否齐备。
+  // 纯读聚合——不落表、不 bump revision（与 acceptance_report 同一条「结论不落库」原则）。
+
+  const READINESS_UNIT_TYPES = new Set(['requirement', 'subreq'])
+
+  function buildRequirementReadiness(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const ids = scope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const unitRows = ids
+      .map((id) => rawNode(id))
+      .filter((r) => READINESS_UNIT_TYPES.has(r.type))
+    if (unitRows.length === 0) {
+      // 挂在项目 / 任务组上时 self 没有可判定单元；若子树里有，明确提示改用 subtree，
+      // 否则调用方会误以为「这个节点压根没有需求」（与 runReleaseChecks 的 hintSubtree 同款）。
+      if (scope === 'self') {
+        const subtreeUnits = subtreeIds(nodeId)
+          .map((id) => db.prepare('SELECT id,type FROM nodes WHERE id = ?').get(id))
+          .filter((r) => r && READINESS_UNIT_TYPES.has(r.type))
+        throw new AppError(
+          CODES.VALIDATION_FAILED,
+          subtreeUnits.length > 0
+            ? `${root.type} 本身不是需求节点，但子树里有 ${subtreeUnits.length} 个需求——如需判定请用 scope=subtree`
+            : `${root.type} 本身不是需求节点（门禁只判定 requirement / subreq）`,
+          { nodeId: root.id, nodeType: root.type, subtreeUnits: subtreeUnits.length }
+        )
+      }
+      throw new AppError(
+        CODES.VALIDATION_FAILED,
+        `${root.type} 子树内没有可判定的需求（requirement / subreq）`,
+        { nodeId: root.id, nodeType: root.type }
+      )
+    }
+
+    const requirementDocName = readiness.requirementDoc || DEFAULT_READINESS.requirementDoc
+    const designDocName = readiness.designDoc || DEFAULT_READINESS.designDoc
+    const caseKinds = new Set(
+      Array.isArray(readiness.caseKinds) && readiness.caseKinds.length
+        ? readiness.caseKinds
+        : DEFAULT_READINESS.caseKinds
+    )
+    // 文档「存在」与「写完」是两回事：createNode 会预置**空白**需求内容文档，
+    // 只判存在会让新建需求立刻“就绪”。口径必须是 同名文档 + 正文非空白。
+    const docFilled = (docs, name) => {
+      const hit = docs.find((d) => d.name === name)
+      return !!hit && String(hit.content || '').trim() !== ''
+    }
+
+    const units = unitRows.map((row) => {
+      const node = nodeVO(row)
+      const docs = listDocuments(node.id)
+      const cases = listTestCases(node.id, {})
+      const regressable = cases.filter((c) => caseKinds.has(c.kind))
+      const checks = [
+        {
+          key: 'requirement_doc',
+          label: `需求内容文档「${requirementDocName}」`,
+          passed: docFilled(docs, requirementDocName),
+          detail: docFilled(docs, requirementDocName)
+            ? `已填写（${docs.find((d) => d.name === requirementDocName).content.trim().length} 字）`
+            : `缺少「${requirementDocName}」文档或正文为空`
+        },
+        {
+          key: 'design_doc',
+          label: `概要设计文档「${designDocName}」`,
+          passed: docFilled(docs, designDocName),
+          detail: docFilled(docs, designDocName)
+            ? `已填写（${docs.find((d) => d.name === designDocName).content.trim().length} 字）`
+            : `缺少「${designDocName}」文档或正文为空`
+        },
+        {
+          key: 'regressable_cases',
+          label: '可回归测试用例',
+          passed: regressable.length > 0,
+          detail:
+            regressable.length > 0
+              ? `已备 ${regressable.length} 条（${[...new Set(regressable.map((c) => c.kind))].join('/')}）`
+              : `缺少启用中的 ${[...caseKinds].join(' / ')} 用例`
+        }
+      ]
+      return {
+        nodeId: node.id,
+        name: node.name,
+        type: node.type,
+        path: node.path,
+        ready: checks.every((c) => c.passed),
+        checks
+      }
+    })
+
+    const items = units.flatMap((u) =>
+      u.checks.map((c) => ({
+        nodeId: u.nodeId,
+        name: u.name,
+        type: u.type,
+        key: c.key,
+        label: c.label,
+        passed: c.passed,
+        detail: c.detail
+      }))
+    )
+    const passed = items.filter((i) => i.passed).length
+    const readyUnits = units.filter((u) => u.ready).length
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope,
+      ready: units.length === 0 ? null : units.every((u) => u.ready),
+      totals: {
+        units: units.length,
+        readyUnits,
+        pendingUnits: units.length - readyUnits,
+        checks: items.length,
+        passed,
+        failed: items.length - passed
+      },
+      units,
+      items,
+      blockers: items.filter((i) => !i.passed).map((i) => ({
+        nodeId: i.nodeId,
+        name: i.name,
+        type: i.type,
+        key: i.key,
+        label: i.label,
+        detail: i.detail
+      }))
+    }
+  }
+
   // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
   //
   // 需求 → 概要设计/文档 → 回归测试（test_cases）→ 上线清单（release_items）。
@@ -2239,6 +2380,8 @@ export function createStore(db, options = {}) {
     finishTestReport,
     finalizeReportsForRun,
     buildAcceptanceReport,
+    // 需求就绪门禁（需求管理闭环的前置判定）
+    buildRequirementReadiness,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,
     createReleaseItem,

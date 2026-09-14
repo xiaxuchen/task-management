@@ -20,6 +20,13 @@ export const DEFAULT_CONFIG = {
     task: [],
     defect: ['描述', '复现步骤']
   },
+  // 需求就绪门禁口径：需求内容 / 概要设计文档名 + 视为「可回归」的用例类型。
+  // 与 server/store.mjs 的 DEFAULT_READINESS 保持一致。
+  readiness: {
+    requirementDoc: '需求内容',
+    designDoc: '概要设计',
+    caseKinds: ['regression', 'acceptance']
+  },
   worktreeRoot: '',
   branchTemplate: '{base_branch}-{slug}',
   // 提示词模板（各环节派单；变量 {{...}} 由插件/调用方注入）

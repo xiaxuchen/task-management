@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -126,6 +126,7 @@ const HELP = `task-board <命令>
   test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
   test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
+  readiness check <ref> [--scope self|subtree] [--format json|md]   需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
   release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
   release item update <rid> [--name n] [--kind k] [--content c] [--rollback r] [--status s] [--required|--optional]
@@ -224,7 +225,7 @@ export async function run(argv) {
 
   const cfg = loadConfig()
   const db = openDb()
-  const store = createStore(db, { docPresets: cfg.docPresets })
+  const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness })
   const by = values.actor || 'cli'
   const [group, action, ref] = positionals
   const json = (v) => console.log(JSON.stringify(v, null, 2))
@@ -429,6 +430,16 @@ export async function run(argv) {
       const report = store.buildAcceptanceReport(node.id, { scope: values.scope === 'subtree' ? 'subtree' : 'self' })
       if (values.format === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
       else json(report)
+      break
+    }
+    // ---------- 需求就绪门禁（`readiness check <ref>`） ----------
+    case 'readiness check': {
+      const node = store.resolveRef(ref)
+      const readiness = store.buildRequirementReadiness(node.id, {
+        scope: values.scope === 'subtree' ? 'subtree' : 'self'
+      })
+      if (values.format === 'md') process.stdout.write(renderReadinessMd(readiness) + '\n')
+      else json(readiness)
       break
     }
     // ---------- 上线治理（`release item|checklist|check ...`） ----------
