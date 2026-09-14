@@ -1,0 +1,129 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { tempHome } from './helpers.mjs'
+
+async function setup() {
+  const tmp = await tempHome()
+  const db = tmp.openDb()
+  const store = tmp.store.createStore(db)
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  const s = store.createNode({ parentId: r.id, type: 'subreq', name: 'S' })
+  return { tmp, store, p, r, s }
+}
+
+const sourceOf = (gate, key) => gate.sources.find((s) => s.key === key)
+
+/** 把需求补到「可进入测试」：需求内容 + 概要设计 + 一条启用中的回归用例 */
+function makeReadinessPass(store, nodeId) {
+  store.upsertDocument(nodeId, '需求内容', '需求正文')
+  store.upsertDocument(nodeId, '概要设计', '设计正文')
+  return store.upsertTestCase(nodeId, { name: '回归用例', prompt: '跑单测' })
+}
+
+/** 给用例写入一条 pass 报告，模拟测试验收已有终态结论 */
+function makeAcceptancePass(store, nodeId, caseId) {
+  const report = store.createTestReport(nodeId, { caseId, status: 'running', kind: 'regression' })
+  store.finishTestReport(report.id, { status: 'pass', summary: '全绿' })
+}
+
+test('delivery_gate：没有任何证据时返回 unknown（不伪造成可交付）', async (t) => {
+  const { tmp, store, p } = await setup()
+  t.after(() => tmp.cleanup())
+  const gate = store.buildDeliveryGate(p.id)
+  assert.equal(gate.decision, 'unknown')
+  assert.equal(gate.ready, null)
+  assert.equal(gate.totals.applicable, 0)
+  assert.equal(gate.totals.notApplicable, 3)
+  assert.deepEqual(gate.blockers, [])
+  assert.equal(sourceOf(gate, 'readiness').status, 'not_applicable')
+  assert.equal(sourceOf(gate, 'acceptance').status, 'not_applicable')
+  assert.equal(sourceOf(gate, 'release').status, 'not_applicable')
+})
+
+test('delivery_gate：需求已就绪但测试尚未执行时不可交付', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  const gate = store.buildDeliveryGate(r.id)
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(sourceOf(gate, 'readiness').status, 'pass')
+  assert.equal(sourceOf(gate, 'acceptance').status, 'fail')
+  assert.equal(sourceOf(gate, 'release').status, 'not_applicable')
+  assert.equal(gate.blockers.length, 1)
+  assert.equal(gate.blockers[0].name, testCase.name)
+  assert.match(gate.blockers[0].detail, /not_run/)
+})
+
+test('delivery_gate：三段全部通过才可交付；不适用项不阻塞', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  makeAcceptancePass(store, r.id, testCase.id)
+  store.createReleaseItem(r.id, { name: '仅可选监控', kind: 'check', required: 0 })
+
+  const gate = store.buildDeliveryGate(r.id)
+  assert.equal(gate.decision, 'ready')
+  assert.equal(gate.ready, true)
+  assert.equal(gate.totals.passed, 2)
+  assert.equal(gate.totals.notApplicable, 1)
+  assert.deepEqual(gate.blockers, [])
+})
+
+test('delivery_gate：必做上线项未完成时覆盖测试通过结论，返回 not_ready', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  makeAcceptancePass(store, r.id, testCase.id)
+  store.createReleaseItem(r.id, { name: '执行上线 SQL', kind: 'sql', status: 'pending' })
+
+  const gate = store.buildDeliveryGate(r.id)
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(sourceOf(gate, 'release').status, 'fail')
+  assert.equal(gate.blockers.length, 1)
+  assert.equal(gate.blockers[0].source, 'release')
+  assert.equal(gate.blockers[0].name, '执行上线 SQL')
+})
+
+test('delivery_gate：scope=subtree 纳入子树需求与上线项', async (t) => {
+  const { tmp, store, p, r, s } = await setup()
+  t.after(() => tmp.cleanup())
+  makeReadinessPass(store, r.id)
+  const sCase = store.upsertTestCase(s.id, { name: '子需求回归', prompt: '跑子需求单测' })
+  store.upsertDocument(s.id, '需求内容', '子需求正文')
+
+  const gate = store.buildDeliveryGate(p.id, { scope: 'subtree' })
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(sourceOf(gate, 'readiness').status, 'fail')
+  assert.equal(sourceOf(gate, 'readiness').evidence.totals.units, 2)
+  assert.ok(gate.blockers.some((b) => b.name.includes('S')))
+  assert.ok(sCase.id > 0)
+})
+
+test('delivery_gate：纯读聚合，不产生 revision', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  makeAcceptancePass(store, r.id, testCase.id)
+  const before = store.getRevision()
+  store.buildDeliveryGate(r.id)
+  store.buildDeliveryGate(r.id, { scope: 'subtree' })
+  assert.equal(store.getRevision(), before)
+})
+
+test('delivery_gate：markdown 渲染含最终结论与阻塞项', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  makeReadinessPass(store, r.id)
+  const { renderDeliveryGateMd } = await import('../server/ops.mjs')
+  const md = renderDeliveryGateMd(store.buildDeliveryGate(r.id))
+  assert.match(md, /^# 交付门禁：R/m)
+  assert.match(md, /不可交付/)
+  assert.match(md, /## 阻塞项/)
+  assert.match(md, /回归用例/)
+})
+
+test('delivery_gate：登记进能力清单（MCP / CLI / REST 1:1 的发现入口）', async () => {
+  const { TOOLS } = await import('../server/ops.mjs')
+  assert.ok(TOOLS.includes('delivery_gate'))
+})

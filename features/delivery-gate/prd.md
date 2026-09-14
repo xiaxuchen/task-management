@@ -1,0 +1,47 @@
+# 功能：交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
+
+- 代码：`server/store.mjs`（`buildDeliveryGate`）、`server/ops.mjs`（`renderDeliveryGateMd`）、`server/{http,cli,mcp}.mjs`、`web/src/components/NodeDrawer.vue`
+- 入口：HTTP（`/api/nodes/:id/delivery-gate`）· CLI（`delivery gate <ref>`）· MCP（`delivery_gate`）
+- 主设计文档：`../../docs/design/04-api.md`（接口表）；相邻功能：`../requirement-readiness/`、`../regression-loop/`、`../release-governance/`
+
+## 1. 目标
+
+TaskBoard 已经有三个独立结论：
+
+- 需求就绪门禁回答「能不能进入测试」；
+- 验收报告回答「测试过没过」；
+- 上线检查清单回答「上线动作能不能执行」。
+
+但它们分散在三个接口与三个页面片段里，调用方要自己拼装才敢说一句「这次能不能交付」。
+本功能补上唯一入口：把三段既有结论收敛成一个确定、可贴进 issue / 上线单的交付结论。
+
+## 2. 需求点
+
+- R1 门禁挂在任意节点上；`scope=self` 只判定本节点，`scope=subtree` 纳入子树。
+- R2 汇总三个来源：
+  - `readiness`：复用 `buildRequirementReadiness`；
+  - `acceptance`：复用 `buildAcceptanceReport`；
+  - `release`：复用 `buildReleaseChecklist`。
+- R3 每个来源使用三态：`pass` / `fail` / `not_applicable`。不适用不等于通过，也不阻塞。
+- R4 最终结论使用三态：
+  - `ready`：至少一个来源适用，且所有适用来源均 `pass`；
+  - `not_ready`：任一适用来源 `fail`；
+  - `unknown`：所有来源都 `not_applicable`（没有可判定的交付证据）。
+- R5 `ready` 字段对 `unknown` 返回 `null`，避免把「没有证据」伪造成绿灯。
+- R6 返回 `sources`（三个来源及依据）、`blockers`（拆到条目级的阻塞项）、`totals`（适用 / 通过 / 未通过 / 不适用计数）。
+- R7 支持 `format=md`，可直接贴进 issue、验收记录或上线单。
+- R8 Web 抽屉新增「交付」页签：可切换 `self` / `subtree`，直接展示结论、来源与阻塞项。
+
+## 3. 非目标（首版）
+
+- 不新增数据表：门禁是既有数据的只读聚合，不落库、不 bump revision。
+- 不自动补需求文档、用例或上线项；只给结论与阻塞项。
+- 不替代验收报告 / 上线清单的明细接口；它是最终汇总入口，不是明细的唯一来源。
+- 不引入审批流或人工签核状态。
+
+## 4. 验收标准
+
+- `test/delivery-gate.test.mjs`：空证据 `unknown`；需求就绪但测试未执行 `not_ready`；三段通过 / 不适用不阻塞 `ready`；必做上线项未完成覆盖测试通过结论；`scope=subtree` 联动；纯读不产生 revision；markdown 渲染；能力清单登记。
+- `test/http.test.mjs`：全链路（需求就绪 → 测试未跑不可交付 → 报告 pass 后可交付）、`format=md`、空证据 `unknown`。
+- `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/04-api.md` + `docs/api.md`
+  + `docs/design/06-ui.md` + `docs/design/08-testing.md` + `docs/design/09-decisions.md` + `features/README.md`）。

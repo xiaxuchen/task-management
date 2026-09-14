@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -547,6 +547,22 @@ export function createApp({ store }) {
         return
       }
       res.json(readiness)
+    })
+  )
+
+  // ---------- 交付门禁（需求就绪 / 验收 / 上线三段的最终汇总） ----------
+  app.get(
+    '/api/nodes/:id/delivery-gate',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const gate = store.buildDeliveryGate(node.id, {
+        scope: req.query.scope === 'subtree' ? 'subtree' : 'self'
+      })
+      if (req.query.format === 'md') {
+        res.type('text/markdown').send(renderDeliveryGateMd(gate))
+        return
+      }
+      res.json(gate)
     })
   )
 

@@ -44,6 +44,40 @@
         <DocPane :node-id="node.id" />
       </el-tab-pane>
 
+      <el-tab-pane label="交付" name="delivery">
+        <div class="delivery-head">
+          <el-tag :type="deliveryTagType(gate.decision)" effect="dark" size="large">{{ deliveryDecisionLabel(gate.decision) }}</el-tag>
+          <el-select v-model="deliveryScope" size="small" style="width:120px" @change="loadDeliveryGate">
+            <el-option label="仅本节点" value="self" />
+            <el-option label="含子树" value="subtree" />
+          </el-select>
+        </div>
+        <el-alert
+          v-if="gate.decision === 'unknown'"
+          type="info"
+          :closable="false"
+          title="当前范围还没有可判定的交付证据（需求 / 用例 / 必做上线项都为空）"
+          style="margin-bottom:10px"
+        />
+        <el-table :data="gate.sources || []" size="small">
+          <el-table-column prop="label" label="来源" width="90" />
+          <el-table-column label="结论" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="deliveryTagType(row.status)" effect="plain">{{ deliveryStatusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="detail" label="说明" min-width="220" />
+        </el-table>
+        <template v-if="(gate.blockers || []).length">
+          <el-divider content-position="left">阻塞项</el-divider>
+          <el-table :data="gate.blockers" size="small" max-height="320">
+            <el-table-column prop="label" label="来源" width="90" />
+            <el-table-column prop="name" label="阻塞项" min-width="180" />
+            <el-table-column prop="detail" label="说明" min-width="200" />
+          </el-table>
+        </template>
+      </el-tab-pane>
+
       <el-tab-pane label="子节点" name="children">
         <el-empty v-if="!children.length" description="无子节点" />
         <el-table v-else :data="children" size="small" @row-click="onChildClick">
@@ -167,8 +201,13 @@ const attrDefs = ref([])
 const children = ref([])
 const commits = ref([])
 const repos = ref([])
+const deliveryScope = ref('self')
+const gate = ref({ decision: 'unknown', sources: [], blockers: [] })
 const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' }
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
+const deliveryDecisionLabel = (d) => ({ ready: '可交付', not_ready: '不可交付', unknown: '待判定' }[d] || d)
+const deliveryStatusLabel = (s) => ({ pass: '通过', fail: '未通过', not_applicable: '不适用' }[s] || s)
+const deliveryTagType = (s) => ({ ready: 'success', pass: 'success', not_ready: 'danger', fail: 'danger' }[s] || 'info')
 
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
@@ -364,8 +403,18 @@ async function loadDetail() {
   attrDefs.value = allDefs.filter((d) => d.enabled !== false && d.nodeType === detail.type)
   const repoList = await api.repos()
   repos.value = repoList
+  deliveryScope.value = 'self'
+  loadDeliveryGate()
   loadTracks()
   loadDuplicates()
+}
+
+async function loadDeliveryGate() {
+  try {
+    gate.value = await api.deliveryGate(props.node.id, deliveryScope.value)
+  } catch {
+    gate.value = { decision: 'unknown', sources: [], blockers: [] }
+  }
 }
 
 async function saveName() {
@@ -421,6 +470,12 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
 }
 .tag-gap {
   margin-left: 4px;
+}
+.delivery-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {

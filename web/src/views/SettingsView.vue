@@ -20,16 +20,16 @@
 
     <el-divider content-position="left">提示词模板（各环节派单）</el-divider>
     <p class="branch-tip">
-      变量用 {{ '{{名称}}' }} 注入；缺陷流程：<b>分析根因 → 批准修复 → 按方案修复</b>（派单提示词即用以下模板）。
+      变量用 <code v-pre>{{名称}}</code> 注入；缺陷流程：<b>分析根因 → 批准修复 → 按方案修复</b>（派单提示词即用以下模板）。
     </p>
     <el-form label-position="top" size="small">
-      <el-form-item :label="'分析根因 defect_analyze（变量：{{defectId}} {{title}} {{desc}} {{locationSection}}）'">
+      <el-form-item :label="promptLabelDefectAnalyze">
         <el-input v-model="tplDefectAnalyze" type="textarea" :autosize="{ minRows: 8 }" />
       </el-form-item>
-      <el-form-item :label="'按方案修复 defect_dispatch（额外：{{analysisSection}}）'">
+      <el-form-item :label="promptLabelDefectDispatch">
         <el-input v-model="tplDefectDispatch" type="textarea" :autosize="{ minRows: 8 }" />
       </el-form-item>
-      <el-form-item :label="'任务派单 task_dispatch（变量：{{taskName}} {{prdSection}} {{docs}} {{commitsSection}} {{filesSection}}）'">
+      <el-form-item :label="promptLabelTaskDispatch">
         <el-input v-model="tplTaskDispatch" type="textarea" :autosize="{ minRows: 8 }" />
       </el-form-item>
       <el-form-item>
@@ -109,6 +109,9 @@ const branchConfigs = ref([])
 const tplDefectAnalyze = ref('')
 const tplDefectDispatch = ref('')
 const tplTaskDispatch = ref('')
+const promptLabelDefectAnalyze = '分析根因 defect_analyze（变量：{{defectId}} {{title}} {{desc}} {{locationSection}}）'
+const promptLabelDefectDispatch = '按方案修复 defect_dispatch（额外：{{analysisSection}}）'
+const promptLabelTaskDispatch = '任务派单 task_dispatch（变量：{{taskName}} {{prdSection}} {{docs}} {{commitsSection}} {{filesSection}}）'
 
 async function loadRepos() {
   repos.value = await api.repos()

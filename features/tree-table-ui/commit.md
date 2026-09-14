@@ -19,5 +19,6 @@
   - 编辑走 Vditor ir 模式：18 项工具栏，blur 即存 + 轮询自动保存（停止输入 1.2s 落库）
   - 资源自托管：新增 scripts/copy-vditor.mjs（postinstall / prebuild / predev 自动同步到 web/public/vditor/dist，cdn='/vditor'）
   - chore(web): NodeDrawer 补布局样式，让 tab 内容撑满抽屉高度（Vditor 需确定高度）
-  - fix(web): 自动保存改由轮询驱动（Vditor input 回调触发时机不稳定，实测数秒未回调），
-    且轮询须在 after 回调启动（构造后 getValue() 不可靠）；修复防抖定时器被轮询不断重置导致永不保存
+- fix(web): 自动保存改由轮询驱动（Vditor input 回调触发时机不稳定，实测数秒未回调），
+  且轮询须在 after 回调启动（构造后 getValue() 不可靠）；修复防抖定时器被轮询不断重置导致永不保存
+- fix(tree-table-ui): 修复 SettingsView 提示词模板里未转义的 `{{...}}` 导致 Vite 构建失败（模板参数改由脚本常量传入，文本占位符用 `v-pre`）

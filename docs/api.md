@@ -378,6 +378,27 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 # MCP: requirement_readiness { node, scope?, format? }
 ```
 
+## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
+
+```bash
+# 单节点最终交付结论：来源为 readiness / acceptance / release 三段既有结论
+curl -s http://127.0.0.1:3210/api/nodes/1/delivery-gate
+
+# 连子树一起判定（挂在项目 / 需求上）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/delivery-gate?scope=subtree'
+
+# markdown 可直接贴进 issue / 验收记录 / 上线单
+curl -s 'http://127.0.0.1:3210/api/nodes/1/delivery-gate?format=md'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js delivery gate "项目A/需求1" [--scope self|subtree] [--format json|md]
+# MCP: delivery_gate { node, scope?, format? }
+```
+
+> 三段证据全部适用且通过时 `decision=ready`；任一段未通过为 `not_ready`；
+> 三段均不适用（没有需求 / 用例 / 必做上线项）时为 `unknown`，`ready=null`。
+> `not_applicable` 既不阻塞也不算通过。
+
 ## 错误码速查
 
 | HTTP | code | 场景 |

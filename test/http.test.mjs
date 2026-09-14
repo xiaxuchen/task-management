@@ -751,3 +751,50 @@ test('就绪门禁：scope=subtree 汇总 + md 输出', async () => {
   await close()
   tmp.cleanup()
 })
+
+// ---------- 交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总） ----------
+
+test('交付门禁：全链路（需求就绪 → 测试未跑不可交付 → 通过后可交付）', async () => {
+  const { tmp, store, post, get, patch, base, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+
+  await post(`/api/nodes/${r.id}/documents/upsert`, { name: '需求内容', content: '需求正文' })
+  await post(`/api/nodes/${r.id}/documents/upsert`, { name: '概要设计', content: '设计正文' })
+  const testCase = await post(`/api/nodes/${r.id}/test-cases/upsert`, { name: '回归用例', prompt: '跑单测' })
+
+  // 测试未执行：需求就绪通过，但验收未通过
+  let gate = await get(`/api/nodes/${r.id}/delivery-gate`)
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(gate.sources.find((s) => s.key === 'readiness').status, 'pass')
+  assert.equal(gate.sources.find((s) => s.key === 'acceptance').status, 'fail')
+  assert.equal(gate.blockers.length, 1)
+
+  // 报告回写 pass 后，全链路可交付
+  const report = store.createTestReport(r.id, { caseId: testCase.id })
+  await patch(`/api/test-reports/${report.id}`, { status: 'pass', summary: '全绿' })
+  gate = await get(`/api/nodes/${r.id}/delivery-gate`)
+  assert.equal(gate.decision, 'ready')
+  assert.equal(gate.ready, true)
+
+  // markdown 可直接贴进 issue
+  const res = await fetch(`${base}/api/nodes/${r.id}/delivery-gate?format=md`)
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type') || '', /text\/markdown/)
+  const md = await res.text()
+  assert.ok(md.startsWith('# 交付门禁'))
+  assert.ok(md.includes('可交付'))
+  await close()
+  tmp.cleanup()
+})
+
+test('交付门禁：没有任何证据时 unknown，不伪造成可交付', async () => {
+  const { tmp, post, get, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const gate = await get(`/api/nodes/${p.id}/delivery-gate`)
+  assert.equal(gate.decision, 'unknown')
+  assert.equal(gate.ready, null)
+  assert.equal(gate.totals.notApplicable, 3)
+  await close()
+  tmp.cleanup()
+})

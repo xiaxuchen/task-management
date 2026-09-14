@@ -45,6 +45,7 @@ export const TOOLS = [
   'test_report_finish',
   'acceptance_report',
   'requirement_readiness',
+  'delivery_gate',
   'release_item_list',
   'release_item_upsert',
   'release_item_update',
@@ -941,6 +942,40 @@ export function renderReadinessMd(readiness) {
   for (const u of readiness.units) {
     const failed = u.checks.filter((c) => !c.passed).map((c) => c.label)
     lines.push(`| ${u.name} | ${u.type} | ${u.ready ? '是' : '否'} | ${failed.length ? failed.join('、') : '—'} |`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * 交付门禁导出：把三段既有结论收敛成一张可贴进 issue / 上线单的最终判定。
+ * 与 renderReadinessMd / renderAcceptanceMd / renderReleaseChecklistMd 同风格。
+ */
+export function renderDeliveryGateMd(gate) {
+  const t = gate.totals
+  const statusLabels = { pass: '通过', fail: '未通过', not_applicable: '不适用' }
+  const decisionText = {
+    ready: '可交付',
+    not_ready: '不可交付',
+    unknown: '—（没有可判定的交付证据）'
+  }[gate.decision] || gate.decision
+  const lines = [
+    `# 交付门禁：${gate.node.name}`,
+    '',
+    `- 范围：${gate.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 证据源：${t.sources} · 适用：${t.applicable} · 通过：${t.passed} · 未通过：${t.failed} · 不适用：${t.notApplicable}`,
+    `- 交付结论：${decisionText}`,
+    '',
+    '## 结论来源',
+    '',
+    '| 来源 | 结论 | 说明 |',
+    '|---|---|---|'
+  ]
+  for (const s of gate.sources) {
+    lines.push(`| ${s.label} | ${statusLabels[s.status] || s.status} | ${s.detail} |`)
+  }
+  if (gate.blockers.length > 0) {
+    lines.push('', '## 阻塞项', '', '| 来源 | 阻塞项 | 说明 |', '|---|---|---|')
+    for (const b of gate.blockers) lines.push(`| ${b.label} | ${b.name} | ${b.detail} |`)
   }
   return lines.join('\n')
 }

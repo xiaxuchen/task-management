@@ -35,3 +35,4 @@
 | 28 | 报告状态机由应用层强制（不只靠 DB CHECK） | `running → 终态` 单向；终态重复提交同状态幂等（只更新摘要，`finished_at` 不变）；终态互转 / 回退 running 默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），需显式 `overwrite:true`；非法 status 拦成 `VALIDATION_FAILED`（不把 DB CHECK 错误当 500 泄漏外部）。同时 `createTestReport` 校验 `caseId` 同节点、`runId` 存在，保证引用完整性 |
 | 29 | 需求就绪门禁不落表，由既有数据推导 | 门禁（需求内容文档 / 概要设计文档 / 可回归用例）是**结论**而非业务数据，落库会产生两处真相；仿 `acceptance_report` 做纯读聚合，**不写库、不动 revision**（AI 可高频轮询做看板而不制造变更噪声）。文档判定口径是「存在且正文非空」——`createNode` 预置空白文档，只判存在会让新建需求立刻“就绪” |
 | 30 | 门禁口径配置化（`config.readiness`） | 文档名与「视为可回归」的用例类型是值域而非硬编码，团队改用「详细设计」等命名只改配置、不改代码；与 `docPresets` / `status` 同一条「本机配置驱动」原则 |
+| 31 | 交付门禁复用三段既有聚合，不落表 | 交付结论 = 需求就绪 + 测试验收 + 上线治理的**只读汇总**；每个来源是三态（`pass` / `fail` / `not_applicable`），最终为 `ready` / `not_ready` / `unknown`。不适用不等于通过，全部不适用时 `ready=null` 而非绿灯；`acceptance` 的 `running` / `notRun` 也不算交付证据。落表会产生第二份真相，因此与 `acceptance_report` / `readiness` 同样纯读、不 bump revision |

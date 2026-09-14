@@ -78,6 +78,12 @@
 |---|---|---|
 | GET | `/api/nodes/:id/readiness` | 需求就绪门禁：`?scope=self\|subtree`，`?format=json\|md`。判定需求内容 / 概要设计 / 可回归用例三条门禁；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；无待判定需求时 `ready=null`；**纯读聚合，不写库、不动 revision** |
 
+### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/delivery-gate` | 交付门禁：`?scope=self\|subtree`，`?format=json\|md`。汇总 `readiness` / `acceptance` / `release` 三个来源，每个来源为 `pass` / `fail` / `not_applicable`；最终 `decision` 为 `ready` / `not_ready` / `unknown`（全不适用时 `ready=null`，不伪造成绿灯）；`acceptance` 中 `running`/`notRun` 也视为未取得交付证据；**纯读聚合，不写库、不动 revision** |
+
 ### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
 
 | Method | Path | 说明 |

@@ -132,3 +132,36 @@ test('需求就绪门禁：CLI readiness check 全链路（未就绪 → 补齐 
     tmp.cleanup()
   }
 })
+
+test('交付门禁：CLI delivery gate 全链路（unknown → not_ready → ready）', async () => {
+  const { tmp, home } = await setup()
+  try {
+    // 只有项目：三段证据都不适用 → unknown（不是绿灯）
+    let gate = await cli(home, ['delivery', 'gate', 'P'])
+    assert.equal(gate.decision, 'unknown')
+    assert.equal(gate.ready, null)
+
+    // 需求补齐 + 测试用例已登记但尚未执行 → not_ready
+    await cli(home, ['doc', 'upsert', 'P/R', '--name', '需求内容', '--content', '需求正文'])
+    await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', '设计正文'])
+    const testCase = await cli(home, ['test', 'case', 'upsert', 'P/R', '--name', '回归用例', '--prompt', '跑单测'])
+    gate = await cli(home, ['delivery', 'gate', 'P/R'])
+    assert.equal(gate.decision, 'not_ready')
+    assert.equal(gate.blockers.length, 1)
+
+    // 直接经 store 写 pass 报告（真派单需要仓库），再验证 ready
+    const { openDb } = await import('../server/db.mjs')
+    const { createStore } = await import('../server/store.mjs')
+    process.env.TASKBOARD_HOME = home
+    const store = createStore(openDb(path.join(home, 'data.db')))
+    const node = store.resolveRef('P/R')
+    const report = store.createTestReport(node.id, { caseId: testCase.id })
+    store.finishTestReport(report.id, { status: 'pass', summary: '全绿' })
+    store.db.close()
+    gate = await cli(home, ['delivery', 'gate', 'P/R'])
+    assert.equal(gate.decision, 'ready')
+    assert.equal(gate.ready, true)
+  } finally {
+    tmp.cleanup()
+  }
+})

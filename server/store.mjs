@@ -1567,6 +1567,135 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 交付门禁（汇总需求就绪 / 验收 / 上线三段结论） ----------
+  //
+  // 前三个功能各自回答一段问题：需求就绪门禁=能不能进测试，验收报告=测试过没过，
+  // 上线清单=上线动作能不能执行。本聚合把它们收敛成调用方唯一需要消费的“能不能交付”结论。
+  // 纯读、不落表、不 bump revision：结论必须随源数据实时变化，避免产生第二份真相。
+
+  const DELIVERY_SOURCE_LABELS = {
+    readiness: '需求就绪',
+    acceptance: '测试验收',
+    release: '上线治理'
+  }
+
+  function subtreeHasTypes(rootId, types) {
+    return subtreeIds(rootId).some((id) => {
+      const row = db.prepare('SELECT type FROM nodes WHERE id = ?').get(id)
+      return row && types.has(row.type)
+    })
+  }
+
+  function buildDeliveryGate(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const effectiveScope = scope === 'subtree' ? 'subtree' : 'self'
+    const sources = []
+
+    // 1. 需求就绪：self 只在需求两层上判定；子树模式只要子树中有需求两层就纳入。
+    const readinessApplies =
+      READINESS_UNIT_TYPES.has(root.type) || (effectiveScope === 'subtree' && subtreeHasTypes(root.id, READINESS_UNIT_TYPES))
+    if (readinessApplies) {
+      const readiness = buildRequirementReadiness(root.id, { scope: effectiveScope })
+      sources.push({
+        key: 'readiness',
+        label: DELIVERY_SOURCE_LABELS.readiness,
+        status: readiness.ready === true ? 'pass' : 'fail',
+        applicable: true,
+        detail:
+          readiness.ready === true
+            ? `${readiness.totals.readyUnits}/${readiness.totals.units} 个需求已就绪`
+            : `${readiness.totals.pendingUnits} 个需求未就绪，${readiness.blockers.length} 项门禁阻塞`,
+        evidence: readiness
+      })
+    } else {
+      sources.push({
+        key: 'readiness',
+        label: DELIVERY_SOURCE_LABELS.readiness,
+        status: 'not_applicable',
+        applicable: false,
+        detail: '当前范围没有 requirement / subreq 节点',
+        evidence: null
+      })
+    }
+
+    // 2. 测试验收：没有用例时是 not_applicable；有用例但存在未执行、执行中或未通过时不可交付。
+    const acceptance = buildAcceptanceReport(root.id, { scope: effectiveScope })
+    const at = acceptance.totals
+    const acceptanceProblem = at.fail + at.blocked + at.error + at.cancelled + at.running + at.notRun
+    sources.push({
+      key: 'acceptance',
+      label: DELIVERY_SOURCE_LABELS.acceptance,
+      status: at.cases === 0 ? 'not_applicable' : acceptanceProblem === 0 ? 'pass' : 'fail',
+      applicable: at.cases > 0,
+      detail:
+        at.cases === 0
+          ? '暂无可回归测试用例'
+          : acceptanceProblem === 0
+            ? `${at.pass}/${at.cases} 条用例已通过`
+            : `${acceptanceProblem}/${at.cases} 条用例未通过或尚无终态结论`,
+      evidence: acceptance
+    })
+
+    // 3. 上线治理：无必做项不代表阻塞（not_applicable）；有任何必做项未 done/skipped 时不可交付。
+    const release = buildReleaseChecklist(root.id, { scope: effectiveScope })
+    sources.push({
+      key: 'release',
+      label: DELIVERY_SOURCE_LABELS.release,
+      status: release.ready == null ? 'not_applicable' : release.ready ? 'pass' : 'fail',
+      applicable: release.ready != null,
+      detail:
+        release.ready == null
+          ? '当前范围没有必做上线项'
+          : release.ready
+            ? `${release.totals.required} 个必做上线项已完成或跳过`
+            : `${release.blockers.length} 个必做上线项仍待处理或阻塞`,
+      evidence: release
+    })
+
+    const blockers = []
+    for (const source of sources) {
+      if (source.status !== 'fail') continue
+      if (source.key === 'readiness' && source.evidence) {
+        for (const b of source.evidence.blockers) {
+          blockers.push({ source: source.key, label: source.label, name: `${b.name} · ${b.label}`, detail: b.detail })
+        }
+      } else if (source.key === 'acceptance' && source.evidence) {
+        for (const item of source.evidence.items.filter((i) => i.latestStatus !== 'pass')) {
+          blockers.push({
+            source: source.key,
+            label: source.label,
+            name: item.name,
+            detail: `最近结果：${item.latestStatus}`
+          })
+        }
+      } else if (source.key === 'release' && source.evidence) {
+        for (const b of source.evidence.blockers) {
+          blockers.push({ source: source.key, label: source.label, name: b.name, detail: `上线项状态：${b.status}` })
+        }
+      }
+    }
+
+    const applicable = sources.filter((s) => s.applicable).length
+    const passed = sources.filter((s) => s.status === 'pass').length
+    const failed = sources.filter((s) => s.status === 'fail').length
+    const decision = failed > 0 ? 'not_ready' : applicable > 0 ? 'ready' : 'unknown'
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope: effectiveScope,
+      decision,
+      ready: decision === 'unknown' ? null : decision === 'ready',
+      totals: {
+        sources: sources.length,
+        applicable,
+        passed,
+        failed,
+        notApplicable: sources.length - applicable
+      },
+      sources,
+      blockers
+    }
+  }
+
   // ---------- agent 运行时管理（参考 multica agent_runtime / chat_session / agent_task_queue） ----------
   //
   // 三层模型：
@@ -2392,6 +2521,8 @@ export function createStore(db, options = {}) {
     deleteReleaseItem,
     reorderReleaseItems,
     buildReleaseChecklist,
+    // 交付门禁（汇总需求就绪 / 验收 / 上线结论）
+    buildDeliveryGate,
     // agent 运行时管理
     upsertRuntime,
     heartbeatRuntime,

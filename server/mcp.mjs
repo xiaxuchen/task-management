@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -740,6 +740,18 @@ export function createMcpServer({ store }) {
       const n = store.resolveRef(String(node))
       const readiness = store.buildRequirementReadiness(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
       const text = format === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
+      return { content: [{ type: 'text', text }] }
+    }
+  )
+
+  server.tool(
+    'delivery_gate',
+    '交付门禁：汇总需求就绪 / 测试验收 / 上线治理三段既有结论，给出唯一“能否交付”判定；format=md 返回可贴进 issue 的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
+    async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const gate = store.buildDeliveryGate(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const text = format === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
       return { content: [{ type: 'text', text }] }
     }
   )

@@ -20,6 +20,7 @@
   - 回归防护：每条缺陷修复都配一条「在旧实现上会失败」的 UT（`test-case.test.mjs` 缺陷 2/3/4、`http.test.mjs` 缺陷 1/2/3/5、`cli-regression-loop.test.mjs` 缺陷 5）
   - `release-item`：上线项 CRUD / 按名唯一与 upsert 幂等 / `kind` 与 `status` 筛选 / `includeOptional` / 排序 / 级联删除 / revision 语义；上线检查清单聚合（就绪结论 / 阻塞项 / 无必做项 `ready=null` / `scope=subtree` / `blocked` 与 `skipped` 计数）；编排层 `dryRun`（只挑 `code_check`/`biz_check`/`release_check` 用例、`caseIds` 过滤、`scope=subtree`）与 markdown 渲染
   - `readiness`：需求就绪门禁三条门禁各自独立判定（预置空文档不算通过 / 空白正文不算 / 停用用例与 `code_check` 不算可回归 / `acceptance` 算）；`scope=subtree` 汇总与逐单元结论、阻塞项；非需求类型 `scope=self` 拒绝并提示 `subtree`；**纯读聚合不产生 revision**；markdown 渲染
+  - `delivery-gate`：交付门禁汇总三段既有结论——空证据 `unknown`（不伪造成可交付）、需求就绪但测试未执行 `not_ready`、三段通过 / 不适用不阻塞 `ready`、必做上线项未完成覆盖测试通过结论；`scope=subtree` 联动；阻塞项展平到条目级；**纯读聚合不产生 revision**；markdown 渲染与能力清单登记
   - `run-finalize`：**派单自动收尾**（`finalizeReportsForRun`）——按输出逐条结论回写 pass/fail、无结论→blocked、失败→error、超时/取消→cancelled、不覆盖人工终态、自动结论可被人工无 `overwrite` 改正、收尾只 +1 revision；**进程级**用真实 CLI 子进程验证 `test run` / `release check` 非 dry-run 收尾到终态并回写报告，`--no-wait` 保留只派单语义；边界（upsert 只传部分字段不清空其余、名称 trim 唯一性、大小写口径、`release check scope=subtree`）
 - **API 集成测试**：临时数据库 + `fetch` 直连服务跑主流程与错误分支
 - **CLI 集成测试**：`taskboard` 子命令建树 / upsert / batch / import / dry-run / `--confirm` 语义
