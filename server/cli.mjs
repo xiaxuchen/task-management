@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -124,7 +124,7 @@ const HELP = `task-board <命令>
   test run <ref> [--kind k] [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run] [--no-wait] [--wait-timeout 秒]
                                     派单执行用例（自动开报告）；默认等到 run 终态并自动收尾报告，--no-wait 只派单
   test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
-  test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
+  test report get <rid> [--format json|md] / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
   readiness check <ref> [--scope self|subtree] [--format json|md]   需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
   delivery gate <ref> [--scope self|subtree] [--format json|md]     交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
@@ -412,7 +412,11 @@ export async function run(argv) {
             limit: values.limit ? Number(values.limit) : 100
           })
         )
-      else if (sub === 'get') json(store.getTestReport(Number(arg)))
+      else if (sub === 'get') {
+        const report = store.getTestReport(Number(arg))
+        if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderTestReportMd(store, report) + '\n')
+        else json(report)
+      }
       else if (sub === 'finish')
         json(
           store.finishTestReport(Number(arg), {
