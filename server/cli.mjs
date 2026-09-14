@@ -32,6 +32,9 @@ const OPTIONS = {
   optional: { type: 'boolean' },
   'case-ids': { type: 'string' },
   'case-id': { type: 'string' },
+  'run-id': { type: 'string' },
+  enabled: { type: 'string' },
+  overwrite: { type: 'boolean' },
   limit: { type: 'string' },
   summary: { type: 'string' },
   detail: { type: 'string' },
@@ -112,13 +115,13 @@ const HELP = `task-board <命令>
   commit duplicates <ref> [--scope self|subtree]   重复检测（same-sha / patch-id / merge 覆盖）
   commit dedupe --keep <cid> --remove "1,2,3"      一键去重（保留 keep，删除重复登记）
   test case list <ref> [--kind regression|acceptance]    该节点的测试用例
-  test case upsert <ref> --name <名> --prompt <内容> [--kind regression|acceptance] [--expectation <期望>]
-  test case update <cid> [--name n] [--kind k] [--prompt p] [--expectation e]
+  test case upsert <ref> --name <名> --prompt <内容> [--kind regression|acceptance] [--expectation <期望>] [--enabled true|false]
+  test case update <cid> [--name n] [--kind k] [--prompt p] [--expectation e] [--enabled true|false]
   test case remove <cid>
   test case reorder <ref> --ids "1,2,3"
   test run <ref> [--kind k] [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run]   派单执行用例（自动开报告）
   test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
-  test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d]
+  test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
   release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
@@ -165,6 +168,15 @@ function parseAttrPairs(list) {
 function readMaybeFile({ content, file }) {
   if (file) return fs.readFileSync(file, 'utf8')
   return content
+}
+
+/** --enabled 取值：true/1/yes → 1，false/0/no → 0，未提供 → undefined；非法值抛错 */
+function parseEnabled(v) {
+  if (v === undefined) return undefined
+  const s = String(v).trim().toLowerCase()
+  if (['true', '1', 'yes', 'on'].includes(s)) return 1
+  if (['false', '0', 'no', 'off'].includes(s)) return 0
+  throw Object.assign(new Error(`--enabled 需要 true|false，收到：${v}`), { code: 'VALIDATION_FAILED' })
 }
 
 export async function run(argv) {
@@ -304,6 +316,7 @@ export async function run(argv) {
     case 'test case': {
       const sub = ref
       const arg = positionals[3]
+      const enabled = parseEnabled(values.enabled)
       if (sub === 'list') json(store.listTestCases(store.resolveRef(arg).id, { kind: values.kind || null, includeDisabled: !!values['include-disabled'] }))
       else if (sub === 'upsert')
         json(
@@ -313,7 +326,8 @@ export async function run(argv) {
               name: values.name,
               kind: values.kind || 'regression',
               prompt: readMaybeFile({ content: values.prompt, file: values.file }) ?? values.prompt,
-              expectation: values.expectation ?? null
+              expectation: values.expectation ?? null,
+              enabled: enabled === undefined ? 1 : enabled
             },
             by
           )
@@ -324,7 +338,8 @@ export async function run(argv) {
             name: values.name ?? null,
             kind: values.kind ?? null,
             prompt: values.prompt ?? null,
-            expectation: values.expectation !== undefined ? values.expectation : undefined
+            expectation: values.expectation !== undefined ? values.expectation : undefined,
+            enabled: enabled === undefined ? null : enabled
           }, by)
         )
       else if (sub === 'remove') {
@@ -363,7 +378,15 @@ export async function run(argv) {
         )
       else if (sub === 'get') json(store.getTestReport(Number(arg)))
       else if (sub === 'finish')
-        json(store.finishTestReport(Number(arg), { status: values.status, summary: values.summary, detail: values.detail }, by))
+        json(
+          store.finishTestReport(Number(arg), {
+            status: values.status,
+            summary: values.summary,
+            detail: values.detail,
+            runId: values['run-id'] ? Number(values['run-id']) : undefined,
+            overwrite: !!values.overwrite
+          }, by)
+        )
       else throw new Error(`test report 支持 list|get|finish，收到：${sub}`)
       break
     }

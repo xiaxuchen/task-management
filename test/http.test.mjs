@@ -23,7 +23,14 @@ async function setup() {
   const del = (p, body) => fetch(`${base}${p}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json())
   const close = () => new Promise((r) => server.close(r))
   const cleanup = () => { close(); tmp.cleanup() }
-  return { tmp, store, base, get, post, patch, del, close, cleanup }
+  // 带状态码的原始请求（用于断言 4xx/5xx 契约，而不是只断言 body.code）
+  const raw = (method, p, body) =>
+    fetch(`${base}${p}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    }).then(async (r) => ({ status: r.status, body: await r.json() }))
+  return { tmp, store, base, get, post, patch, del, raw, close, cleanup }
 }
 
 // ---------- 健康 / schema / revision ----------
@@ -506,6 +513,84 @@ test('回归闭环：报告列表 / 单条读取 / 回写终态', async () => {
   assert.equal(acceptance.totals.pass, 1)
   assert.equal(acceptance.passRate, 1)
 
+  await close()
+  tmp.cleanup()
+})
+
+// ---------- 回归：验收退回的缺陷 1 / 2 / 5（HTTP 契约层） ----------
+
+test('缺陷1回归：重名用例 HTTP 返回 409 TEST_CASE_NAME_EXISTS（不是 500）', async () => {
+  const { tmp, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  const dup = await raw('POST', `/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'q' })
+  assert.equal(dup.status, 409)
+  assert.equal(dup.body.error.code, 'TEST_CASE_NAME_EXISTS')
+  await close()
+  tmp.cleanup()
+})
+
+test('缺陷2回归：HTTP 非法报告状态返回 400 VALIDATION_FAILED（不是 500 ERR_SQLITE_ERROR）', async () => {
+  const { tmp, store, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const c = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  const rep = store.createTestReport(p.id, { caseId: c.id })
+  const bad = await raw('PATCH', `/api/test-reports/${rep.id}`, { status: 'bogus' })
+  assert.equal(bad.status, 400)
+  assert.equal(bad.body.error.code, 'VALIDATION_FAILED')
+  assert.ok(!String(bad.body.error.message).includes('SQLITE'))
+  await close()
+  tmp.cleanup()
+})
+
+test('缺陷2回归：HTTP 终态互转返回 409 REPORT_STATUS_IMMUTABLE，overwrite 可覆盖', async () => {
+  const { tmp, store, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const c = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  const rep = store.createTestReport(p.id, { caseId: c.id })
+  assert.equal((await raw('PATCH', `/api/test-reports/${rep.id}`, { status: 'pass' })).status, 200)
+  const conflict = await raw('PATCH', `/api/test-reports/${rep.id}`, { status: 'fail' })
+  assert.equal(conflict.status, 409)
+  assert.equal(conflict.body.error.code, 'REPORT_STATUS_IMMUTABLE')
+  const forced = await raw('PATCH', `/api/test-reports/${rep.id}`, { status: 'fail', overwrite: true })
+  assert.equal(forced.status, 200)
+  assert.equal(forced.body.status, 'fail')
+  await close()
+  tmp.cleanup()
+})
+
+test('缺陷3回归：HTTP 验收报告分桶守恒、running 不入分母', async () => {
+  const { tmp, store, post, get, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const c = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  const rep = store.createTestReport(p.id, { caseId: c.id }) // running
+  const report = await get(`/api/nodes/${p.id}/acceptance-report`)
+  assert.equal(report.totals.cases, 1)
+  assert.equal(report.totals.running, 1)
+  assert.equal(report.totals.settled, 0)
+  assert.equal(report.passRate, null)
+  store.finishTestReport(rep.id, { status: 'pass' })
+  const after = await get(`/api/nodes/${p.id}/acceptance-report`)
+  assert.equal(after.totals.pass + after.totals.fail + after.totals.blocked + after.totals.error + after.totals.cancelled + after.totals.running + after.totals.notRun, after.totals.cases)
+  assert.equal(after.passRate, 1)
+  await close()
+  tmp.cleanup()
+})
+
+test('缺陷5回归：报告接口接受 runId 字段并与 MCP/CLI 契约一致', async () => {
+  const { tmp, store, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const c = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  // runId 指向不存在的 agent 任务 → 404 NOT_FOUND（而非外键 500）
+  const rep = store.createTestReport(p.id, { caseId: c.id })
+  const bad = await raw('PATCH', `/api/test-reports/${rep.id}`, { status: 'pass', runId: 999999 })
+  assert.equal(bad.status, 404)
+  assert.equal(bad.body.error.code, 'NOT_FOUND')
+  // 合法 runId：先建一条 agent 任务再回填
+  const run = store.createAgentRun(p.id, { prompt: 'x', agent: 'qodercli' }, 'user')
+  const ok = await raw('PATCH', `/api/test-reports/${rep.id}`, { status: 'pass', runId: run.id })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.body.runId, run.id)
   await close()
   tmp.cleanup()
 })

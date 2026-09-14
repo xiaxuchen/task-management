@@ -69,8 +69,8 @@
 | POST | `/api/nodes/:id/test-runs` | 派单执行：`{caseIds?, kind?, prompt?, agent?, model?, cwd?, dryRun?}`；为每条用例开 `running` 报告，返回 `{node, kind, run, reports}`（dryRun 只回用例与提示词） |
 | GET | `/api/nodes/:id/test-reports` | 报告列表（倒序）；`?caseId=&kind=&limit=` |
 | GET | `/api/test-reports/:rid` | 单条报告详情 |
-| PATCH | `/api/test-reports/:rid` | 回写报告终态 `{status, summary?, detail?, runId?}` |
-| GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR） |
+| PATCH | `/api/test-reports/:rid` | 回写报告 `{status, summary?, detail?, runId?, overwrite?}`；`running → 终态` 单向，终态同状态幂等；终态互转默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），`overwrite:true` 才覆盖；非法 `status` → 400 `VALIDATION_FAILED` |
+| GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR）。分桶总数守恒（`pass+fail+blocked+error+cancelled+running+notRun=cases`）；`running`/`notRun` 不计入通过率分母 |
 
 ### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
 

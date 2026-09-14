@@ -22,6 +22,7 @@ const STATUS_BY_CODE = {
   [CODES.DOC_NAME_EXISTS]: 409,
   [CODES.TEST_CASE_NAME_EXISTS]: 409,
   [CODES.RELEASE_ITEM_NAME_EXISTS]: 409,
+  [CODES.REPORT_STATUS_IMMUTABLE]: 409,
   [CODES.UPLOAD_INVALID_TYPE]: 400,
   [CODES.UPLOAD_TOO_LARGE]: 400,
   [CODES.GITLAB_NOT_CONFIGURED]: 400,
@@ -514,7 +515,8 @@ export function createApp({ store }) {
           status: b.status,
           summary: b.summary,
           detail: b.detail,
-          runId: b.runId
+          runId: b.runId,
+          overwrite: !!b.overwrite
         }, actorOf(req))
       )
     })

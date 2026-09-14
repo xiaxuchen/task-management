@@ -138,9 +138,9 @@ agent runs "项目A/需求1"                # 任务历史
 agent run messages <rid>               # 任务消息流（事件流）
 agent run cancel <rid> / agent run retry <rid>
 agent run update <rid> --status success --cli-session <id>   # 前台执行者回写
-test case upsert "项目A/需求1" --name 登录回归 --prompt "跑登录单测"   # 写用例（按名幂等）
+test case upsert "项目A/需求1" --name 登录回归 --prompt "跑登录单测" [--enabled false]   # 写用例（按名幂等）
 test run "项目A/需求1" --kind regression [--dry-run]        # 派单执行 + 自动开报告
-test report finish <rid> --status pass --summary 全绿        # 回写报告终态
+test report finish <rid> --status pass --summary 全绿 [--run-id N] [--overwrite]   # 回写报告终态（终态互转需 --overwrite）
 test acceptance "项目A/需求1" [--scope subtree] [--format md]  # 验收报告
 
 release item upsert "项目A/需求1" --name "执行上线 SQL" --kind sql --content "ALTER TABLE …" --rollback "DROP …"

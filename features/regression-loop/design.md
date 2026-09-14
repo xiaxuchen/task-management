@@ -29,11 +29,37 @@
 agent 任务结束后由前台执行者（或后续收尾钩子）用 `test_report_finish` 逐条回写 pass/fail。
 这样复用现有 agent 运行时（qodercli 后台 / Qoder IDE 前台 ideMode），不引入新的执行器。
 
-**R5 验收口径**：验收报告的通过率**以已执行用例为分母**（未执行单独计入 `notRun`），
-避免「没跑 = 失败」误导判断；`passRate` 在无用例 / 无执行时为 `null` 而非 0。
+**R5 报告状态机**（`running → 终态` 单向，实现与文档的唯一依据）：
 
-**R6 历史保留**：删除用例时报告不删（`case_id` 经 `ON DELETE SET NULL` 置空），
+| 当前 | 目标 | 行为 |
+|---|---|---|
+| `running` | 任一终态（`pass` / `fail` / `blocked` / `error` / `cancelled`） | 允许，写入 `finished_at` |
+| 任一终态 | **同**一状态（重复提交） | 幂等：只更新 `summary` / `detail` / `run_id`，**不改** `finished_at` |
+| 任一终态 | 其它状态（含回退 `running`） | 默认**拒绝**：400/409 `REPORT_STATUS_IMMUTABLE`（`details` 带 current / next） |
+| 任一终态 | 其它状态 + 显式 `overwrite:true` | 允许显式覆盖（纠正误判用） |
+| `running` | `running` | 允许（刷新摘要，仍在执行） |
+
+非法 `status` 一律在应用层拦截为 `VALIDATION_FAILED`，**不**落到 DB CHECK 约束（避免泄漏 `ERR_SQLITE_ERROR`）。
+
+**R6 验收分桶（总数守恒）**：
+
+```
+pass + fail + blocked + error + cancelled + running + notRun = cases
+```
+
+- `running` = 已派单但尚未回写（执行中）；`notRun` = 从未派单。二者**都不计入通过率分母**。
+- 通过率 = `pass / (pass + fail + blocked + error + cancelled)`，即「已完结」口径；
+  `settled` 字段就是该分母。无用例 / 无完结时 `passRate = null`（不是 0）。
+- `error` 与 `blocked` 分列：`error` 是执行器/环境异常，`blocked` 是依赖缺失导致跑不了。
+
+**R7 引用完整性**：`createTestReport` 校验 `caseId` 必须属于**同一节点**、`runId` 必须存在，
+否则分别返回 `VALIDATION_FAILED` / `NOT_FOUND`；不允许跨节点错配（会让验收报告归错需求）。
+
+**R8 历史保留**：删除用例时报告不删（`case_id` 经 `ON DELETE SET NULL` 置空），
 历史执行记录仍可追溯。
+
+**R9 三入口 1:1**：REST / CLI / MCP 暴露的字段集必须一致——
+CLI `test case upsert|update --enabled true|false`、`test report finish --run-id N --overwrite` 与 HTTP body / MCP schema 对齐。
 
 ## 3. 踩坑 / 约束
 

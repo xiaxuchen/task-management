@@ -904,8 +904,8 @@ export function renderAcceptanceMd(report) {
     `# 验收报告：${report.node.name}`,
     '',
     `- 范围：${report.scope === 'subtree' ? '含子树' : '仅本节点'}`,
-    `- 用例：${t.cases} · 已执行：${t.run} · 通过：${t.pass} · 失败：${t.fail} · 阻塞：${t.blocked} · 未执行：${t.notRun}`,
-    `- 通过率（已执行口径）：${report.passRate == null ? '—' : `${Math.round(report.passRate * 100)}%`}`,
+    `- 用例：${t.cases} · 已完结：${t.settled} · 通过：${t.pass} · 失败：${t.fail} · 阻塞：${t.blocked} · 错误：${t.error} · 取消：${t.cancelled} · 执行中：${t.running} · 未执行：${t.notRun}`,
+    `- 通过率（已完结口径，running/未执行不计入分母）：${report.passRate == null ? '—' : `${Math.round(report.passRate * 100)}%`}`,
     '',
     '| 用例 | 类型 | 最近结果 | 报告 |',
     '|---|---|---|---|'

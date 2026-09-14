@@ -352,9 +352,18 @@ index：`idx_agent_runs_node(node_id)`、`idx_agent_runs_session(session_id, id)
 | started_at / finished_at / updated_at | TEXT | |
 | created_by | TEXT | 操作者 |
 
-约束：一次执行 = 一行；index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, id)`。
-**验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果，
-通过率以「已执行用例」为分母，未执行单列 `notRun`（避免「没跑 = 失败」的误判）。
+约束：一次执行 = 一行；`case_id` 必须与 `node_id` 同节点，`run_id` 必须指向存在的 agent 任务（应用层校验）；
+index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, id)`。
+
+**状态机**（应用层强制，见 `features/regression-loop/design.md` R5）：`running → 终态` 单向；
+终态重复提交**同状态**幂等（只更新摘要、不改 `finished_at`）；终态互转 / 回退 `running` 默认拒绝
+（`REPORT_STATUS_IMMUTABLE`，409），需显式 `overwrite:true` 才覆盖。非法 `status` 由应用层拦成
+`VALIDATION_FAILED`，不落到 DB CHECK（避免泄漏 `ERR_SQLITE_ERROR`）。
+
+**验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果。
+分桶总数守恒：`pass + fail + blocked + error + cancelled + running + notRun = cases`；
+`running`（已派单未回写）与 `notRun`（从未派单）都不计入通过率分母，
+通过率 = `pass / settled`（`settled` = 五种终态之和），无完结时 `passRate = null`。
 
 ### 4.15 release_items（上线清单：上线配置 / 上线 SQL / 上线检查项）
 

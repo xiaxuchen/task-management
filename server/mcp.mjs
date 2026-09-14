@@ -711,10 +711,11 @@ export function createMcpServer({ store }) {
       status: z.enum(['running', 'pass', 'fail', 'blocked', 'error', 'cancelled']),
       summary: z.string().optional(),
       detail: z.string().optional(),
-      runId: z.number().optional()
+      runId: z.number().optional(),
+      overwrite: z.boolean().optional().describe('终态互转 / 终态回退时显式覆盖（默认拒绝）')
     },
-    async ({ id, status, summary, detail, runId }) => {
-      const r = store.finishTestReport(id, { status, summary, detail, runId }, 'mcp')
+    async ({ id, status, summary, detail, runId, overwrite }) => {
+      const r = store.finishTestReport(id, { status, summary, detail, runId, overwrite: !!overwrite }, 'mcp')
       return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] }
     }
   )

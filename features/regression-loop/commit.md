@@ -1,4 +1,5 @@
 # 提交记录：回归测试闭环
 
 - feat(regression-loop): AI 可回归测试闭环——test_cases/test_reports 两表 + 用例 upsert/CRUD/排序、报告开启与终态回写、验收报告聚合（最近结果/通过率/未执行口径）；编排层 runTestCases（拼提示词派单到 agent 运行时并自动开 running 报告）+ composeTestPrompt + renderAcceptanceMd；三入口（HTTP/CLI/MCP）1:1；kind 预留 code_check/biz_check/release_check 扩展点；补 17 条单测 + 3 条 HTTP 集成测试
+- fix(regression-loop): 按独立测试复核修复验收退回缺陷 1/2/3/4/5——① HTTP 补 TEST_CASE_NAME_EXISTS→409（b2b8eb6 已修，本轮补 409 状态码断言）② 报告状态机应用层校验：非法 status→VALIDATION_FAILED（不再泄漏 ERR_SQLITE_ERROR），running→终态单向、终态同状态幂等（finished_at 不变）、终态互转/回退 running 默认拒绝 REPORT_STATUS_IMMUTABLE(409)、overwrite:true 显式覆盖 ③ 验收分桶总数守恒（pass+fail+blocked+error+cancelled+running+notRun=cases），error/cancelled 从 blocked 拆出，running 单列且与 notRun 都不入通过率分母（settled 口径）④ createTestReport 校验 caseId 同节点、runId 存在 ⑤ CLI 补 --enabled / --run-id / --overwrite，三入口字段集对齐；设计文档写入状态机与分桶口径；每条缺陷配「在旧实现上会失败」的回归 UT
 - fix(regression-loop): 补登 TEST_CASE_NAME_EXISTS → STATUS_BY_CODE 409——重名用例此前漏映射走默认 500，与设计文档 §9 和 AI 自纠预期不符；HTTP 用例补断言响应码（随 release-governance 提交入库）

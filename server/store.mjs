@@ -823,6 +823,40 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // 报告状态机（见 features/regression-loop/design.md §2「报告状态机」）：
+  //   running → 终态（pass / fail / blocked / error / cancelled）单向；
+  //   终态重复提交**同状态** = 幂等（允许补摘要/细节，不改 finished_at）；
+  //   终态互转 / 终态 → running = 默认拒绝，需显式 overwrite:true 才覆盖。
+  const TEST_REPORT_STATUSES = new Set(['running', 'pass', 'fail', 'blocked', 'error', 'cancelled'])
+  const TERMINAL_REPORT_STATUSES = new Set(['pass', 'fail', 'blocked', 'error', 'cancelled'])
+
+  function assertReportStatus(status) {
+    if (!TEST_REPORT_STATUSES.has(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知报告状态 ${status}`, {
+        status,
+        allowed: [...TEST_REPORT_STATUSES]
+      })
+    }
+  }
+
+  /** 引用完整性：用例必须属于本节点，agent 任务必须存在 */
+  function assertReportRefs(nodeId, { caseId, runId }) {
+    if (caseId != null) {
+      const c = db.prepare('SELECT id, node_id FROM test_cases WHERE id = ?').get(Number(caseId))
+      if (!c) throw new AppError(CODES.NOT_FOUND, `测试用例 ${caseId} 不存在`, { caseId })
+      if (c.node_id !== Number(nodeId)) {
+        throw new AppError(CODES.VALIDATION_FAILED, `测试用例 ${caseId} 不属于节点 ${nodeId}`, {
+          caseId: Number(caseId),
+          nodeId: Number(nodeId),
+          caseNodeId: c.node_id
+        })
+      }
+    }
+    if (runId != null && !db.prepare('SELECT id FROM agent_runs WHERE id = ?').get(Number(runId))) {
+      throw new AppError(CODES.NOT_FOUND, `agent 任务 ${runId} 不存在`, { runId })
+    }
+  }
+
   function createTestCase(nodeId, { name, kind = 'regression', prompt, expectation = null, enabled = 1 }, by = 'user') {
     rawNode(nodeId)
     if (!name || !String(name).trim()) throw new AppError(CODES.VALIDATION_FAILED, '测试用例名必填', { field: 'name' })
@@ -935,6 +969,8 @@ export function createStore(db, options = {}) {
   function createTestReport(nodeId, { caseId = null, runId = null, kind = 'regression', status = 'running', summary = null, detail = null }, by = 'user') {
     rawNode(nodeId)
     assertCaseKind(kind)
+    assertReportStatus(status)
+    assertReportRefs(nodeId, { caseId, runId })
     const ts = now()
     const info = db
       .prepare(
@@ -961,19 +997,42 @@ export function createStore(db, options = {}) {
     return testReportVO(r)
   }
 
-  /** 回写报告终态（agent 任务结束 / 前台执行者回写时调用）；status=running 表示仍在进行 */
-  function finishTestReport(id, { status, summary = undefined, detail = undefined, runId = undefined } = {}, by = 'user') {
+  /**
+   * 回写报告状态（agent 任务结束 / 前台执行者回写时调用）。
+   *
+   * 状态机（与 features/regression-loop/design.md 一致）：
+   *   - running → 终态：允许（单向推进）；
+   *   - 终态 → 同状态：幂等（只更新摘要/细节，不改 finished_at）；
+   *   - 终态 → 其它状态（含回退到 running）：默认拒绝 VALIDATION_FAILED，需显式 overwrite:true。
+   */
+  function finishTestReport(id, { status, summary = undefined, detail = undefined, runId = undefined, overwrite = false } = {}, by = 'user') {
     const cur = db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(id))
     if (!cur) throw new AppError(CODES.NOT_FOUND, `测试报告 ${id} 不存在`, { id })
+    if (status != null) assertReportStatus(status)
+    if (runId !== undefined && runId !== null) {
+      if (!db.prepare('SELECT id FROM agent_runs WHERE id = ?').get(Number(runId))) {
+        throw new AppError(CODES.NOT_FOUND, `agent 任务 ${runId} 不存在`, { runId: Number(runId) })
+      }
+    }
+    const nextStatus = status || cur.status
+    const curTerminal = TERMINAL_REPORT_STATUSES.has(cur.status)
+    if (curTerminal && nextStatus !== cur.status && !overwrite) {
+      throw new AppError(
+        CODES.REPORT_STATUS_IMMUTABLE,
+        `报告已处于终态 ${cur.status}，不能改为 ${nextStatus}（如需强制覆盖请显式 overwrite:true）`,
+        { id: Number(id), current: cur.status, next: nextStatus }
+      )
+    }
     const ts = now()
     db.prepare(
       'UPDATE test_reports SET status = ?, summary = ?, detail = ?, run_id = ?, finished_at = ?, updated_at = ?, created_by = ? WHERE id = ?'
     ).run(
-      status || cur.status,
+      nextStatus,
       summary !== undefined ? summary : cur.summary,
       detail !== undefined ? detail : cur.detail,
       runId !== undefined ? runId : cur.run_id,
-      status && status !== 'running' ? ts : cur.finished_at,
+      // 终态重复提交同状态时保留原 finished_at（幂等）；首次进入终态才写入
+      nextStatus === 'running' ? null : curTerminal ? cur.finished_at || ts : ts,
       ts,
       actor(by),
       Number(id)
@@ -985,6 +1044,11 @@ export function createStore(db, options = {}) {
   /**
    * 验收报告聚合：把节点（含可选子树）下的用例与报告汇总成一个可读结构 ——
    * 每个用例的最近一次结果 + 总体通过率 + 未覆盖用例清单。
+   *
+   * 分桶口径（总数守恒，见 features/regression-loop/design.md §2「验收分桶」）：
+   *   pass + fail + blocked + error + cancelled + running + notRun = cases
+   * `running`（已派单未回写）与 `notRun`（从未派单）都不计入通过率分母；
+   * 通过率 = pass / (pass + fail + blocked + error + cancelled)，即「已完结」口径。
    */
   function buildAcceptanceReport(nodeId, { scope = 'self' } = {}) {
     const root = rawNode(nodeId)
@@ -1010,20 +1074,31 @@ export function createStore(db, options = {}) {
         latestAt: latest ? latest.updatedAt : null
       }
     })
-    const ran = items.filter((i) => i.latestStatus !== 'not_run')
-    const passed = items.filter((i) => i.latestStatus === 'pass')
+    const count = (s) => items.filter((i) => i.latestStatus === s).length
+    const pass = count('pass')
+    const fail = count('fail')
+    const blocked = count('blocked')
+    const error = count('error')
+    const cancelled = count('cancelled')
+    const running = count('running')
+    const notRun = count('not_run')
+    // 已完结（有终态结论）= 通过率分母；running / notRun 都不计
+    const settled = pass + fail + blocked + error + cancelled
     return {
       node: { id: root.id, name: root.name, type: root.type },
       scope,
       totals: {
         cases: items.length,
-        run: ran.length,
-        pass: passed.length,
-        fail: items.filter((i) => i.latestStatus === 'fail').length,
-        blocked: items.filter((i) => i.latestStatus === 'blocked' || i.latestStatus === 'error').length,
-        notRun: items.length - ran.length
+        settled,
+        pass,
+        fail,
+        blocked,
+        error,
+        cancelled,
+        running,
+        notRun
       },
-      passRate: ran.length ? Math.round((passed.length / ran.length) * 1000) / 1000 : null,
+      passRate: settled ? Math.round((pass / settled) * 1000) / 1000 : null,
       items,
       reports: reports.slice(0, 20)
     }

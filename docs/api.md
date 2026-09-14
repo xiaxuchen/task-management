@@ -300,15 +300,22 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
   -H 'content-type: application/json' -d '{"kind":"regression"}'
 
 # 任务跑完后回写报告终态（前台执行者 / 收尾钩子调用）
+# running → 终态单向；终态重复提交同状态幂等；终态互转默认 409，需显式 overwrite:true
 curl -s -X PATCH http://127.0.0.1:3210/api/test-reports/3 \
   -H 'content-type: application/json' \
   -d '{"status":"pass","summary":"17/17 全绿","detail":"npm test 输出见 run 7"}'
+
+# 幂等重放（同状态）不报错；若要纠正误判（终态互转）显式覆盖
+curl -s -X PATCH http://127.0.0.1:3210/api/test-reports/3 \
+  -H 'content-type: application/json' -d '{"status":"pass","summary":"复跑仍全绿"}'
+curl -s -X PATCH http://127.0.0.1:3210/api/test-reports/3 \
+  -H 'content-type: application/json' -d '{"status":"fail","overwrite":true,"summary":"验收纠正"}'
 
 # 报告列表 / 单条
 curl -s 'http://127.0.0.1:3210/api/nodes/1/test-reports?limit=20'
 curl -s http://127.0.0.1:3210/api/test-reports/3
 
-# 验收报告：聚合最近结果与通过率；format=md 可直接贴 issue / MR
+# 验收报告：聚合最近结果与通过率；分桶守恒，running/notRun 不计入分母；format=md 可直接贴 issue / MR
 curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?scope=subtree'
 curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?format=md'
 ```
@@ -357,6 +364,7 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-checks \
 | 404 | `NOT_FOUND` / `PATH_NOT_FOUND` | 资源或路径不存在 |
 | 409 | `PATH_AMBIGUOUS` / `DOC_NAME_EXISTS` / `WORKTREE_PATH_EXISTS` | 路径歧义 / 文档重名 / worktree 占用 |
 | 409 | `TEST_CASE_NAME_EXISTS` | 同节点测试用例重名 |
+| 409 | `REPORT_STATUS_IMMUTABLE` | 报告终态互转 / 回退 running（`details` 带 current/next；`overwrite:true` 可覆盖） |
 | 409 | `RELEASE_ITEM_NAME_EXISTS` | 同节点上线项重名（upsert 走幂等覆盖，不报错）|
 | 500 | `GIT_UNAVAILABLE` / `GIT_FAILED` | 本机 git 不可用 / 命令失败（`details` 带 stderr）|
 | 502 | `GITLAB_AUTH_FAILED` / `GITLAB_PROJECT_NOT_FOUND` / `GITLAB_UNAVAILABLE` | token 无效 / 项目路径错 / 网络异常 |

@@ -134,7 +134,7 @@ test('test_report：删除用例后历史报告保留，caseId 置空', async (t
 
 // ---------- acceptance report ----------
 
-test('acceptance：聚合最近结果与通过率（未执行口径）', async (t) => {
+test('acceptance：聚合最近结果与通过率（已完结口径，分桶守恒）', async (t) => {
   const { tmp, store, task } = await setup()
   t.after(() => tmp.cleanup())
   const a = store.createTestCase(task.id, { name: 'A', prompt: 'p', expectation: 'e' })
@@ -150,10 +150,16 @@ test('acceptance：聚合最近结果与通过率（未执行口径）', async (
 
   const report = store.buildAcceptanceReport(task.id)
   assert.equal(report.totals.cases, 3)
-  assert.equal(report.totals.run, 2)
+  assert.equal(report.totals.settled, 2)
   assert.equal(report.totals.pass, 1)
   assert.equal(report.totals.fail, 1)
+  assert.equal(report.totals.running, 0)
   assert.equal(report.totals.notRun, 1)
+  assert.equal(
+    report.totals.pass + report.totals.fail + report.totals.blocked + report.totals.error +
+      report.totals.cancelled + report.totals.running + report.totals.notRun,
+    report.totals.cases
+  )
   assert.equal(report.passRate, 0.5)
   const itemA = report.items.find((i) => i.caseId === a.id)
   assert.equal(itemA.latestStatus, 'pass')
@@ -225,4 +231,121 @@ test('renderAcceptanceMd：输出可读验收报告', async (t) => {
   assert.ok(md.startsWith('# 验收报告'))
   assert.ok(md.includes('| A |'))
   assert.ok(md.includes('100%'))
+})
+
+// ---------- 回归：验收退回的缺陷 2 / 3 / 4（每条都能复现原问题） ----------
+
+test('缺陷2回归：非法 status 被应用层拦成 VALIDATION_FAILED，不泄漏 ERR_SQLITE_ERROR', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  // 原问题：createTestReport / finishTestReport 不校验 status，直接落 DB CHECK → ERR_SQLITE_ERROR
+  assert.throws(
+    () => store.createTestReport(task.id, { status: 'bogus' }),
+    (e) => e.code === 'VALIDATION_FAILED' && !String(e.message).includes('SQLITE')
+  )
+  const c = store.createTestCase(task.id, { name: 'A', prompt: 'p' })
+  const rep = store.createTestReport(task.id, { caseId: c.id })
+  assert.throws(
+    () => store.finishTestReport(rep.id, { status: 'bogus' }),
+    (e) => e.code === 'VALIDATION_FAILED' && !String(e.message).includes('SQLITE')
+  )
+})
+
+test('缺陷2回归：running→终态单向；终态同状态幂等且不改 finished_at；终态互转默认拒绝', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  const c = store.createTestCase(task.id, { name: 'A', prompt: 'p' })
+  const rep = store.createTestReport(task.id, { caseId: c.id })
+  assert.equal(rep.status, 'running')
+  assert.equal(rep.finishedAt, null)
+
+  // running → 终态：允许
+  const passed = store.finishTestReport(rep.id, { status: 'pass', summary: '第一次' })
+  assert.equal(passed.status, 'pass')
+  const firstFinishedAt = passed.finishedAt
+  assert.ok(firstFinishedAt)
+
+  // 终态 → 同状态：幂等（允许补摘要，finished_at 不变）
+  const again = store.finishTestReport(rep.id, { status: 'pass', summary: '复跑仍全绿' })
+  assert.equal(again.status, 'pass')
+  assert.equal(again.summary, '复跑仍全绿')
+  assert.equal(again.finishedAt, firstFinishedAt)
+
+  // 终态 → 其它状态（含回退 running）：默认拒绝
+  assert.throws(() => store.finishTestReport(rep.id, { status: 'fail' }), /REPORT_STATUS_IMMUTABLE/)
+  assert.throws(() => store.finishTestReport(rep.id, { status: 'running' }), /REPORT_STATUS_IMMUTABLE/)
+
+  // 显式 overwrite：允许纠正
+  const corrected = store.finishTestReport(rep.id, { status: 'fail', overwrite: true, summary: '验收纠正' })
+  assert.equal(corrected.status, 'fail')
+  assert.equal(corrected.summary, '验收纠正')
+})
+
+test('缺陷3回归：验收分桶总数守恒，running 单列且不计入通过率分母', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  // 5 个用例分别处于 pass / fail / blocked / error / cancelled —— 原问题：cancelled 从明细消失、分桶不守恒
+  const mk = (name, final) => {
+    const c = store.createTestCase(task.id, { name, prompt: 'p' })
+    const r = store.createTestReport(task.id, { caseId: c.id })
+    store.finishTestReport(r.id, { status: final })
+    return c
+  }
+  mk('A', 'pass')
+  mk('B', 'fail')
+  mk('C', 'blocked')
+  mk('D', 'error')
+  mk('E', 'cancelled')
+  // 再加一个「已派单未回写」的 running 和一个未执行的
+  const runningCase = store.createTestCase(task.id, { name: 'F', prompt: 'p' })
+  store.createTestReport(task.id, { caseId: runningCase.id }) // 默认 running
+  store.createTestCase(task.id, { name: 'G', prompt: 'p' })
+
+  const report = store.buildAcceptanceReport(task.id)
+  const t2 = report.totals
+  assert.equal(t2.cases, 7)
+  assert.equal(t2.pass, 1)
+  assert.equal(t2.fail, 1)
+  assert.equal(t2.blocked, 1)
+  assert.equal(t2.error, 1)
+  assert.equal(t2.cancelled, 1)
+  assert.equal(t2.running, 1)
+  assert.equal(t2.notRun, 1)
+  // 总数守恒（原问题：pass+fail+blocked ≠ run）
+  const sum = t2.pass + t2.fail + t2.blocked + t2.error + t2.cancelled + t2.running + t2.notRun
+  assert.equal(sum, t2.cases)
+  // 分母 = 五种终态之和，running / notRun 不计入
+  assert.equal(t2.settled, 5)
+  assert.equal(report.passRate, 0.2)
+})
+
+test('缺陷3回归：刚派单（全 running）时通过率为 null，而不是 0', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  const c = store.createTestCase(task.id, { name: 'A', prompt: 'p' })
+  store.createTestReport(task.id, { caseId: c.id }) // running
+  const report = store.buildAcceptanceReport(task.id)
+  assert.equal(report.totals.running, 1)
+  assert.equal(report.totals.settled, 0)
+  assert.equal(report.passRate, null)
+})
+
+test('缺陷4回归：报告的 caseId 必须属于同节点；runId 必须存在', async (t) => {
+  const { tmp, store, s, task } = await setup()
+  t.after(() => tmp.cleanup())
+  // 原问题：跨节点的用例 id 被静默接受，破坏「用例-报告同节点」
+  const otherCase = store.createTestCase(s.id, { name: '别的节点的用例', prompt: 'p' })
+  assert.throws(
+    () => store.createTestReport(task.id, { caseId: otherCase.id }),
+    (e) => e.code === 'VALIDATION_FAILED' && /不属于节点/.test(e.message)
+  )
+  // 不存在的 runId：NOT_FOUND，而不是外键报 ERR_SQLITE_ERROR
+  const mine = store.createTestCase(task.id, { name: '本节点用例', prompt: 'p' })
+  assert.throws(
+    () => store.createTestReport(task.id, { caseId: mine.id, runId: 999999 }),
+    (e) => e.code === 'NOT_FOUND' && !String(e.message).includes('SQLITE')
+  )
+  // 本节点用例 + 合法（不传 runId）仍可开报告
+  const ok = store.createTestReport(task.id, { caseId: mine.id })
+  assert.equal(ok.caseId, mine.id)
 })

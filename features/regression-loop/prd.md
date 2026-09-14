@@ -19,7 +19,9 @@
 - R4 按名 `upsert` 幂等（AI 友好，与文档 upsert 语义一致）：已存在则更新内容与期望，返回 `created` 标记。
 - R5 执行：把选中用例拼成一段可执行提示词，派单到该节点（复用 agent 运行时 / 会话 / 任务），并立刻为每条用例开一条 `running` 报告；`dryRun` 只返回将要执行的用例与提示词，不落库、不派单。
 - R6 报告：一次执行 = 一行，状态 `running / pass / fail / blocked / error / cancelled`，可关联用例（`case_id`）与 agent 任务（`run_id`）。
-- R7 验收报告：按节点（`self` 或 `subtree`）聚合每个用例的**最近一次结果**、通过率（已执行口径）与未覆盖清单；支持 `format=md` 直接贴进 issue / MR。
+- R7 验收报告：按节点（`self` 或 `subtree`）聚合每个用例的**最近一次结果**、通过率与未覆盖清单；分桶**总数守恒**（`pass+fail+blocked+error+cancelled+running+notRun=cases`），`running` / `notRun` 不计入通过率分母（`settled` 口径）；支持 `format=md` 直接贴进 issue / MR。
+- R7b 报告状态机：`running → 终态` 单向；终态重复提交同状态幂等；终态互转 / 回退 `running` 默认拒绝（`REPORT_STATUS_IMMUTABLE`），`overwrite:true` 显式覆盖；非法 `status` 应用层拦成 `VALIDATION_FAILED`。
+- R7c 引用完整性：报告 `caseId` 必须与节点同属，`runId` 必须存在（否则 `VALIDATION_FAILED` / `NOT_FOUND`）。
 - R8 审计：所有写入 `revision` +1，并记录 `created_by` / `updated_by`（user / ai / cli / import / mcp）。
 
 ## 3. 非目标（首版）

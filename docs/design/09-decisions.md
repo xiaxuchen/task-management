@@ -31,4 +31,5 @@
 | 24 | 工作单元支持多仓库 | `unit_repos`（node × repo：branch + worktree_path），一条分支名覆盖多仓库 |
 | 25 | 回归测试闭环用 `test_cases` + `test_reports` 两表 | 用例（可被 AI 重复执行的测试指令）与报告（一次执行 = 一行）分离；验收报告不落表，按节点聚合用例的**最近一次**结果。`kind` 作为统一扩展轴：v1 实现 regression / acceptance，预留 code_check / biz_check / release_check，后续接入上线配置 / 上线 SQL / 代码检查 / 业务检查时只加用例与检查器，不改表结构与入口 |
 | 26 | 测试执行复用 agent 运行时，不新建执行器 | `runTestCases` 只做「拼提示词 → `startAgentRun` 派单 → 开 running 报告」，不阻塞等结果；任务结束后由前台执行者 / 收尾钩子 `test_report_finish` 回写终态。后台（qodercli）与前台（Qoder IDE ideMode）走同一条链路 |
-| 27 | 验收通过率以「已执行用例」为分母 | 未执行单列 `notRun`，避免「没跑 = 失败」误导；无用例 / 无执行时 `passRate = null` 而非 0 |
+| 27 | 验收通过率以「已完结用例」为分母 | 分桶总数守恒（`pass+fail+blocked+error+cancelled+running+notRun=cases`）；`running`（已派单未回写）与 `notRun`（从未派单）都不计入分母，`settled` = 五种终态之和；`error`/`cancelled` 从 `blocked` 拆出单列；无完结时 `passRate = null` 而非 0（避免「已派单/没跑 = 未通过」压低结论） |
+| 28 | 报告状态机由应用层强制（不只靠 DB CHECK） | `running → 终态` 单向；终态重复提交同状态幂等（只更新摘要，`finished_at` 不变）；终态互转 / 回退 running 默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），需显式 `overwrite:true`；非法 status 拦成 `VALIDATION_FAILED`（不把 DB CHECK 错误当 500 泄漏外部）。同时 `createTestReport` 校验 `caseId` 同节点、`runId` 存在，保证引用完整性 |
