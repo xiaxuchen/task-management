@@ -685,7 +685,7 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'test_run',
-    '派单执行回归测试用例：把选中用例拼成提示词交给 agent 运行时执行，并为每条用例开一条 running 报告。dryRun 只返回将要执行的用例与提示词',
+    '派单执行回归测试用例，并为每条用例开一条 running 报告。缺省 grouped：把选中用例拼成一段提示词派一个 agent 任务；fanout=true：每条用例派独立 agent 任务（并行），maxParallel 设并行护栏（缺省 4，上限 16）。dryRun 只返回将要执行的用例与提示词',
     {
       node: z.union([z.number(), z.string()]),
       caseIds: z.array(z.number()).optional(),
@@ -694,13 +694,32 @@ export function createMcpServer({ store }) {
       agent: z.string().optional(),
       model: z.string().optional(),
       cwd: z.string().optional(),
-      dryRun: z.boolean().optional()
+      dryRun: z.boolean().optional(),
+      fanout: z.boolean().optional(),
+      maxParallel: z.number().optional()
     },
-    async ({ node, caseIds, kind, prompt, agent, model, cwd, dryRun }) => {
+    // 业务错误（如 fan-out 护栏超限 / maxParallel 值域）走 isError + 稳定错误码，
+    // 不把异常直接抛回 SDK（与其它门禁 / 聚合工具同一口径）。
+    mcpValidate(async ({ node, caseIds, kind, prompt, agent, model, cwd, dryRun, fanout, maxParallel }) => {
       const n = store.resolveRef(String(node))
-      const out = runTestCases(store, n.id, { caseIds: caseIds || null, kind: kind || null, prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun }, 'mcp')
+      const out = runTestCases(
+        store,
+        n.id,
+        {
+          caseIds: caseIds || null,
+          kind: kind || null,
+          prompt: prompt || null,
+          agent,
+          model,
+          cwd,
+          dryRun: !!dryRun,
+          fanout: !!fanout,
+          maxParallel: maxParallel != null ? maxParallel : null
+        },
+        'mcp'
+      )
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
-    }
+    })
   )
 
   server.tool(

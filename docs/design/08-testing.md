@@ -17,6 +17,7 @@
   - `unit`：分支命名规则（`{base_branch}-{slug}` 与 slug 兜底 `n{id}`）、建分支 / worktree 幂等、清理默认保留、开发提示词内容
   - `test-case`：测试用例 CRUD / 按名唯一与 upsert 幂等 / `kind` 筛选 / 启停 / 排序 / 级联删除；报告开启与终态回写 / 历史保留；验收报告聚合（最近结果 / 通过率 / 未执行口径 / `scope=subtree` / 空态）；编排层 `dryRun` 与提示词拼装
   - `cli-regression-loop`：真实 CLI 子进程跑参数契约（`--enabled` / `--run-id` / `--overwrite`）与错误码
+  - `test-fanout`：并行派单（`runTestCases` 的 fanout 分支）——缺省 grouped 行为逐字节不变（单 run + N 报告）；fan-out 每用例一个独立 run / 报告 / 提示词（run 提示词不含其它用例）；`maxParallel` 护栏超限**显式拒绝且未留 running 任务 / 报告**（防「假执行中」）、值域 1..16 与缺省 4；`dryRun` 不落库不动 revision；`caseIds` / `kind` 过滤；收尾时每条报告只认自己 run 的结论（一条 fail 不影响另一条 pass）、取消一条只收尾它自己；报告挂回用例所属节点且验收口径不变；HTTP body 与 MCP schema 字段 1:1（MCP 业务错误走 `isError + VALIDATION_FAILED`）；进程级真实 CLI `test run --fanout` 等全部 run 终态并各自回写
   - 回归防护：每条缺陷修复都配一条「在旧实现上会失败」的 UT（`test-case.test.mjs` 缺陷 2/3/4、`http.test.mjs` 缺陷 1/2/3/5、`cli-regression-loop.test.mjs` 缺陷 5）
   - `release-item`：上线项 CRUD / 按名唯一与 upsert 幂等 / `kind` 与 `status` 筛选 / `includeOptional` / 排序 / 级联删除 / revision 语义；上线检查清单聚合（就绪结论 / 阻塞项 / 无必做项 `ready=null` / `scope=subtree` / `blocked` 与 `skipped` 计数）；编排层 `dryRun`（只挑 `code_check`/`biz_check`/`release_check` 用例、`caseIds` 过滤、`scope=subtree`）与 markdown 渲染
   - `readiness`：需求就绪门禁三条门禁各自独立判定（预置空文档不算通过 / 空白正文不算 / 停用用例与 `code_check` 不算可回归 / `acceptance` 算）；`scope=subtree` 汇总与逐单元结论、阻塞项；非需求类型 `scope=self` 拒绝并提示 `subtree`；**纯读聚合不产生 revision**；markdown 渲染

@@ -40,3 +40,5 @@
 | 33 | 交付门禁复用三段既有聚合，不落表 | 交付结论 = 需求就绪 + 测试验收 + 上线治理的**只读汇总**；每个来源是三态（`pass` / `fail` / `not_applicable`），最终为 `ready` / `not_ready` / `unknown`。不适用不等于通过，全部不适用时 `ready=null` 而非绿灯；`acceptance` 的 `running` / `notRun` 也不算交付证据。落表会产生第二份真相，因此与 `acceptance_report` / `readiness` 同样纯读、不 bump revision |
 | 34 | 停用用例不参与交付门禁 | `buildAcceptanceReport` / `buildDeliveryGate` 只聚合 `enabled=1` 的用例，与 readiness 口径一致；否则停用历史用例会永远以 `notRun` 阻塞交付，而执行链默认不会选它。删除停用用例不得改变门禁结论 |
 | 35 | `format` 参数禁止静默降级 | 与 `scope` 同一条纪律：`json\|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；三入口统一由 `store.normalizeFormat` 校验，MCP 将业务错误转为 `isError` 文本而不是泄漏 SDK `-32602`。markdown 渲染器必须转义表格单元格中的 `\|` 与换行 |
+| 36 | 回归派单的并行是显式开关，不是缺省行为 | `runTestCases` 是三入口共用的既有能力，`delivery-gate` / `acceptance` 依赖它落下的报告。缺省改 fan-out 会同时改变 run 数量、CLI 等待语义与下游脚本行为；因此并行只在 `fanout=true` 时生效（每条用例一个独立任务：真并行 + 独立输出 + 可单独取消 / 重试），缺省 `grouped` 逐字节保持 |
+| 37 | fan-out 护栏超限「显式拒绝」而非静默截断 | 本机执行器没有排队调度器——`startAgentRun` 立即 spawn。若把超出的用例截掉，它们的报告仍会建成 `running` 却永远不会执行（假执行中），且无人补救。`maxParallel`（缺省 4、上限 16）超限一律 `VALIDATION_FAILED` 并带 `selected` / `maxParallel` / `limit`，让调用方自己收窄 `caseIds`，与 `scope` / `format` 同一条「禁止静默降级」纪律。真正的「选 100 条、并发 4」需要任务队列，不是提高上限 |
