@@ -301,6 +301,17 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
 curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
   -H 'content-type: application/json' -d '{"kind":"regression"}'
 
+# 并行派单（fan-out）：每条用例派一个独立 agent 任务，返回 {runs, reports, tasks}；
+# maxParallel 设并行护栏（缺省 4，上限 16），选中数超过护栏返回 400 VALIDATION_FAILED（不静默截断）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
+  -H 'content-type: application/json' -d '{"kind":"regression","fanout":true,"maxParallel":4}'
+```
+
+> **两种派单模式**：缺省 `grouped` 把选中用例拼成一段提示词、派一个 agent 任务、共用一条 run（向后兼容）；
+> `fanout:true` 每条用例一个独立任务（真并行、独立提示词、独立输出），报告与任务一一对应，
+> 可单独 `cancel` / `retry`；`dryRun` 在两种模式下都只回报将派的任务与提示词，不落库不动 revision。
+
+```bash
 # 任务跑完后回写报告终态（前台执行者 / 收尾钩子调用）
 # running → 终态单向；终态重复提交同状态幂等；终态互转默认 409，需显式 overwrite:true
 curl -s -X PATCH http://127.0.0.1:3210/api/test-reports/3 \

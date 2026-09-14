@@ -222,6 +222,37 @@ test('进程级：CLI release check 非 dry-run 收尾到终态并回写检查�
   assert.equal(parsed.reports[0].status, 'pass')
 })
 
+test('进程级：CLI test run --fanout 每条用例一个独立任务，各自收尾到自己的结论', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  // 两条独立任务各自跑同一个脚本：报告按自己的用例名取结论，
+  // 证明 fan-out 下每条报告只认自己那条结论，不会被另一条带偏。
+  const script = makeAgentScript(t, 'echo "用例A: PASS - 全绿"\necho "用例B: FAIL - 断言挂了"')
+  store.createTestCase(task.id, { name: '用例A', prompt: '跑 A' })
+  store.createTestCase(task.id, { name: '用例B', prompt: '跑 B' })
+  store.db.close()
+
+  const out = await execFileP(process.execPath, [
+    path.resolve(import.meta.dirname, '../bin/taskboard.js'),
+    'test', 'run', 'P/R/S/T',
+    '--agent', script,
+    '--cwd', path.dirname(script),
+    '--fanout'
+  ], { env: { ...process.env, TASKBOARD_HOME: tmp.dir }, encoding: 'utf8' })
+
+  const parsed = JSON.parse(out.stdout)
+  assert.equal(parsed.mode, 'fanout')
+  assert.equal(parsed.waited, true)
+  assert.equal(parsed.runs.length, 2, '两条用例各派一个任务')
+  assert.equal(parsed.reports.length, 2)
+  assert.ok(parsed.runs.every((r) => r.status === 'success'))
+  // 每个 run 只带自己的用例名：fan-out 确实拆开了提示词
+  assert.ok(parsed.runs.every((r) => (r.prompt.match(/用例\d/g) || []).length <= 1))
+  assert.equal(parsed.reports.filter((r) => r.status === 'pass').length, 1)
+  assert.equal(parsed.reports.filter((r) => r.status === 'fail').length, 1)
+  assert.ok(parsed.reports.every((r) => r.autoFinalized === true))
+})
+
 test('进程级：CLI --no-wait 保留只派单语义（立即返回 running）', async (t) => {
   const { tmp, store, task } = await setup()
   t.after(() => tmp.cleanup())
