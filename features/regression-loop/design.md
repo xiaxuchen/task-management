@@ -35,12 +35,17 @@ agent 任务结束后由前台执行者（或后续收尾钩子）用 `test_repo
 |---|---|---|
 | `running` | 任一终态（`pass` / `fail` / `blocked` / `error` / `cancelled`） | 允许，写入 `finished_at` |
 | 任一终态 | **同**一状态（重复提交） | 幂等：只更新 `summary` / `detail` / `run_id`，**不改** `finished_at` |
-| 任一终态 | 其它状态（含回退 `running`） | 默认**拒绝**：400/409 `REPORT_STATUS_IMMUTABLE`（`details` 带 current / next） |
-| 任一终态 | 其它状态 + 显式 `overwrite:true` | 允许显式覆盖（纠正误判用） |
+| 任一终态 | 其它状态（含回退 `running`） | 默认**拒绝**：409 `REPORT_STATUS_IMMUTABLE`（`details` 带 current / next） |
+| 任一终态 | 其它状态 + 显式 `overwrite:true` | 允许显式覆盖（纠正误判用）；`finished_at` 归属见下 |
 | 自动收尾的终态（`auto_finalized=1`） | 其它状态 | **允许**：自动结论只是机器兜底，人工确认无需 `overwrite`；改完清除 `auto_finalized`，之后归人所有 |
 | `running` | `running` | 允许（刷新摘要，仍在执行） |
 
 非法 `status` 一律在应用层拦截为 `VALIDATION_FAILED`，**不**落到 DB CHECK 约束（避免泄漏 `ERR_SQLITE_ERROR`）。
+
+**R5.0 `overwrite` 时 `finished_at` 的归属**：`overwrite` 只改「判定结论」，不改「真实的完成时刻」。
+终态 → 另一终态时**保留**原 `finished_at`（不刷新、不置空）；终态 → `running` 则**清空** `finished_at`
+（回到执行中，尚无完成时刻）；`running` → 终态才写入新的 `finished_at`。
+终态重复提交同状态本就不改 `finished_at`（幂等），`overwrite` 亦不重置。
 
 **R5.1 派单自动收尾**：`runTestCases` / `runReleaseChecks` 派单后只开 `running` 报告；
 任务落终态时 `finishAgentRun` / `cancelAgentRun` 会调用 `finalizeReportsForRun` 扫该 run 下仍 `running` 的报告并收尾，
@@ -74,7 +79,8 @@ CLI `test case upsert|update --enabled true|false`、`test report finish --run-i
 - `runTestCases(store, nodeId, …)` 的第一个参数是 **store**，不是 node；三入口装配时别传错
   （HTTP / MCP / CLI 各有一处）；传错时 `dryRun` 会返回 `undefined` 而不是对象。
 - 报告状态机只有「running → 终态」的语义约束，未在 DB 设触发器；
-  `finishTestReport` 允许改回 running（极少用），以保证前台回写幂等。
+  该约束由 `finishTestReport` 在应用层强制：终态互转 / 回退 `running` 默认拒绝 `REPORT_STATUS_IMMUTABLE`，
+  放行有且仅有两条：显式 `overwrite:true`，或该终态来自自动收尾（`auto_finalized=1`，人工改正机器兜底结论，见 R5 表格）。
 - `runTestCases` 需要节点子树内有带本地路径的登记仓库才能真派单；
   纯用例管理（upsert / dryRun / acceptance）不依赖仓库，可在任意节点使用。
 - **CLI 非 dry-run 必须等收尾**：`bin/taskboard.js` 在 `run()` resolve 后直接 `process.exit()`，
