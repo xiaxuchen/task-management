@@ -527,7 +527,7 @@ export function createApp({ store }) {
       const node = store.resolveRef(refOf(req))
       // scope 原样透传，由 store.normalizeScope 统一做值域校验（非法值报错，不静默降级 self）
       const report = store.buildAcceptanceReport(node.id, { scope: req.query.scope })
-      if (req.query.format === 'md') {
+      if (store.normalizeFormat(req.query.format) === 'md') {
         res.type('text/markdown').send(renderAcceptanceMd(report))
         return
       }
@@ -543,7 +543,7 @@ export function createApp({ store }) {
       const readiness = store.buildRequirementReadiness(node.id, {
         scope: req.query.scope
       })
-      if (req.query.format === 'md') {
+      if (store.normalizeFormat(req.query.format) === 'md') {
         res.type('text/markdown').send(renderReadinessMd(readiness))
         return
       }
@@ -559,7 +559,7 @@ export function createApp({ store }) {
       const gate = store.buildDeliveryGate(node.id, {
         scope: req.query.scope
       })
-      if (req.query.format === 'md') {
+      if (store.normalizeFormat(req.query.format) === 'md') {
         res.type('text/markdown').send(renderDeliveryGateMd(gate))
         return
       }
@@ -661,7 +661,7 @@ export function createApp({ store }) {
       const checklist = store.buildReleaseChecklist(node.id, {
         scope: req.query.scope
       })
-      if (req.query.format === 'md') {
+      if (store.normalizeFormat(req.query.format) === 'md') {
         res.type('text/markdown').send(renderReleaseChecklistMd(checklist))
         return
       }

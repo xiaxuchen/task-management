@@ -50,9 +50,38 @@ test('delivery_gate：需求已就绪但测试尚未执行时不可交付', asyn
   assert.equal(sourceOf(gate, 'readiness').status, 'pass')
   assert.equal(sourceOf(gate, 'acceptance').status, 'fail')
   assert.equal(sourceOf(gate, 'release').status, 'not_applicable')
+  assert.equal(sourceOf(gate, 'acceptance').evidence.totals.notRun, 1)
+  assert.equal(sourceOf(gate, 'acceptance').evidence.items[0].latestStatus, 'not_run')
   assert.equal(gate.blockers.length, 1)
   assert.equal(gate.blockers[0].name, testCase.name)
-  assert.match(gate.blockers[0].detail, /not_run/)
+  assert.equal(gate.blockers[0].detail, '最近结果：not_run')
+})
+
+test('delivery_gate：running 也明确阻塞交付，并带 blocker 明细', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  store.createTestReport(r.id, { caseId: testCase.id, status: 'running', kind: 'regression' })
+  const gate = store.buildDeliveryGate(r.id)
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(sourceOf(gate, 'acceptance').status, 'fail')
+  assert.equal(sourceOf(gate, 'acceptance').evidence.totals.running, 1)
+  assert.equal(sourceOf(gate, 'acceptance').evidence.items[0].latestStatus, 'running')
+  assert.deepEqual(gate.blockers.map((b) => [b.source, b.name, b.detail]), [['acceptance', testCase.name, '最近结果：running']])
+})
+
+test('acceptance / delivery_gate：停用用例不参与门禁，与 readiness 口径一致', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  const disabled = store.createTestCase(r.id, { name: '已停用用例', prompt: 'p', enabled: 0 })
+  makeAcceptancePass(store, r.id, testCase.id)
+
+  const acceptance = store.buildAcceptanceReport(r.id)
+  assert.equal(acceptance.totals.cases, 1)
+  assert.equal(acceptance.totals.notRun, 0)
+  assert.ok(!acceptance.items.some((i) => i.caseId === disabled.id))
+  assert.equal(store.buildDeliveryGate(r.id).decision, 'ready')
 })
 
 test('delivery_gate：三段全部通过才可交付；不适用项不阻塞', async (t) => {
@@ -121,6 +150,33 @@ test('delivery_gate：markdown 渲染含最终结论与阻塞项', async (t) => 
   assert.match(md, /不可交付/)
   assert.match(md, /## 阻塞项/)
   assert.match(md, /回归用例/)
+})
+
+test('delivery_gate：markdown 表格转义 | 与换行，避免撑破列', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  makeReadinessPass(store, r.id)
+  const tricky = store.createTestCase(r.id, { name: '用例|含竖线\n换行', prompt: 'p', enabled: 1 })
+  const gate = store.buildDeliveryGate(r.id)
+  const { renderDeliveryGateMd } = await import('../server/ops.mjs')
+  const md = renderDeliveryGateMd(gate)
+  assert.ok(tricky.id > 0)
+  assert.ok(md.includes('用例\\|含竖线 换行'))
+  const row = md.split('\n').find((line) => line.includes('用例\\|含竖线'))
+  assert.ok(row.endsWith(' |'))
+  assert.ok(!row.includes('用例|含竖线'))
+})
+
+test('format：缺省/合法值通过，非法值 VALIDATION_FAILED', async (t) => {
+  const { tmp, store } = await setup()
+  t.after(() => tmp.cleanup())
+  assert.equal(store.normalizeFormat(undefined), 'json')
+  assert.equal(store.normalizeFormat(null), 'json')
+  assert.equal(store.normalizeFormat('json'), 'json')
+  assert.equal(store.normalizeFormat('md'), 'md')
+  for (const bad of ['xml', 'markdown', '', ' ']) {
+    assert.throws(() => store.normalizeFormat(bad), /VALIDATION_FAILED/)
+  }
 })
 
 test('delivery_gate：登记进能力清单（MCP / CLI / REST 1:1 的发现入口）', async () => {

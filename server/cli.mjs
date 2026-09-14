@@ -429,7 +429,7 @@ export async function run(argv) {
     case 'test acceptance': {
       const node = store.resolveRef(ref)
       const report = store.buildAcceptanceReport(node.id, { scope: values.scope })
-      if (values.format === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
       else json(report)
       break
     }
@@ -439,7 +439,7 @@ export async function run(argv) {
       const readiness = store.buildRequirementReadiness(node.id, {
         scope: values.scope
       })
-      if (values.format === 'md') process.stdout.write(renderReadinessMd(readiness) + '\n')
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderReadinessMd(readiness) + '\n')
       else json(readiness)
       break
     }
@@ -449,7 +449,7 @@ export async function run(argv) {
       const gate = store.buildDeliveryGate(node.id, {
         scope: values.scope
       })
-      if (values.format === 'md') process.stdout.write(renderDeliveryGateMd(gate) + '\n')
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderDeliveryGateMd(gate) + '\n')
       else json(gate)
       break
     }
@@ -509,7 +509,7 @@ export async function run(argv) {
     case 'release checklist': {
       const node = store.resolveRef(ref)
       const checklist = store.buildReleaseChecklist(node.id, { scope: values.scope })
-      if (values.format === 'md') process.stdout.write(renderReleaseChecklistMd(checklist) + '\n')
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderReleaseChecklistMd(checklist) + '\n')
       else json(checklist)
       break
     }

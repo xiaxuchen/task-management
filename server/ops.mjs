@@ -954,6 +954,12 @@ export function renderReadinessMd(readiness) {
  * 与 renderReadinessMd / renderAcceptanceMd / renderReleaseChecklistMd 同风格。
  */
 export function renderDeliveryGateMd(gate) {
+  // 用例名 / 阻塞项可能来自 AI 或用户输入；进入 markdown 表格前必须转义，
+  // 否则 `|` 会多分一列、换行会直接截断表格。
+  const cell = (v) =>
+    String(v == null ? '' : v)
+      .replace(/\|/g, '\\|')
+      .replace(/\r?\n/g, ' ')
   const t = gate.totals
   const statusLabels = { pass: '通过', fail: '未通过', not_applicable: '不适用' }
   const decisionText = {
@@ -974,11 +980,11 @@ export function renderDeliveryGateMd(gate) {
     '|---|---|---|'
   ]
   for (const s of gate.sources) {
-    lines.push(`| ${s.label} | ${statusLabels[s.status] || s.status} | ${s.detail} |`)
+    lines.push(`| ${cell(s.label)} | ${cell(statusLabels[s.status] || s.status)} | ${cell(s.detail)} |`)
   }
   if (gate.blockers.length > 0) {
     lines.push('', '## 阻塞项', '', '| 来源 | 阻塞项 | 说明 |', '|---|---|---|')
-    for (const b of gate.blockers) lines.push(`| ${b.label} | ${b.name} | ${b.detail} |`)
+    for (const b of gate.blockers) lines.push(`| ${cell(b.label)} | ${cell(b.name)} | ${cell(b.detail)} |`)
   }
   return lines.join('\n')
 }

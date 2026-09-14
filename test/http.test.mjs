@@ -818,7 +818,12 @@ test('交付门禁：全链路（需求就绪 → 测试未跑不可交付 → �
   assert.equal(gate.decision, 'not_ready')
   assert.equal(gate.sources.find((s) => s.key === 'readiness').status, 'pass')
   assert.equal(gate.sources.find((s) => s.key === 'acceptance').status, 'fail')
+  assert.equal(gate.sources.find((s) => s.key === 'acceptance').evidence.totals.notRun, 1)
+  assert.equal(gate.sources.find((s) => s.key === 'acceptance').evidence.items[0].latestStatus, 'not_run')
   assert.equal(gate.blockers.length, 1)
+  assert.deepEqual(gate.blockers.map((b) => [b.source, b.name, b.detail]), [
+    ['acceptance', '回归用例', '最近结果：not_run']
+  ])
 
   // 报告回写 pass 后，全链路可交付
   const report = store.createTestReport(r.id, { caseId: testCase.id })
@@ -845,6 +850,18 @@ test('交付门禁：没有任何证据时 unknown，不伪造成可交付', asy
   assert.equal(gate.decision, 'unknown')
   assert.equal(gate.ready, null)
   assert.equal(gate.totals.notApplicable, 3)
+  await close()
+  tmp.cleanup()
+})
+
+test('交付门禁：非法 scope / format 返回 400 VALIDATION_FAILED（HTTP 回归）', async () => {
+  const { tmp, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  for (const qs of ['scope=sub', 'format=xml', 'format=', 'scope=']) {
+    const res = await raw('GET', `/api/nodes/${p.id}/delivery-gate?${qs}`)
+    assert.equal(res.status, 400, qs)
+    assert.equal(res.body.error.code, 'VALIDATION_FAILED', qs)
+  }
   await close()
   tmp.cleanup()
 })

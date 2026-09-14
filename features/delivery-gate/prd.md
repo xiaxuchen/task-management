@@ -30,6 +30,7 @@ TaskBoard 已经有三个独立结论：
 - R5 `ready` 字段对 `unknown` 返回 `null`，避免把「没有证据」伪造成绿灯。
 - R6 返回 `sources`（三个来源及依据）、`blockers`（拆到条目级的阻塞项）、`totals`（适用 / 通过 / 未通过 / 不适用计数）。
 - R7 支持 `format=md`，可直接贴进 issue、验收记录或上线单。
+- R7a `scope` / `format` 都是枚举参数：`scope=self|subtree`、`format=json|md`；缺省分别取 `self` / `json`，其它值一律 `VALIDATION_FAILED`（三入口一致，不静默降级）。
 - R8 Web 抽屉新增「交付」页签：可切换 `self` / `subtree`，直接展示结论、来源与阻塞项。
 
 ## 3. 非目标（首版）
@@ -38,10 +39,12 @@ TaskBoard 已经有三个独立结论：
 - 不自动补需求文档、用例或上线项；只给结论与阻塞项。
 - 不替代验收报告 / 上线清单的明细接口；它是最终汇总入口，不是明细的唯一来源。
 - 不引入审批流或人工签核状态。
+- 停用测试用例不参与门禁：`enabled=0` 的用例既不算 notRun，也不阻塞交付（与 readiness 的「启用中的可回归用例」口径一致）。
 
 ## 4. 验收标准
 
-- `test/delivery-gate.test.mjs`：空证据 `unknown`；需求就绪但测试未执行 `not_ready`；三段通过 / 不适用不阻塞 `ready`；必做上线项未完成覆盖测试通过结论；`scope=subtree` 联动；纯读不产生 revision；markdown 渲染；能力清单登记。
+- `test/delivery-gate.test.mjs`：空证据 `unknown`；需求就绪但测试未执行 `not_ready`；`not_run` / `running` 显式分桶与 blocker 明细；三段通过 / 不适用不阻塞 `ready`；必做上线项未完成覆盖测试通过结论；停用用例不参与门禁；`scope=subtree` 联动；纯读不产生 revision；markdown 转义；能力清单登记。
+- `test/delivery-gate-mcp.test.mjs`：MCP 真实协议调用、`format=md`、非法 `scope` / `format` 拒绝、四入口逐字段一致。
 - `test/http.test.mjs`：全链路（需求就绪 → 测试未跑不可交付 → 报告 pass 后可交付）、`format=md`、空证据 `unknown`。
 - `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/04-api.md` + `docs/api.md`
   + `docs/design/06-ui.md` + `docs/design/08-testing.md` + `docs/design/09-decisions.md` + `features/README.md`）。

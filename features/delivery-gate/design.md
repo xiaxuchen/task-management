@@ -37,6 +37,14 @@
 **R6 三入口与 UI 同源**：HTTP / CLI / MCP / Web 都直接消费 `buildDeliveryGate` 的返回值；
 UI 只做标签映射，不复制判定逻辑。
 
+**R7 停用用例不参与门禁**：`buildAcceptanceReport` 只聚合 `enabled=1` 的用例，与 readiness 的
+「启用中的可回归用例」一致。否则一条被停用的历史用例会永远以 `not_run` 阻塞交付，而 `runTestCases`
+默认根本不会选它。删除停用用例后结论不应发生翻转。
+
+**R8 `format` 同 `scope` 一样禁止静默降级**：`json|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；
+MCP 工具在 handler 内调用同一 `store.normalizeFormat`，把业务错误转成 `isError` 文本，避免泄漏 SDK 的 `-32602`。
+`renderDeliveryGateMd` 对所有进入表格的单元格转义 `|` → `\|`、换行 → 空格，防止 AI/用户输入撑破表格。
+
 ## 3. 踩坑 / 约束
 
 - `buildDeliveryGate` 是纯读入口：测试必须断言 revision 不变，防止后续实现误写审计。

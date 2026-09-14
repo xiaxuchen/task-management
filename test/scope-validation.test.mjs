@@ -114,9 +114,10 @@ test('scope：MCP 聚合工具对非法 scope 报错（三入口契约一致）'
   const p = store.createNode({ type: 'project', name: 'P' })
   const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
   for (const tool of ['requirement_readiness', 'acceptance_report', 'release_checklist', 'delivery_gate']) {
-    // z.enum 在协议层拒绝：返回 isError 且文案指出非法枚举；不得返回 ready=true
+    // handler 内统一业务校验：返回 isError + VALIDATION_FAILED，不泄漏 SDK -32602
     const out = await call(tool, { node: r.id, scope: 'Subtree' })
     assert.equal(out.isError, true, `${tool} 应当拒绝非法 scope`)
-    assert.match(out.content[0].text, /expected one of "self"\|"subtree"/)
+    assert.match(out.content[0].text, /VALIDATION_FAILED/)
+    assert.match(out.content[0].text, /\["self","subtree"\]/)
   }
 })

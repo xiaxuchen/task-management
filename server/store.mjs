@@ -13,6 +13,7 @@ const REVIEW_STATUSES = ['pending', 'approved', 'issue']
  * 让「子树未就绪」被汇报成 `ready=true`，调用方带着未就绪需求进入回归/上线。
  */
 const SCOPE_VALUES = ['self', 'subtree']
+const FORMAT_VALUES = ['json', 'md']
 
 /**
  * scope 解析：缺省（undefined / null）→ fallback；其余必须在值域内，否则 VALIDATION_FAILED。
@@ -23,6 +24,19 @@ function normalizeScope(scope, fallback = 'self') {
   const v = String(scope)
   if (!SCOPE_VALUES.includes(v)) {
     throw new AppError(CODES.VALIDATION_FAILED, `未知 scope ${scope}`, { scope, allowed: SCOPE_VALUES })
+  }
+  return v
+}
+
+/**
+ * format 解析：缺省（undefined / null）→ fallback；其余必须在值域内，否则 VALIDATION_FAILED。
+ * 与 scope 同一条纪律——非法参数不得静默降级成 json，否则调用方会拿到结构不符的“成功”响应。
+ */
+function normalizeFormat(format, fallback = 'json') {
+  if (format === undefined || format === null) return fallback
+  const v = String(format)
+  if (!FORMAT_VALUES.includes(v)) {
+    throw new AppError(CODES.VALIDATION_FAILED, `未知 format ${format}`, { format, allowed: FORMAT_VALUES })
   }
   return v
 }
@@ -1180,7 +1194,12 @@ export function createStore(db, options = {}) {
     const effectiveScope = normalizeScope(scope)
     const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
     const ph = ids.map(() => '?').join(',')
-    const cases = db.prepare(`SELECT * FROM test_cases WHERE node_id IN (${ph}) ORDER BY node_id, sort, id`).all(...ids).map(testCaseVO)
+    // 停用用例不参与门禁：与 readiness 的「启用中的可回归用例」口径一致。
+    // 否则一条被停用的历史用例会永远以 not_run 阻塞交付，而 runTestCases 默认根本不会选它。
+    const cases = db
+      .prepare(`SELECT * FROM test_cases WHERE node_id IN (${ph}) AND enabled = 1 ORDER BY node_id, sort, id`)
+      .all(...ids)
+      .map(testCaseVO)
     const reports = db.prepare(`SELECT * FROM test_reports WHERE node_id IN (${ph}) ORDER BY id DESC`).all(...ids).map(testReportVO)
     const latestByCase = new Map()
     for (const r of reports) {
@@ -2534,6 +2553,8 @@ export function createStore(db, options = {}) {
     // 需求就绪门禁（需求管理闭环的前置判定）
     SCOPE_VALUES,
     normalizeScope,
+    FORMAT_VALUES,
+    normalizeFormat,
     buildRequirementReadiness,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,

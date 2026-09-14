@@ -13,6 +13,21 @@ export function createMcpServer({ store }) {
 
   const server = new McpServer({ name: 'task-board', version: '0.1.0' })
 
+  /** 把业务校验错误转成 MCP isError 结果，保持与 HTTP / CLI 的 VALIDATION_FAILED 契约一致。 */
+  const mcpValidate = (fn) => async (args) => {
+    try {
+      return await fn(args)
+    } catch (e) {
+      if (e && e.code) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `${e.code}: ${e.message}${e.details ? ` ${JSON.stringify(e.details)}` : ''}` }]
+        }
+      }
+      throw e
+    }
+  }
+
   // ---------- 读取 ----------
 
   server.tool('tree', '打印整棵树', { format: z.enum(['md', 'json']).optional() }, async ({ format }) => {
@@ -723,37 +738,37 @@ export function createMcpServer({ store }) {
   server.tool(
     'acceptance_report',
     '验收报告：聚合节点（含可选子树）的用例最近结果、通过率与未覆盖清单；format=md 返回可贴进 issue 的 markdown',
-    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
-    async ({ node, scope, format }) => {
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
       const report = store.buildAcceptanceReport(n.id, { scope })
-      const text = format === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
+      const text = store.normalizeFormat(format) === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
       return { content: [{ type: 'text', text }] }
-    }
+    })
   )
 
   server.tool(
     'requirement_readiness',
     '需求就绪门禁：判定节点（含可选子树）的需求内容 / 概要设计 / 可回归用例是否齐备，给出能否进入回归测试的结论；format=md 返回可贴进 issue 的 markdown',
-    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
-    async ({ node, scope, format }) => {
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
       const readiness = store.buildRequirementReadiness(n.id, { scope })
-      const text = format === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
+      const text = store.normalizeFormat(format) === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
       return { content: [{ type: 'text', text }] }
-    }
+    })
   )
 
   server.tool(
     'delivery_gate',
     '交付门禁：汇总需求就绪 / 测试验收 / 上线治理三段既有结论，给出唯一“能否交付”判定；format=md 返回可贴进 issue 的 markdown',
-    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
-    async ({ node, scope, format }) => {
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
       const gate = store.buildDeliveryGate(n.id, { scope })
-      const text = format === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
+      const text = store.normalizeFormat(format) === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
       return { content: [{ type: 'text', text }] }
-    }
+    })
   )
 
   // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
@@ -847,13 +862,13 @@ export function createMcpServer({ store }) {
   server.tool(
     'release_checklist',
     '上线检查清单：聚合节点（含可选子树）的上线项完成度、就绪结论与阻塞项；format=md 返回可贴进上线单的 markdown',
-    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
-    async ({ node, scope, format }) => {
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
       const checklist = store.buildReleaseChecklist(n.id, { scope })
-      const text = format === 'md' ? renderReleaseChecklistMd(checklist) : JSON.stringify(checklist, null, 2)
+      const text = store.normalizeFormat(format) === 'md' ? renderReleaseChecklistMd(checklist) : JSON.stringify(checklist, null, 2)
       return { content: [{ type: 'text', text }] }
-    }
+    })
   )
 
   server.tool(

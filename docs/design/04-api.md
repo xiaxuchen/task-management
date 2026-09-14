@@ -84,6 +84,10 @@
 |---|---|---|
 | GET | `/api/nodes/:id/delivery-gate` | 交付门禁：`?scope=self\|subtree`，`?format=json\|md`。汇总 `readiness` / `acceptance` / `release` 三个来源，每个来源为 `pass` / `fail` / `not_applicable`；最终 `decision` 为 `ready` / `not_ready` / `unknown`（全不适用时 `ready=null`，不伪造成绿灯）；`acceptance` 中 `running`/`notRun` 也视为未取得交付证据；**纯读聚合，不写库、不动 revision** |
 
+聚合类接口的 `scope` / `format` 均为枚举参数：`scope=self|subtree`（缺省 `self`）、`format=json|md`（缺省 `json`）；
+其它取值一律 `400 VALIDATION_FAILED`，三入口不做静默降级。交付门禁的验收来源只聚合**启用中**的测试用例：
+停用用例既不算 `notRun`，也不阻塞交付（与需求就绪门禁口径一致）。
+
 ### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
 
 | Method | Path | 说明 |
@@ -129,3 +133,7 @@
 会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
 适用接口：`/readiness`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
 `/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
+
+**`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
+其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
+MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。

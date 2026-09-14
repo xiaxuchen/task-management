@@ -188,3 +188,21 @@ test('交付门禁：CLI delivery gate 全链路（unknown → not_ready → rea
     tmp.cleanup()
   }
 })
+
+test('交付门禁：CLI 非法 --scope / --format 返回 VALIDATION_FAILED（CLI 回归）', async () => {
+  const { tmp, home } = await setup()
+  try {
+    for (const args of [
+      ['delivery', 'gate', 'P/R', '--scope', 'sub'],
+      ['delivery', 'gate', 'P/R', '--format', 'xml'],
+      ['delivery', 'gate', 'P/R', '--scope', ''],
+      ['delivery', 'gate', 'P/R', '--format', '']
+    ]) {
+      const r = await cliFail(home, args)
+      assert.ok(r, args.join(' '))
+      assert.match(r.stderr, /VALIDATION_FAILED/)
+    }
+  } finally {
+    tmp.cleanup()
+  }
+})

@@ -371,6 +371,7 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 （`success → blocked`，**不**伪造成 `pass`）。收尾不覆盖人工结论，并与任务收尾合并为一次 revision 递增。
 
 **验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果。
+只聚合 `enabled=1` 的用例；停用用例不进入门禁（与需求就绪门禁「启用中的可回归用例」口径一致）。
 分桶总数守恒：`pass + fail + blocked + error + cancelled + running + notRun = cases`；
 `running`（已派单未回写）与 `notRun`（从未派单）都不计入通过率分母，
 通过率 = `pass / settled`（`settled` = 五种终态之和），无完结时 `passRate = null`。

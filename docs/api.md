@@ -403,6 +403,8 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/delivery-gate?format=md'
 > 三段证据全部适用且通过时 `decision=ready`；任一段未通过为 `not_ready`；
 > 三段均不适用（没有需求 / 用例 / 必做上线项）时为 `unknown`，`ready=null`。
 > `not_applicable` 既不阻塞也不算通过。
+> `scope` / `format` 都是枚举：非法值返回 `400 VALIDATION_FAILED`，不会静默降级。
+> 验收来源只聚合**启用中**的用例；停用用例不算 `notRun`、也不阻塞交付。
 
 ## 错误码速查
 
