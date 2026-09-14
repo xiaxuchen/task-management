@@ -1,9 +1,14 @@
 # 概要设计大纲 / 思维导图 —— 回归测试报告
 
 - 被测仓库：`xiaxuchen/task-management`（本地 `/Users/xuchen.xia/charge2/task-board`）
-- 被测分支 / 提交：`agent/xpx-113-requirement-mindmap` @ `b7b9429`
-- 测试角色：高级测试（本轮回归验证与测试报告）
+- 被测分支 / 提交：`agent/xpx-113-requirement-mindmap` @ `787597d`
+  （首轮回归基线 `b7b9429`，测试报告提交 `618bd81`，缺陷修复提交 `787597d`）
+- 测试角色：高级测试（首轮回归验证 + 缺陷修复复验）
 - 报告落盘：`features/design-outline/test-report.md`
+
+> **本轮为 D1/D2/D3 修复复验（复验对象 `787597d`）。** 首轮结论与缺陷明细保留在下文，
+> 修复复验的逐条证据见 §7。三条缺陷均已收口，且经回退修复的变异测试确认新用例能真正拦住缺陷
+> （不是只过 happy path）。
 
 ## 1. 测试概要
 
@@ -73,7 +78,12 @@
 | E7 | `overwrite` + `dryRun` 同传（HTTP） | `{overwrite:true, dryRun:true}` | 只预演、不落库 | **不符合 → D1** |
 | E8 | `dryRun`（MCP） | `{dryRun:true}` | 只预演、不落库 | **不符合 → D2** |
 
+> E7 / E8 为首轮结果；两者已在 `787597d` 修复，复验均转为符合（见 §7.2 / §7.3）。
+
 ## 5. 缺陷汇总
+
+> 本节记录**首轮（`b7b9429`）**发现的缺陷。D1/D2/D3 已在 `787597d` 修复，复验结论见 §7；
+> 此处保留首轮明细以便追溯。
 
 ### D1（严重）HTTP `POST /design-outline/apply` 未透传 `dryRun`，预演变成实写、可误覆盖人工文档
 
@@ -112,13 +122,16 @@
   非本切片引入；但 `design_outline_apply` 新继承了该问题，建议一并收口为 `'ai'` 或把 `'mcp'`
   纳入 `ACTORS`。
 
-## 6. 测试结论 & 优化建议
+## 6. 首轮测试结论 & 优化建议
+
+> 本节为**首轮（`b7b9429`）**结论，反映当时的阻断项。修复后复验结论见 §7。
 
 - **结论**：三处重点口径（同一份 `designDoc` 文档、默认不覆盖幂等、只读推导不 bump revision）经独立验证
   全部成立；端到端链路（推导 → apply → readiness `design_doc` 转通过 → 再 apply 幂等）在真实 HTTP 入口通过。
   `npm test` 268 通过、`npm run build` 通过，mindmap 经真实解析器可渲染。主线功能可交付。
 - **但** HTTP `apply` 的 `dryRun` 缺失（D1）会使「预览」变「实写」并可能覆盖人工设计，
-  建议**打回开发修正 D1（含回归用例）后再进验收**；D2 / D3 建议同批收口。
+  首轮建议**打回开发修正 D1（含回归用例）后再进验收**；D2 / D3 建议同批收口。
+  （该建议已被采纳：`787597d` 同批修复，复验通过，见 §7。）
 - 遗留风险：
   1. 三入口的 `dryRun` 能力当前不对齐（HTTP 丢失、MCP 缺失、CLI 正确），修 D1/D2 后需补一条
      三入口 `dryRun` 一致性回归，防止再次漂移。
@@ -126,3 +139,89 @@
   3. `apply` 为逐单元顺序写、非事务（设计文档已说明为刻意取舍）；大批量 `subtree` 下部分失败时
      仅能靠逐条 `results[]` 观察，调用方需自行处理中间态。
   4. 本轮未做并发 / 断网 / 超时专项（切片为本地同步 SQLite 写，无外网依赖），如需上线级压测可另开一轮。
+
+## 7. 修复复验（对象 `787597d`，基于首轮报告 `618bd81`）
+
+### 7.1 复验范围与方法
+
+- 复验对象：`agent/xpx-113-requirement-mindmap` @ `787597d`（首轮报告 `618bd81` 的后续修复提交）。
+- 方法：不依赖开发自述，也不只跑开发新加的 UT。**独立编写探针**复核三条缺陷；
+  再用**变异测试**（在独立 worktree 里把修复逐条回退）确认新回归用例确实会失败，
+  即用例是「load-bearing」而非 happy-path 摆设。
+- 基线：`npm test` 273 通过 / 0 失败（原 268 + 新增 5）；`npm run build` 通过。
+
+### 7.2 D1 复验：HTTP `apply` 的 `dryRun` / `overwrite+dryRun`
+
+修复：`server/http.mjs:593` 补 `dryRun: !!body.dryRun`。独立探针（真实 HTTP）结果：
+
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| `{"dryRun":true}` | `dryRun:true`、`written:0`、不建文档、revision 不变 | 符合 |
+| `{"overwrite":true,"dryRun":true}`（已有 500 字人工正文） | `written:0`、**人工正文原样保留**、revision 不变 | 符合 |
+| `{"overwrite":true}`（无 dryRun，回归护栏） | 正常覆盖 `written:1` | 符合（dryRun 未被写死） |
+| `{}`（默认） | 空文档正常写入 `written:1` | 符合 |
+
+**关键项（不安全点）**：`{"overwrite":true,"dryRun":true}` 首轮会把人工正文覆盖销毁；
+本轮实测人工正文原样保留、revision 不变，数据安全问题已消除。
+
+### 7.3 D2 复验：MCP `design_outline_apply` 的 `dryRun`
+
+修复：`server/mcp.mjs:796` schema 补 `dryRun: z.boolean().optional()` 并在 handler 透传。
+独立探针（真实 MCP 协议）结果：
+
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| `{node, dryRun:true}` | 不报错（无协议错）、`dryRun:true`、`written:0`、不落库、revision 不变 | 符合 |
+| `{node, overwrite:true, dryRun:true}`（已有正文） | `written:0`、正文保留、revision 不变 | 符合 |
+| `{node, overwrite:true}` | 正常覆盖 `written:1` | 符合 |
+
+首轮的「静默吞参且真落库」已不复现：`dryRun` 现在既被 schema 接受，也被正确透传。
+
+### 7.4 D3 复验：MCP 落库 actor 归属 `mcp`
+
+修复：`server/store.mjs:8` 的 `ACTORS` 纳入 `'mcp'`（保留 `'ai'`），并同步
+`docs/design/02-data-model.md` 与 `AGENTS.md`。
+
+- `design_outline_apply` 写入的文档 `createdBy=mcp` / `updatedBy=mcp`（首轮为 `user`），已收口。
+- 值域外仍回退 `user`（`actor()` 行为未变），历史审计语义未改写。
+
+### 7.5 D3 影响面复验（跨功能 / 既有 MCP 工具无回归）
+
+`ACTORS` 变更会影响 `server/mcp.mjs` 中所有传 `'mcp'` 的既有工具（共 9 处）。独立探针逐个触发，
+确认审计字段从 `user` 修正为 `mcp`，且读写行为不变：
+
+| MCP 工具 | 复验 actor 结果 |
+|---|---|
+| `comment_add` | `author=mcp` |
+| `doc_upsert` | `updatedBy=ai`（该工具历史就用 `ai`，未受影响，符合预期） |
+| `test_case_upsert` / `test_case_update` | `createdBy=mcp` / `updatedBy=mcp` |
+| `test_report_finish` | `createdBy=mcp` |
+| `test_run`（dryRun） | 正常返回，无异常 |
+| `release_item_upsert` / `release_item_update` | `createdBy=mcp` / `updatedBy=mcp` |
+| `requirement_readiness` / `delivery_gate` / `release_check` | 只读工具不写 actor，行为不变（`release_check` 空态仍按既有语义返回 `VALIDATION_FAILED`） |
+
+**HTTP / CLI 侧无回归**：默认 actor 仍为 `user`；显式传 `mcp`（如 `x-taskboard-actor: mcp`）
+现在被正确接受为 `mcp`；未知值仍回退 `user`。`'ai'` 路径保持原样。
+
+### 7.6 变异测试：确认新用例能拦住缺陷
+
+在独立 worktree（`/tmp/tb-mutation` @ `787597d`）逐条回退修复，跑新增用例：
+
+| 回退的修复 | 结果 |
+|---|---|
+| 回退 `server/http.mjs` 的 `dryRun` 透传 | D1 两条用例 FAIL（`not ok 3/4`） |
+| 回退 MCP schema 的 `dryRun` + 透传 | D2 两条用例 FAIL（`not ok 8/9`） |
+| 回退 `ACTORS` 中的 `'mcp'` | D3 用例 + `store-revision` 断言 FAIL（`not ok 10/16`） |
+| 在 `ops.applyDesignOutline` 中让 `dryRun` 仍写库（但回报 `written:false`） | D1「预演绝不能销毁人工正文」断言以文本不符 FAIL，提示消息命中，证明**内容保全断言本身**是 load-bearing |
+
+即：三条缺陷对应的新用例都不是 happy-path 摆设，回退修复即失败。变异 worktree 已删除，未污染交付分支。
+
+### 7.7 本轮复验结论
+
+- **D1 / D2 / D3 全部收口**：HTTP `overwrite+dryRun` 既不落库也不覆盖人工正文；MCP `dryRun`
+  不再静默忽略且正确预演；MCP 落库 actor 记为 `mcp`。
+- **D3 跨功能影响面已确认无回归**：既有 9 处 MCP 工具的审计归属被修正，读写行为不变；
+  HTTP / CLI 的 actor 语义（默认 `user`、非法回退 `user`）保持。
+- `npm test` 273 通过 / 0 失败，`npm run build` 通过。**建议推进验收。**
+- 遗留：§6 的第 3、4 条（`apply` 非事务的中间态、未做并发/断网专项）仍为已知取舍/未覆盖面，
+  不影响本切片验收结论。
