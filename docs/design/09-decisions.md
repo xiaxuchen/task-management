@@ -29,4 +29,6 @@
 | 22 | 新增 `repos` / `merges` 表 | `repos`（仓库名 → 本地路径 + GitLab 项目）；`merges` 记录合并尝试、冲突文件与状态机 |
 | 23 | 工作区由工具创建 | 分支命名 `{base_branch}-{slug}`（`config.branchTemplate` 可改）；建分支 + worktree + 生成开发提示词；合并后**默认保留**工作区与分支 |
 | 24 | 工作单元支持多仓库 | `unit_repos`（node × repo：branch + worktree_path），一条分支名覆盖多仓库 |
-
+| 25 | 回归测试闭环用 `test_cases` + `test_reports` 两表 | 用例（可被 AI 重复执行的测试指令）与报告（一次执行 = 一行）分离；验收报告不落表，按节点聚合用例的**最近一次**结果。`kind` 作为统一扩展轴：v1 实现 regression / acceptance，预留 code_check / biz_check / release_check，后续接入上线配置 / 上线 SQL / 代码检查 / 业务检查时只加用例与检查器，不改表结构与入口 |
+| 26 | 测试执行复用 agent 运行时，不新建执行器 | `runTestCases` 只做「拼提示词 → `startAgentRun` 派单 → 开 running 报告」，不阻塞等结果；任务结束后由前台执行者 / 收尾钩子 `test_report_finish` 回写终态。后台（qodercli）与前台（Qoder IDE ideMode）走同一条链路 |
+| 27 | 验收通过率以「已执行用例」为分母 | 未执行单列 `notRun`，避免「没跑 = 失败」误导；无用例 / 无执行时 `passRate = null` 而非 0 |

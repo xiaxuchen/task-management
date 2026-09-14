@@ -102,6 +102,8 @@ docs/design.md    ← 主设计文档权威副本
       doc_upsert · doc_create · doc_update · doc_remove · doc_reorder
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
 批量  batch · import_outline
+回归  test_case_list · test_case_upsert · test_case_update · test_case_remove · test_case_reorder
+      test_run · test_report_list · test_report_get · test_report_finish · acceptance_report
 agent 运行时  runtime_list · runtime_register · runtime_heartbeat · runtime_status · runtime_remove
 agent 会话    agent_session_list · agent_session_new · agent_session_archive
 agent 任务    agent_run · agent_runs_list · agent_run_get · agent_run_messages
@@ -134,6 +136,10 @@ agent runs "项目A/需求1"                # 任务历史
 agent run messages <rid>               # 任务消息流（事件流）
 agent run cancel <rid> / agent run retry <rid>
 agent run update <rid> --status success --cli-session <id>   # 前台执行者回写
+test case upsert "项目A/需求1" --name 登录回归 --prompt "跑登录单测"   # 写用例（按名幂等）
+test run "项目A/需求1" --kind regression [--dry-run]        # 派单执行 + 自动开报告
+test report finish <rid> --status pass --summary 全绿        # 回写报告终态
+test acceptance "项目A/需求1" [--scope subtree] [--format md]  # 验收报告
 ```
 
 **推荐工作流**

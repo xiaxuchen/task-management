@@ -269,6 +269,46 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 CREATE INDEX IF NOT EXISTS idx_comments_node ON comments(node_id, file_path);
 
+-- 回归测试用例（AI 可回归测试）：挂在节点上的、可被 AI 重复执行的测试/验收指令。
+-- kind 是「上线配置 / 上线 SQL / 代码检查 / 业务检查」等后续检查的统一扩展轴：
+-- v1 只实现 regression / acceptance，其余 kind 值先占位，新增一种检查无需改表。
+CREATE TABLE IF NOT EXISTS test_cases (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'regression'
+    CHECK (kind IN ('regression','acceptance','code_check','biz_check','release_check')),
+  prompt TEXT NOT NULL,
+  expectation TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'user',
+  updated_by TEXT NOT NULL DEFAULT 'user',
+  UNIQUE(node_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_test_cases_node ON test_cases(node_id, sort, id);
+
+-- 测试 / 验收报告：一次执行 = 一行（可关联 agent 任务与用例），汇总即成验收报告。
+CREATE TABLE IF NOT EXISTS test_reports (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  case_id INTEGER REFERENCES test_cases(id) ON DELETE SET NULL,
+  run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'regression',
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running','pass','fail','blocked','error','cancelled')),
+  summary TEXT,
+  detail TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  updated_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'user'
+);
+CREATE INDEX IF NOT EXISTS idx_test_reports_node ON test_reports(node_id, id);
+CREATE INDEX IF NOT EXISTS idx_test_reports_case ON test_reports(case_id, id);
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -400,6 +440,44 @@ function migrate(db) {
     ['wait_reason', 'TEXT']
   ])
   db.exec('CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id, id)')
+
+  // 回归测试闭环（v3）：老库补表；SCHEMA 只对新库生效
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS test_cases (
+      id INTEGER PRIMARY KEY,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'regression'
+        CHECK (kind IN ('regression','acceptance','code_check','biz_check','release_check')),
+      prompt TEXT NOT NULL,
+      expectation TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sort INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user',
+      updated_by TEXT NOT NULL DEFAULT 'user',
+      UNIQUE(node_id, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_test_cases_node ON test_cases(node_id, sort, id);
+    CREATE TABLE IF NOT EXISTS test_reports (
+      id INTEGER PRIMARY KEY,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      case_id INTEGER REFERENCES test_cases(id) ON DELETE SET NULL,
+      run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL DEFAULT 'regression',
+      status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running','pass','fail','blocked','error','cancelled')),
+      summary TEXT,
+      detail TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user'
+    );
+    CREATE INDEX IF NOT EXISTS idx_test_reports_node ON test_reports(node_id, id);
+    CREATE INDEX IF NOT EXISTS idx_test_reports_case ON test_reports(case_id, id);
+  `)
 
   // max_attempts 从「死字段」升级为硬上限（默认 3）。老库的历史行都带着旧的默认 1，
   // 若直接按硬上限判定会全部不可重试；用 meta 标记做一次性回填（只跑一次，避免误伤显式传 1 的新行）。

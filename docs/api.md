@@ -280,6 +280,39 @@ curl -s -X POST http://127.0.0.1:3210/api/agent-runs/7/cancel \
 curl -s -X POST http://127.0.0.1:3210/api/agent-runs/7/retry
 ```
 
+## 回归测试闭环（AI 可回归测试 → 测试/验收报告）
+
+```bash
+# 写用例（按名幂等；kind 缺省 regression，可为 acceptance/code_check/biz_check/release_check）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-cases/upsert \
+  -H 'content-type: application/json' \
+  -d '{"name":"登录回归","prompt":"在本仓库跑 npm test 并确认登录相关用例全绿","expectation":"全绿","kind":"regression"}'
+
+# 列用例（可筛 kind / 含停用）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/test-cases?kind=regression'
+
+# 预演派单：只回将要执行的用例与拼好的提示词，不落库不派单
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
+  -H 'content-type: application/json' -d '{"dryRun":true}'
+
+# 正式派单：为每条用例开一条 running 报告，返回 {run, reports}
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
+  -H 'content-type: application/json' -d '{"kind":"regression"}'
+
+# 任务跑完后回写报告终态（前台执行者 / 收尾钩子调用）
+curl -s -X PATCH http://127.0.0.1:3210/api/test-reports/3 \
+  -H 'content-type: application/json' \
+  -d '{"status":"pass","summary":"17/17 全绿","detail":"npm test 输出见 run 7"}'
+
+# 报告列表 / 单条
+curl -s 'http://127.0.0.1:3210/api/nodes/1/test-reports?limit=20'
+curl -s http://127.0.0.1:3210/api/test-reports/3
+
+# 验收报告：聚合最近结果与通过率；format=md 可直接贴 issue / MR
+curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?scope=subtree'
+curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?format=md'
+```
+
 ## 错误码速查
 
 | HTTP | code | 场景 |
@@ -294,6 +327,7 @@ curl -s -X POST http://127.0.0.1:3210/api/agent-runs/7/retry
 | 400 | `GITLAB_NOT_CONFIGURED` | 未配置 GitLab |
 | 404 | `NOT_FOUND` / `PATH_NOT_FOUND` | 资源或路径不存在 |
 | 409 | `PATH_AMBIGUOUS` / `DOC_NAME_EXISTS` / `WORKTREE_PATH_EXISTS` | 路径歧义 / 文档重名 / worktree 占用 |
+| 409 | `TEST_CASE_NAME_EXISTS` | 同节点测试用例重名 |
 | 500 | `GIT_UNAVAILABLE` / `GIT_FAILED` | 本机 git 不可用 / 命令失败（`details` 带 stderr）|
 | 502 | `GITLAB_AUTH_FAILED` / `GITLAB_PROJECT_NOT_FOUND` / `GITLAB_UNAVAILABLE` | token 无效 / 项目路径错 / 网络异常 |
 

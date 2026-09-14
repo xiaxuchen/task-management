@@ -421,3 +421,85 @@ test('未知路由返回 404', async () => {
   await close()
   tmp.cleanup()
 })
+
+// ---------- 回归测试闭环 ----------
+
+test('回归闭环：用例 upsert → dryRun → 报告 → 验收报告（HTTP 全链路）', async () => {
+  const { tmp, post, get, patch, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+
+  // 用例：按名 upsert 幂等
+  const c1 = await post(`/api/nodes/${r.id}/test-cases/upsert`, {
+    name: '登录回归',
+    prompt: '跑登录单测',
+    expectation: '全绿'
+  })
+  assert.equal(c1.created, true)
+  assert.equal(c1.kind, 'regression')
+  const c2 = await post(`/api/nodes/${r.id}/test-cases/upsert`, {
+    name: '登录回归',
+    prompt: '跑登录单测 v2',
+    expectation: '全绿'
+  })
+  assert.equal(c2.created, false)
+  assert.equal(c2.id, c1.id)
+
+  const cases = await get(`/api/nodes/${r.id}/test-cases`)
+  assert.equal(cases.length, 1)
+  assert.equal(cases[0].prompt, '跑登录单测 v2')
+
+  // dryRun 只返回提示词，不落报告
+  const dry = await post(`/api/nodes/${r.id}/test-runs`, { dryRun: true })
+  assert.equal(dry.dryRun, true)
+  assert.ok(dry.prompt.includes('登录回归'))
+  assert.equal((await get(`/api/nodes/${r.id}/test-reports`)).length, 0)
+
+  // 验收报告聚合：用例已建、尚未执行
+  const acceptance = await get(`/api/nodes/${r.id}/acceptance-report`)
+  assert.equal(acceptance.totals.cases, 1)
+  assert.equal(acceptance.totals.notRun, 1)
+  assert.equal(acceptance.passRate, null)
+
+  await close()
+  tmp.cleanup()
+})
+
+test('回归闭环：重名用例返回 TEST_CASE_NAME_EXISTS', async () => {
+  const { tmp, post, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  const dup = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'q' })
+  assert.equal(dup.error.code, 'TEST_CASE_NAME_EXISTS')
+  await close()
+  tmp.cleanup()
+})
+
+test('回归闭环：报告列表 / 单条读取 / 回写终态', async () => {
+  const { tmp, store, post, get, patch, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const c = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  // 直接经 store 开一条 running 报告（派单需要真实运行目录，这里只验报告接口）
+  const rep = store.createTestReport(p.id, { caseId: c.id, kind: 'regression', status: 'running' })
+
+  const list = await get(`/api/nodes/${p.id}/test-reports`)
+  assert.equal(list.length, 1)
+  assert.equal(list[0].status, 'running')
+  assert.equal((await get(`/api/nodes/${p.id}/test-reports?caseId=${c.id}`)).length, 1)
+  assert.equal((await get(`/api/nodes/${p.id}/test-reports?kind=acceptance`)).length, 0)
+
+  const one = await get(`/api/test-reports/${rep.id}`)
+  assert.equal(one.id, rep.id)
+
+  const done = await patch(`/api/test-reports/${rep.id}`, { status: 'pass', summary: '全绿' })
+  assert.equal(done.status, 'pass')
+  assert.equal(done.summary, '全绿')
+  assert.ok(done.finishedAt)
+
+  const acceptance = await get(`/api/nodes/${p.id}/acceptance-report`)
+  assert.equal(acceptance.totals.pass, 1)
+  assert.equal(acceptance.passRate, 1)
+
+  await close()
+  tmp.cleanup()
+})

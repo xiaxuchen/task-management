@@ -313,3 +313,45 @@ index：`idx_agent_runs_node(node_id)`、`idx_agent_runs_session(session_id, id)
 
 约束：`UNIQUE(run_id, seq)`；index：`idx_agent_run_messages_run(run_id, seq)`。
 有了 seq，UI 只需按 `sinceSeq` 增量拉取，而不是每次把整块 output 重读一遍。
+
+### 4.14 test_cases / test_reports（回归测试闭环）
+
+打通「需求 → 概要设计/文档 → AI 可回归测试 → 测试/验收报告」的后两段。
+需求与设计由节点树与 `documents` 承载；本组表补齐**可被 AI 重复执行的测试指令**与**每次执行的结果**。
+
+**test_cases（测试用例）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE；可挂任意节点类型 |
+| name | TEXT NOT NULL | 用例名（同节点内唯一） |
+| kind | TEXT NOT NULL | `regression` / `acceptance` / `code_check` / `biz_check` / `release_check`（CHECK 约束） |
+| prompt | TEXT NOT NULL | 给 AI 的执行指令（回归/验收步骤） |
+| expectation | TEXT | 期望结果（可空） |
+| enabled | INTEGER NOT NULL DEFAULT 1 | 停用后不参与 `test_run` 默认选用 |
+| sort | INTEGER NOT NULL | 展示 / 执行顺序 |
+| created_at / updated_at | TEXT | |
+| created_by / updated_by | TEXT | 操作者（user / ai / cli / import / mcp） |
+
+约束：`UNIQUE(node_id, name)`；index：`idx_test_cases_node(node_id, sort, id)`。
+`kind` 是**统一扩展轴**：上线配置 / 上线 SQL / 代码检查 / 业务检查先以 `release_check` / `code_check` / `biz_check`
+作为分类值落地，后续接入专用执行器时**无需改表**。
+
+**test_reports（测试 / 验收报告）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE |
+| case_id | INTEGER NULL | FK → test_cases(id) ON DELETE SET NULL；删用例后历史报告保留 |
+| run_id | INTEGER NULL | FK → agent_runs(id) ON DELETE SET NULL；关联本次执行日志 |
+| kind | TEXT NOT NULL | 与用例 kind 对齐（同 CHECK 值域） |
+| status | TEXT NOT NULL | `running` / `pass` / `fail` / `blocked` / `error` / `cancelled` |
+| summary / detail | TEXT | 结论摘要 / 详细依据 |
+| started_at / finished_at / updated_at | TEXT | |
+| created_by | TEXT | 操作者 |
+
+约束：一次执行 = 一行；index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, id)`。
+**验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果，
+通过率以「已执行用例」为分母，未执行单列 `notRun`（避免「没跑 = 失败」的误判）。

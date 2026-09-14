@@ -1,5 +1,6 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
+import { startAgentRun } from './agent.mjs'
 import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas, commitMetasBatch as gitCommitMetasBatch } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
@@ -33,6 +34,16 @@ export const TOOLS = [
   'commit_combined_diff',
   'commit_duplicates',
   'commit_dedupe',
+  'test_case_list',
+  'test_case_upsert',
+  'test_case_update',
+  'test_case_remove',
+  'test_case_reorder',
+  'test_run',
+  'test_report_list',
+  'test_report_get',
+  'test_report_finish',
+  'acceptance_report',
   'runtime_list',
   'runtime_register',
   'runtime_heartbeat',
@@ -819,6 +830,83 @@ export async function approveAndMerge(store, nodeRef, { by = 'user' } = {}) {
     }
   }
   return { node: { id: node.id, name: node.name }, subreq: { id: subreq.id, name: subreq.name }, reqBranch, results }
+}
+
+/**
+ * AI 可回归测试的执行编排：把选中的用例组合成一段可执行的 agent 提示词，
+ * 派单到该节点（复用 agent 运行时 / 会话），并立刻为每个用例开一条 running 报告。
+ *
+ * 返回 { run, reports }：调用方拿 run.id 轮询任务消息流；任务结束后用
+ * finishTestReport 回写每个报告的 pass/fail（前台执行者或收尾钩子调用）。
+ * dryRun 只返回将要执行的用例与提示词，不落库、不派单。
+ */
+export function runTestCases(
+  store,
+  nodeRef,
+  { caseIds = null, kind = null, prompt = null, agent = undefined, model = undefined, cwd = null, dryRun = false } = {},
+  by = 'user'
+) {
+  const node = store.resolveRef(String(nodeRef))
+  const cases = store
+    .listTestCases(node.id, { kind: kind || null })
+    .filter((c) => (caseIds && caseIds.length ? caseIds.map(Number).includes(c.id) : true))
+  if (cases.length === 0) {
+    throw new AppError(CODES.VALIDATION_FAILED, '没有可执行的测试用例（先 test_case_upsert）', { nodeId: node.id, kind })
+  }
+  const effectiveKind = kind || cases[0].kind
+  const composed = composeTestPrompt(node, cases, prompt)
+  if (dryRun) {
+    return {
+      dryRun: true,
+      node: { id: node.id, name: node.name },
+      kind: effectiveKind,
+      cases: cases.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
+      prompt: composed
+    }
+  }
+  const run = startAgentRun(store, node.id, { prompt: composed, agent, model, cwd }, by)
+  const reports = cases.map((c) =>
+    store.createTestReport(node.id, { caseId: c.id, runId: run.id, kind: c.kind, status: 'running', summary: `已派单执行：${c.name}` }, by)
+  )
+  return { node: { id: node.id, name: node.name }, kind: effectiveKind, run, reports }
+}
+
+/** 把用例拼成给 agent 的回归提示词：显式列出每条用例的期望，要求逐条给出结论 */
+export function composeTestPrompt(node, cases, extra = null) {
+  const lines = [
+    `请在当前工作目录对节点「${node.name}」（${node.type}）执行以下回归测试，并逐条给出结论。`,
+    '每条用例输出一行：`<用例名>: PASS|FAIL|BLOCKED - <依据>`；不确定时用 BLOCKED 并说明缺什么。',
+    ''
+  ]
+  cases.forEach((c, i) => {
+    lines.push(`## 用例 ${i + 1}：${c.name}（${c.kind}）`)
+    lines.push(c.prompt)
+    if (c.expectation) lines.push(`期望结果：${c.expectation}`)
+    lines.push('')
+  })
+  if (extra) lines.push('额外要求：', extra)
+  return lines.join('\n')
+}
+
+/**
+ * 验收报告导出：在聚合结果之上补 markdown 渲染，便于直接贴进 issue / MR。
+ */
+export function renderAcceptanceMd(report) {
+  const t = report.totals
+  const lines = [
+    `# 验收报告：${report.node.name}`,
+    '',
+    `- 范围：${report.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 用例：${t.cases} · 已执行：${t.run} · 通过：${t.pass} · 失败：${t.fail} · 阻塞：${t.blocked} · 未执行：${t.notRun}`,
+    `- 通过率（已执行口径）：${report.passRate == null ? '—' : `${Math.round(report.passRate * 100)}%`}`,
+    '',
+    '| 用例 | 类型 | 最近结果 | 报告 |',
+    '|---|---|---|---|'
+  ]
+  for (const i of report.items) {
+    lines.push(`| ${i.name} | ${i.kind} | ${i.latestStatus} | ${i.latestReportId ?? '—'} |`)
+  }
+  return lines.join('\n')
 }
 
 /**

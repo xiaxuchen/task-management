@@ -56,6 +56,22 @@
 | POST | `/api/uploads` | 上传图片：请求体 JSON `{ name, data }`（`data` 为 base64，`express.json` 限额 20 MB），存入 `~/.taskboard/uploads/`，返回 `{ url: "/uploads/<name>" }` |
 | GET | `/uploads/:name` | 图片静态访问（Markdown 预览使用） |
 
+### 回归测试闭环（AI 可回归测试 → 测试/验收报告）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/test-cases` | 该节点的测试用例；`?kind=` 筛类型，`?includeDisabled=true` 含停用 |
+| POST | `/api/nodes/:id/test-cases` | 新增用例 `{name, prompt, kind?, expectation?, enabled?}`；重名 → 409 `TEST_CASE_NAME_EXISTS` |
+| POST | `/api/nodes/:id/test-cases/upsert` | 按用例名 get-or-create 并写内容（幂等）：`{name, prompt, kind?, expectation?}` |
+| POST | `/api/nodes/:id/test-cases/reorder` | `{orderedIds[]}` 重排用例 |
+| PATCH | `/api/test-cases/:cid` | 更新用例 `{name?, kind?, prompt?, expectation?, enabled?}` |
+| DELETE | `/api/test-cases/:cid` | 删除用例（历史报告保留，`case_id` 置空） |
+| POST | `/api/nodes/:id/test-runs` | 派单执行：`{caseIds?, kind?, prompt?, agent?, model?, cwd?, dryRun?}`；为每条用例开 `running` 报告，返回 `{node, kind, run, reports}`（dryRun 只回用例与提示词） |
+| GET | `/api/nodes/:id/test-reports` | 报告列表（倒序）；`?caseId=&kind=&limit=` |
+| GET | `/api/test-reports/:rid` | 单条报告详情 |
+| PATCH | `/api/test-reports/:rid` | 回写报告终态 `{status, summary?, detail?, runId?}` |
+| GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR） |
+
 ### agent 运行时 / 会话 / 任务
 
 | Method | Path | 说明 |

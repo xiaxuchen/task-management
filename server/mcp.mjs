@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -603,6 +603,133 @@ export function createMcpServer({ store }) {
     store.deleteComment(id)
     return { content: [{ type: 'text', text: JSON.stringify({ ok: true, id }, null, 2) }] }
   })
+
+  // ---------- 回归测试闭环（AI 可回归测试用例 + 测试/验收报告） ----------
+
+  server.tool(
+    'test_case_list',
+    '列出节点的测试用例（AI 可回归测试）；kind 可筛 regression/acceptance/code_check/biz_check/release_check',
+    { node: z.union([z.number(), z.string()]), kind: z.string().optional(), includeDisabled: z.boolean().optional() },
+    async ({ node, kind, includeDisabled }) => {
+      const n = store.resolveRef(String(node))
+      const list = store.listTestCases(n.id, { kind: kind || null, includeDisabled: !!includeDisabled })
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'test_case_upsert',
+    '按用例名 get-or-create 测试用例（幂等）：已存在则更新内容与期望，返回 created 标记',
+    {
+      node: z.union([z.number(), z.string()]),
+      name: z.string(),
+      prompt: z.string(),
+      kind: z.enum(['regression', 'acceptance', 'code_check', 'biz_check', 'release_check']).optional(),
+      expectation: z.string().optional(),
+      enabled: z.boolean().optional()
+    },
+    async ({ node, name, prompt, kind, expectation, enabled }) => {
+      const n = store.resolveRef(String(node))
+      const c = store.upsertTestCase(n.id, { name, prompt, kind: kind || 'regression', expectation: expectation ?? null, enabled: enabled === undefined ? 1 : enabled }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(c, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'test_case_update',
+    '更新测试用例（改名 / 改类型 / 改内容 / 改期望 / 启停）',
+    {
+      id: z.number(),
+      name: z.string().optional(),
+      kind: z.enum(['regression', 'acceptance', 'code_check', 'biz_check', 'release_check']).optional(),
+      prompt: z.string().optional(),
+      expectation: z.string().optional(),
+      enabled: z.boolean().optional()
+    },
+    async ({ id, name, kind, prompt, expectation, enabled }) => {
+      const c = store.updateTestCase(id, { name, kind, prompt, expectation, enabled }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(c, null, 2) }] }
+    }
+  )
+
+  server.tool('test_case_remove', '删除测试用例（连带删除的仅是用例，历史报告保留但 case_id 置空）', { id: z.number() }, async ({ id }) => {
+    store.deleteTestCase(id)
+    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, id }, null, 2) }] }
+  })
+
+  server.tool(
+    'test_case_reorder',
+    '按 id 顺序重排测试用例',
+    { node: z.union([z.number(), z.string()]), orderedIds: z.array(z.number()) },
+    async ({ node, orderedIds }) => {
+      const n = store.resolveRef(String(node))
+      const list = store.reorderTestCases(n.id, orderedIds)
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'test_run',
+    '派单执行回归测试用例：把选中用例拼成提示词交给 agent 运行时执行，并为每条用例开一条 running 报告。dryRun 只返回将要执行的用例与提示词',
+    {
+      node: z.union([z.number(), z.string()]),
+      caseIds: z.array(z.number()).optional(),
+      kind: z.enum(['regression', 'acceptance', 'code_check', 'biz_check', 'release_check']).optional(),
+      prompt: z.string().optional(),
+      agent: z.string().optional(),
+      model: z.string().optional(),
+      cwd: z.string().optional(),
+      dryRun: z.boolean().optional()
+    },
+    async ({ node, caseIds, kind, prompt, agent, model, cwd, dryRun }) => {
+      const n = store.resolveRef(String(node))
+      const out = runTestCases(store, n.id, { caseIds: caseIds || null, kind: kind || null, prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'test_report_list',
+    '列出节点的测试/验收报告（倒序，可按 caseId / kind 筛）',
+    { node: z.union([z.number(), z.string()]), caseId: z.number().optional(), kind: z.string().optional(), limit: z.number().optional() },
+    async ({ node, caseId, kind, limit }) => {
+      const n = store.resolveRef(String(node))
+      const list = store.listTestReports(n.id, { caseId: caseId ?? null, kind: kind || null, limit: limit || 100 })
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] }
+    }
+  )
+
+  server.tool('test_report_get', '读取单条测试报告', { id: z.number() }, async ({ id }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.getTestReport(id), null, 2) }] }
+  })
+
+  server.tool(
+    'test_report_finish',
+    '回写测试报告终态（agent 执行完 / 前台执行者回写时调用）',
+    {
+      id: z.number(),
+      status: z.enum(['running', 'pass', 'fail', 'blocked', 'error', 'cancelled']),
+      summary: z.string().optional(),
+      detail: z.string().optional(),
+      runId: z.number().optional()
+    },
+    async ({ id, status, summary, detail, runId }) => {
+      const r = store.finishTestReport(id, { status, summary, detail, runId }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'acceptance_report',
+    '验收报告：聚合节点（含可选子树）的用例最近结果、通过率与未覆盖清单；format=md 返回可贴进 issue 的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
+    async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const report = store.buildAcceptanceReport(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const text = format === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
+      return { content: [{ type: 'text', text }] }
+    }
+  )
 
   server.tool(
     'agent_run_update',

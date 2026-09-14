@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 
 const OPTIONS = {
@@ -26,6 +26,13 @@ const OPTIONS = {
   scope: { type: 'string' },
   'review-status': { type: 'string' },
   'review-note': { type: 'string' },
+  kind: { type: 'string' },
+  expectation: { type: 'string' },
+  'case-ids': { type: 'string' },
+  'case-id': { type: 'string' },
+  limit: { type: 'string' },
+  summary: { type: 'string' },
+  detail: { type: 'string' },
   prompt: { type: 'string' },
   model: { type: 'string' },
   cwd: { type: 'string' },
@@ -102,6 +109,15 @@ const HELP = `task-board <命令>
   commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
   commit duplicates <ref> [--scope self|subtree]   重复检测（same-sha / patch-id / merge 覆盖）
   commit dedupe --keep <cid> --remove "1,2,3"      一键去重（保留 keep，删除重复登记）
+  test case list <ref> [--kind regression|acceptance]    该节点的测试用例
+  test case upsert <ref> --name <名> --prompt <内容> [--kind regression|acceptance] [--expectation <期望>]
+  test case update <cid> [--name n] [--kind k] [--prompt p] [--expectation e]
+  test case remove <cid>
+  test case reorder <ref> --ids "1,2,3"
+  test run <ref> [--kind k] [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run]   派单执行用例（自动开报告）
+  test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
+  test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d]
+  test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
   runtime list [--status online|offline]        运行时列表（含本机 CLI 实例状态）
   runtime register [--daemon <主机名>] [--provider qodercli] [--name <名>] [--visibility private|public]
   runtime heartbeat <id>                        运行时心跳（刷新 last_seen_at + 置 online）
@@ -275,6 +291,80 @@ export async function run(argv) {
         removeIds: String(values.remove || '').split(',').map((s) => Number(s.trim()))
       }, by))
       break
+    // ---------- 回归测试闭环（`test case|run|report|acceptance ...`） ----------
+    case 'test case': {
+      const sub = ref
+      const arg = positionals[3]
+      if (sub === 'list') json(store.listTestCases(store.resolveRef(arg).id, { kind: values.kind || null, includeDisabled: !!values['include-disabled'] }))
+      else if (sub === 'upsert')
+        json(
+          store.upsertTestCase(
+            store.resolveRef(arg).id,
+            {
+              name: values.name,
+              kind: values.kind || 'regression',
+              prompt: readMaybeFile({ content: values.prompt, file: values.file }) ?? values.prompt,
+              expectation: values.expectation ?? null
+            },
+            by
+          )
+        )
+      else if (sub === 'update')
+        json(
+          store.updateTestCase(Number(arg), {
+            name: values.name ?? null,
+            kind: values.kind ?? null,
+            prompt: values.prompt ?? null,
+            expectation: values.expectation !== undefined ? values.expectation : undefined
+          }, by)
+        )
+      else if (sub === 'remove') {
+        store.deleteTestCase(Number(arg))
+        json({ ok: true, id: Number(arg) })
+      } else if (sub === 'reorder')
+        json(store.reorderTestCases(store.resolveRef(arg).id, String(values.ids || '').split(',').map((s) => Number(s.trim()))))
+      else throw new Error(`test case 支持 list|upsert|update|remove|reorder，收到：${sub}`)
+      break
+    }
+    case 'test run': {
+      const node = store.resolveRef(ref)
+      json(
+        runTestCases(store, node.id, {
+          caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
+          kind: values.kind || null,
+          prompt: values.prompt || null,
+          agent: values.agent,
+          model: values.model,
+          cwd: values.cwd,
+          dryRun: !!values['dry-run']
+        }, by)
+      )
+      break
+    }
+    case 'test report': {
+      const sub = ref
+      const arg = positionals[3]
+      if (sub === 'list')
+        json(
+          store.listTestReports(store.resolveRef(arg).id, {
+            kind: values.kind || null,
+            caseId: values['case-id'] ? Number(values['case-id']) : null,
+            limit: values.limit ? Number(values.limit) : 100
+          })
+        )
+      else if (sub === 'get') json(store.getTestReport(Number(arg)))
+      else if (sub === 'finish')
+        json(store.finishTestReport(Number(arg), { status: values.status, summary: values.summary, detail: values.detail }, by))
+      else throw new Error(`test report 支持 list|get|finish，收到：${sub}`)
+      break
+    }
+    case 'test acceptance': {
+      const node = store.resolveRef(ref)
+      const report = store.buildAcceptanceReport(node.id, { scope: values.scope === 'subtree' ? 'subtree' : 'self' })
+      if (values.format === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
+      else json(report)
+      break
+    }
     // ---------- 运行时 ----------
     case 'runtime list':
       json({ summary: store.agentRuntimeSummary(), items: store.listRuntimes({ status: values.status || null }) })

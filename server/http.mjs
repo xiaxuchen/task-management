@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -391,6 +391,142 @@ export function createApp({ store }) {
     wrap((req, res) => {
       store.deleteComment(Number(req.params.cid))
       res.json({ ok: true })
+    })
+  )
+
+  // ---------- 回归测试闭环（AI 可回归测试用例 + 测试/验收报告） ----------
+  app.get(
+    '/api/nodes/:id/test-cases',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(
+        store.listTestCases(node.id, {
+          kind: req.query.kind || null,
+          includeDisabled: req.query.includeDisabled === 'true'
+        })
+      )
+    })
+  )
+  app.post(
+    '/api/nodes/:id/test-cases',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(
+        store.createTestCase(node.id, {
+          name: b.name,
+          kind: b.kind,
+          prompt: b.prompt,
+          expectation: b.expectation,
+          enabled: b.enabled
+        }, actorOf(req))
+      )
+    })
+  )
+  app.post(
+    '/api/nodes/:id/test-cases/upsert',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.json(
+        store.upsertTestCase(node.id, {
+          name: b.name,
+          kind: b.kind,
+          prompt: b.prompt,
+          expectation: b.expectation,
+          enabled: b.enabled
+        }, actorOf(req))
+      )
+    })
+  )
+  app.post(
+    '/api/nodes/:id/test-cases/reorder',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(store.reorderTestCases(node.id, (req.body || {}).orderedIds || []))
+    })
+  )
+  app.patch(
+    '/api/test-cases/:cid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(
+        store.updateTestCase(Number(req.params.cid), {
+          name: b.name,
+          kind: b.kind,
+          prompt: b.prompt,
+          expectation: b.expectation,
+          enabled: b.enabled
+        }, actorOf(req))
+      )
+    })
+  )
+  app.delete(
+    '/api/test-cases/:cid',
+    wrap((req, res) => {
+      store.deleteTestCase(Number(req.params.cid))
+      res.json({ ok: true })
+    })
+  )
+  app.post(
+    '/api/nodes/:id/test-runs',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(
+        runTestCases(store, node.id, {
+          caseIds: b.caseIds,
+          kind: b.kind,
+          prompt: b.prompt,
+          agent: b.agent,
+          model: b.model,
+          cwd: b.cwd,
+          dryRun: !!b.dryRun
+        }, actorOf(req))
+      )
+    })
+  )
+  app.get(
+    '/api/nodes/:id/test-reports',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(
+        store.listTestReports(node.id, {
+          caseId: req.query.caseId ? Number(req.query.caseId) : null,
+          kind: req.query.kind || null,
+          limit: req.query.limit ? Number(req.query.limit) : 100
+        })
+      )
+    })
+  )
+  app.get(
+    '/api/test-reports/:rid',
+    wrap((req, res) => res.json(store.getTestReport(Number(req.params.rid))))
+  )
+  app.patch(
+    '/api/test-reports/:rid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(
+        store.finishTestReport(Number(req.params.rid), {
+          status: b.status,
+          summary: b.summary,
+          detail: b.detail,
+          runId: b.runId
+        }, actorOf(req))
+      )
+    })
+  )
+  app.get(
+    '/api/nodes/:id/acceptance-report',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const report = store.buildAcceptanceReport(node.id, { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })
+      if (req.query.format === 'md') {
+        res.type('text/markdown').send(renderAcceptanceMd(report))
+        return
+      }
+      res.json(report)
     })
   )
 

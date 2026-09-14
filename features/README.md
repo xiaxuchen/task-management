@@ -34,6 +34,7 @@
 | **Diff 行级评论**（diff 选中行留评 → task-board；节点/文件/行号/sha 绑定） | `diff-comments/` | — | server（comments 表/三入口）、插件「评论/评论列表」 |
 | 网页 → IDEA 打开 diff（IDE 桥） | `ide-bridge/` | — | server/store.mjs（ide_requests）+ DiffPane/NodeDrawer |
 | 重复检测与一键去重（+ 需求分支标注） | `duplicates/` | — | server/ops.mjs（getNodeDuplicates）+ NodeDrawer |
+| **回归测试闭环**（AI 可回归测试用例 + 测试/验收报告 + 提示词派单） | `regression-loop/` | — | server/{db,store,ops}.mjs（test_cases/test_reports）+ 三入口 test_* |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 

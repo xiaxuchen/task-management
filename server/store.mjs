@@ -789,6 +789,246 @@ export function createStore(db, options = {}) {
     bumpRevision()
   }
 
+  // ---------- 回归测试闭环（AI 可回归测试用例 + 测试/验收报告） ----------
+  //
+  // 需求 → 概要设计/文档（走 documents）→ AI 可回归测试（test_cases）→ 测试/验收报告（test_reports）。
+  // kind 是统一扩展轴：v1 实现 regression / acceptance；code_check / biz_check / release_check
+  // 已在 CHECK 里占位，新增一类检查只加用例，不改表结构与入口。
+
+  const TEST_CASE_KINDS = new Set(['regression', 'acceptance', 'code_check', 'biz_check', 'release_check'])
+
+  function testCaseVO(r) {
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      name: r.name,
+      kind: r.kind,
+      prompt: r.prompt,
+      expectation: r.expectation,
+      enabled: !!r.enabled,
+      sort: r.sort,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by
+    }
+  }
+
+  function assertCaseKind(kind) {
+    if (!TEST_CASE_KINDS.has(kind)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知测试类型 ${kind}`, {
+        kind,
+        allowed: [...TEST_CASE_KINDS]
+      })
+    }
+  }
+
+  function createTestCase(nodeId, { name, kind = 'regression', prompt, expectation = null, enabled = 1 }, by = 'user') {
+    rawNode(nodeId)
+    if (!name || !String(name).trim()) throw new AppError(CODES.VALIDATION_FAILED, '测试用例名必填', { field: 'name' })
+    if (!prompt || !String(prompt).trim()) {
+      throw new AppError(CODES.VALIDATION_FAILED, '测试用例内容（prompt）必填', { field: 'prompt' })
+    }
+    assertCaseKind(kind)
+    const dup = db.prepare('SELECT id FROM test_cases WHERE node_id = ? AND name = ?').get(nodeId, String(name).trim())
+    if (dup) {
+      throw new AppError(CODES.TEST_CASE_NAME_EXISTS, `测试用例已存在：${String(name).trim()}`, { name: String(name).trim() })
+    }
+    const ts = now()
+    const sort = db.prepare('SELECT IFNULL(MAX(sort),0) + 10 s FROM test_cases WHERE node_id = ?').get(nodeId).s
+    const info = db
+      .prepare(
+        'INSERT INTO test_cases (node_id,name,kind,prompt,expectation,enabled,sort,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+      )
+      .run(nodeId, String(name).trim(), kind, String(prompt).trim(), expectation, enabled ? 1 : 0, sort, ts, ts, actor(by), actor(by))
+    bumpRevision()
+    return testCaseVO(db.prepare('SELECT * FROM test_cases WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function listTestCases(nodeId, { kind = null, includeDisabled = false } = {}) {
+    rawNode(nodeId)
+    const rows = db.prepare('SELECT * FROM test_cases WHERE node_id = ? ORDER BY sort, id').all(nodeId)
+    return rows
+      .filter((r) => (kind ? r.kind === kind : true))
+      .filter((r) => (includeDisabled ? true : !!r.enabled))
+      .map(testCaseVO)
+  }
+
+  function getTestCase(id) {
+    const r = db.prepare('SELECT * FROM test_cases WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `测试用例 ${id} 不存在`, { id })
+    return testCaseVO(r)
+  }
+
+  /** 按用例名 get-or-create（幂等）：已存在则更新字段并返回 {created:false}，与文档 upsert 语义一致 */
+  function upsertTestCase(nodeId, { name, kind = 'regression', prompt, expectation = null, enabled = 1 }, by = 'user') {
+    rawNode(nodeId)
+    const trimmed = name == null ? '' : String(name).trim()
+    if (!trimmed) throw new AppError(CODES.VALIDATION_FAILED, '测试用例名必填', { field: 'name' })
+    const cur = db.prepare('SELECT * FROM test_cases WHERE node_id = ? AND name = ?').get(nodeId, trimmed)
+    if (!cur) return { ...createTestCase(nodeId, { name: trimmed, kind, prompt, expectation, enabled }, by), created: true }
+    const updated = updateTestCase(cur.id, { kind, prompt, expectation, enabled }, by)
+    return { ...updated, created: false }
+  }
+
+  function updateTestCase(id, { name = null, kind = null, prompt = null, expectation = undefined, enabled = null } = {}, by = 'user') {
+    const cur = db.prepare('SELECT * FROM test_cases WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `测试用例 ${id} 不存在`, { id })
+    if (kind != null) assertCaseKind(kind)
+    if (name != null && !String(name).trim()) throw new AppError(CODES.VALIDATION_FAILED, '测试用例名不能为空', { field: 'name' })
+    if (prompt != null && !String(prompt).trim()) throw new AppError(CODES.VALIDATION_FAILED, '测试用例内容不能为空', { field: 'prompt' })
+    const nextName = name != null ? String(name).trim() : cur.name
+    if (nextName !== cur.name) {
+      const dup = db.prepare('SELECT id FROM test_cases WHERE node_id = ? AND name = ? AND id <> ?').get(cur.node_id, nextName, Number(id))
+      if (dup) throw new AppError(CODES.TEST_CASE_NAME_EXISTS, `测试用例已存在：${nextName}`, { name: nextName })
+    }
+    db.prepare(
+      'UPDATE test_cases SET name = ?, kind = ?, prompt = ?, expectation = ?, enabled = ?, updated_at = ?, updated_by = ? WHERE id = ?'
+    ).run(
+      nextName,
+      kind || cur.kind,
+      prompt != null ? String(prompt).trim() : cur.prompt,
+      expectation !== undefined ? expectation : cur.expectation,
+      enabled != null ? (enabled ? 1 : 0) : cur.enabled,
+      now(),
+      actor(by),
+      Number(id)
+    )
+    bumpRevision()
+    return testCaseVO(db.prepare('SELECT * FROM test_cases WHERE id = ?').get(Number(id)))
+  }
+
+  function deleteTestCase(id) {
+    db.prepare('DELETE FROM test_cases WHERE id = ?').run(Number(id))
+    bumpRevision()
+  }
+
+  function reorderTestCases(nodeId, orderedIds) {
+    rawNode(nodeId)
+    withoutBump(() => {
+      orderedIds.forEach((id, i) => {
+        db.prepare('UPDATE test_cases SET sort = ? WHERE id = ? AND node_id = ?').run((i + 1) * 10, Number(id), nodeId)
+      })
+    })
+    bumpRevision()
+    return listTestCases(nodeId, { includeDisabled: true })
+  }
+
+  function testReportVO(r) {
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      caseId: r.case_id,
+      runId: r.run_id,
+      kind: r.kind,
+      status: r.status,
+      summary: r.summary,
+      detail: r.detail,
+      startedAt: r.started_at,
+      finishedAt: r.finished_at,
+      updatedAt: r.updated_at,
+      createdBy: r.created_by
+    }
+  }
+
+  /** 开一条报告（一次执行 = 一行）；run_id 关联 agent 任务，便于从报告回看执行日志 */
+  function createTestReport(nodeId, { caseId = null, runId = null, kind = 'regression', status = 'running', summary = null, detail = null }, by = 'user') {
+    rawNode(nodeId)
+    assertCaseKind(kind)
+    const ts = now()
+    const info = db
+      .prepare(
+        'INSERT INTO test_reports (node_id,case_id,run_id,kind,status,summary,detail,started_at,finished_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+      )
+      .run(nodeId, caseId, runId, kind, status, summary, detail, ts, status === 'running' ? null : ts, ts, actor(by))
+    bumpRevision()
+    return testReportVO(db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function listTestReports(nodeId, { caseId = null, kind = null, limit = 100 } = {}) {
+    rawNode(nodeId)
+    return db
+      .prepare('SELECT * FROM test_reports WHERE node_id = ? ORDER BY id DESC LIMIT ?')
+      .all(nodeId, Number(limit) || 100)
+      .filter((r) => (caseId ? r.case_id === Number(caseId) : true))
+      .filter((r) => (kind ? r.kind === kind : true))
+      .map(testReportVO)
+  }
+
+  function getTestReport(id) {
+    const r = db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `测试报告 ${id} 不存在`, { id })
+    return testReportVO(r)
+  }
+
+  /** 回写报告终态（agent 任务结束 / 前台执行者回写时调用）；status=running 表示仍在进行 */
+  function finishTestReport(id, { status, summary = undefined, detail = undefined, runId = undefined } = {}, by = 'user') {
+    const cur = db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `测试报告 ${id} 不存在`, { id })
+    const ts = now()
+    db.prepare(
+      'UPDATE test_reports SET status = ?, summary = ?, detail = ?, run_id = ?, finished_at = ?, updated_at = ?, created_by = ? WHERE id = ?'
+    ).run(
+      status || cur.status,
+      summary !== undefined ? summary : cur.summary,
+      detail !== undefined ? detail : cur.detail,
+      runId !== undefined ? runId : cur.run_id,
+      status && status !== 'running' ? ts : cur.finished_at,
+      ts,
+      actor(by),
+      Number(id)
+    )
+    bumpRevision()
+    return testReportVO(db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(id)))
+  }
+
+  /**
+   * 验收报告聚合：把节点（含可选子树）下的用例与报告汇总成一个可读结构 ——
+   * 每个用例的最近一次结果 + 总体通过率 + 未覆盖用例清单。
+   */
+  function buildAcceptanceReport(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const ids = scope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const ph = ids.map(() => '?').join(',')
+    const cases = db.prepare(`SELECT * FROM test_cases WHERE node_id IN (${ph}) ORDER BY node_id, sort, id`).all(...ids).map(testCaseVO)
+    const reports = db.prepare(`SELECT * FROM test_reports WHERE node_id IN (${ph}) ORDER BY id DESC`).all(...ids).map(testReportVO)
+    const latestByCase = new Map()
+    for (const r of reports) {
+      if (r.caseId == null) continue
+      if (!latestByCase.has(r.caseId)) latestByCase.set(r.caseId, r)
+    }
+    const items = cases.map((c) => {
+      const latest = latestByCase.get(c.id) || null
+      return {
+        caseId: c.id,
+        nodeId: c.nodeId,
+        name: c.name,
+        kind: c.kind,
+        expectation: c.expectation,
+        latestStatus: latest ? latest.status : 'not_run',
+        latestReportId: latest ? latest.id : null,
+        latestAt: latest ? latest.updatedAt : null
+      }
+    })
+    const ran = items.filter((i) => i.latestStatus !== 'not_run')
+    const passed = items.filter((i) => i.latestStatus === 'pass')
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope,
+      totals: {
+        cases: items.length,
+        run: ran.length,
+        pass: passed.length,
+        fail: items.filter((i) => i.latestStatus === 'fail').length,
+        blocked: items.filter((i) => i.latestStatus === 'blocked' || i.latestStatus === 'error').length,
+        notRun: items.length - ran.length
+      },
+      passRate: ran.length ? Math.round((passed.length / ran.length) * 1000) / 1000 : null,
+      items,
+      reports: reports.slice(0, 20)
+    }
+  }
+
   // ---------- agent 运行时管理（参考 multica agent_runtime / chat_session / agent_task_queue） ----------
   //
   // 三层模型：
@@ -1575,6 +1815,20 @@ export function createStore(db, options = {}) {
     listCommentsByFile,
     updateComment,
     deleteComment,
+    // 回归测试闭环（AI 可回归测试用例 + 测试/验收报告）
+    TEST_CASE_KINDS,
+    createTestCase,
+    listTestCases,
+    getTestCase,
+    upsertTestCase,
+    updateTestCase,
+    deleteTestCase,
+    reorderTestCases,
+    createTestReport,
+    listTestReports,
+    getTestReport,
+    finishTestReport,
+    buildAcceptanceReport,
     // agent 运行时管理
     upsertRuntime,
     heartbeatRuntime,
