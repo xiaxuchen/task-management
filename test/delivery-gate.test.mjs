@@ -167,6 +167,19 @@ test('delivery_gate：markdown 表格转义 | 与换行，避免撑破列', asyn
   assert.ok(!row.includes('用例|含竖线'))
 })
 
+test('delivery_gate：markdown 转义输入自带的反斜杠（先 \\\\ 再 |）', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  makeReadinessPass(store, r.id)
+  store.createTestCase(r.id, { name: 'a\\|b', prompt: 'p', enabled: 1 })
+  const { renderDeliveryGateMd } = await import('../server/ops.mjs')
+  const md = renderDeliveryGateMd(store.buildDeliveryGate(r.id))
+  const row = md.split('\n').find((line) => line.includes('a'))
+  assert.ok(row)
+  // 字面 a\|b 必须变成 a\\\|b：反斜杠先被翻倍，竖线再被转义
+  assert.ok(row.includes('a\\\\\\|b'))
+})
+
 test('format：缺省/合法值通过，非法值 VALIDATION_FAILED', async (t) => {
   const { tmp, store } = await setup()
   t.after(() => tmp.cleanup())

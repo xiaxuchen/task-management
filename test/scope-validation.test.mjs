@@ -121,3 +121,23 @@ test('scope：MCP 聚合工具对非法 scope 报错（三入口契约一致）'
     assert.match(out.content[0].text, /\["self","subtree"\]/)
   }
 })
+
+test('scope：其余 MCP 工具也不泄漏 -32602（横切契约）', async (t) => {
+  const { tmp, store, call, close } = await mcpClient()
+  t.after(async () => {
+    await close()
+    tmp.cleanup()
+  })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  for (const [tool, args] of [
+    ['node_diffs', { ref: 'P', scope: 'sub' }],
+    ['node_tracks', { ref: 'P', scope: 'sub' }],
+    ['commit_duplicates', { ref: 'P', scope: 'sub' }],
+    ['release_check', { node: p.id, scope: 'sub', dryRun: true }]
+  ]) {
+    const out = await call(tool, args)
+    assert.equal(out.isError, true, `${tool} 应当拒绝非法 scope`)
+    assert.match(out.content[0].text, /VALIDATION_FAILED/, tool)
+    assert.ok(!/MCP error -32602/.test(out.content[0].text), `${tool} 不得泄漏 SDK -32602`)
+  }
+})

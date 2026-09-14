@@ -958,6 +958,7 @@ export function renderDeliveryGateMd(gate) {
   // 否则 `|` 会多分一列、换行会直接截断表格。
   const cell = (v) =>
     String(v == null ? '' : v)
+      .replace(/\\/g, '\\\\')
       .replace(/\|/g, '\\|')
       .replace(/\r?\n/g, ' ')
   const t = gate.totals

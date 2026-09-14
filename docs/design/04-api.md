@@ -137,3 +137,5 @@
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
+这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `acceptance_report` / `delivery_gate` /
+`release_checklist` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
