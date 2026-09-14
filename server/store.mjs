@@ -1029,6 +1029,205 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
+  //
+  // 需求 → 概要设计/文档 → 回归测试（test_cases）→ 上线清单（release_items）。
+  // kind = config / sql / check 对应「上线配置 / 上线 SQL / 上线检查」；
+  // 代码检查 / 业务检查 / 上线检查的**执行**语义仍走 test_cases 的 code_check / biz_check / release_check，
+  // 本表只做结构化登记（内容 + 回滚 + 状态 + 必做），保证三入口 1:1。
+
+  const RELEASE_ITEM_KINDS = new Set(['config', 'sql', 'check'])
+  const RELEASE_ITEM_STATUSES = new Set(['pending', 'ready', 'done', 'blocked', 'skipped'])
+
+  function releaseItemVO(r) {
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      name: r.name,
+      kind: r.kind,
+      content: r.content,
+      rollback: r.rollback,
+      status: r.status,
+      required: !!r.required,
+      sort: r.sort,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by
+    }
+  }
+
+  function assertReleaseKind(kind) {
+    if (!RELEASE_ITEM_KINDS.has(kind)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知上线项类型 ${kind}`, { kind, allowed: [...RELEASE_ITEM_KINDS] })
+    }
+  }
+
+  function assertReleaseStatus(status) {
+    if (!RELEASE_ITEM_STATUSES.has(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知上线项状态 ${status}`, { status, allowed: [...RELEASE_ITEM_STATUSES] })
+    }
+  }
+
+  function createReleaseItem(
+    nodeId,
+    { name, kind = 'config', content = '', rollback = null, status = 'pending', required = 1 },
+    by = 'user'
+  ) {
+    rawNode(nodeId)
+    if (!name || !String(name).trim()) {
+      throw new AppError(CODES.VALIDATION_FAILED, '上线项名称必填', { field: 'name' })
+    }
+    assertReleaseKind(kind)
+    assertReleaseStatus(status)
+    const trimmed = String(name).trim()
+    const dup = db.prepare('SELECT id FROM release_items WHERE node_id = ? AND name = ?').get(nodeId, trimmed)
+    if (dup) {
+      throw new AppError(CODES.RELEASE_ITEM_NAME_EXISTS, `上线项已存在：${trimmed}`, { name: trimmed })
+    }
+    const ts = now()
+    const sort = db.prepare('SELECT IFNULL(MAX(sort),0) + 10 s FROM release_items WHERE node_id = ?').get(nodeId).s
+    const info = db
+      .prepare(
+        'INSERT INTO release_items (node_id,name,kind,content,rollback,status,required,sort,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'
+      )
+      .run(nodeId, trimmed, kind, String(content ?? ''), rollback, status, required ? 1 : 0, sort, ts, ts, actor(by), actor(by))
+    bumpRevision()
+    return releaseItemVO(db.prepare('SELECT * FROM release_items WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function listReleaseItems(nodeId, { kind = null, status = null, includeOptional = true } = {}) {
+    rawNode(nodeId)
+    return db
+      .prepare('SELECT * FROM release_items WHERE node_id = ? ORDER BY sort, id')
+      .all(nodeId)
+      .filter((r) => (kind ? r.kind === kind : true))
+      .filter((r) => (status ? r.status === status : true))
+      .filter((r) => (includeOptional ? true : !!r.required))
+      .map(releaseItemVO)
+  }
+
+  function getReleaseItem(id) {
+    const r = db.prepare('SELECT * FROM release_items WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `上线项 ${id} 不存在`, { id })
+    return releaseItemVO(r)
+  }
+
+  /** 按名称 get-or-create（幂等）：已存在则更新字段并返回 {created:false}，与文档 / 用例 upsert 语义一致 */
+  function upsertReleaseItem(
+    nodeId,
+    { name, kind = 'config', content = '', rollback = null, status = 'pending', required = 1 },
+    by = 'user'
+  ) {
+    rawNode(nodeId)
+    const trimmed = name == null ? '' : String(name).trim()
+    if (!trimmed) throw new AppError(CODES.VALIDATION_FAILED, '上线项名称必填', { field: 'name' })
+    const cur = db.prepare('SELECT * FROM release_items WHERE node_id = ? AND name = ?').get(nodeId, trimmed)
+    if (!cur) {
+      return { ...createReleaseItem(nodeId, { name: trimmed, kind, content, rollback, status, required }, by), created: true }
+    }
+    const updated = updateReleaseItem(cur.id, { kind, content, rollback, status, required }, by)
+    return { ...updated, created: false }
+  }
+
+  function updateReleaseItem(
+    id,
+    { name = null, kind = null, content = undefined, rollback = undefined, status = null, required = null } = {},
+    by = 'user'
+  ) {
+    const cur = db.prepare('SELECT * FROM release_items WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `上线项 ${id} 不存在`, { id })
+    if (kind != null) assertReleaseKind(kind)
+    if (status != null) assertReleaseStatus(status)
+    if (name != null && !String(name).trim()) {
+      throw new AppError(CODES.VALIDATION_FAILED, '上线项名称不能为空', { field: 'name' })
+    }
+    const nextName = name != null ? String(name).trim() : cur.name
+    if (nextName !== cur.name) {
+      const dup = db
+        .prepare('SELECT id FROM release_items WHERE node_id = ? AND name = ? AND id <> ?')
+        .get(cur.node_id, nextName, Number(id))
+      if (dup) throw new AppError(CODES.RELEASE_ITEM_NAME_EXISTS, `上线项已存在：${nextName}`, { name: nextName })
+    }
+    db.prepare(
+      'UPDATE release_items SET name = ?, kind = ?, content = ?, rollback = ?, status = ?, required = ?, updated_at = ?, updated_by = ? WHERE id = ?'
+    ).run(
+      nextName,
+      kind || cur.kind,
+      content !== undefined ? String(content ?? '') : cur.content,
+      rollback !== undefined ? rollback : cur.rollback,
+      status || cur.status,
+      required != null ? (required ? 1 : 0) : cur.required,
+      now(),
+      actor(by),
+      Number(id)
+    )
+    bumpRevision()
+    return releaseItemVO(db.prepare('SELECT * FROM release_items WHERE id = ?').get(Number(id)))
+  }
+
+  function deleteReleaseItem(id) {
+    const cur = db.prepare('SELECT id FROM release_items WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `上线项 ${id} 不存在`, { id })
+    db.prepare('DELETE FROM release_items WHERE id = ?').run(Number(id))
+    bumpRevision()
+    return { id: Number(id) }
+  }
+
+  function reorderReleaseItems(nodeId, orderedIds) {
+    rawNode(nodeId)
+    withoutBump(() => {
+      orderedIds.forEach((id, i) => {
+        db.prepare('UPDATE release_items SET sort = ? WHERE id = ? AND node_id = ?').run((i + 1) * 10, Number(id), nodeId)
+      })
+    })
+    bumpRevision()
+    return listReleaseItems(nodeId)
+  }
+
+  /**
+   * 上线检查（release readiness）：按节点（self / subtree）汇总上线清单的完成度。
+   * 与验收报告同口径——只统计必做项（required）为阻塞项，可选项单列；空清单时 ready=null。
+   */
+  function buildReleaseChecklist(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const ids = scope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const ph = ids.map(() => '?').join(',')
+    const items = db
+      .prepare(`SELECT * FROM release_items WHERE node_id IN (${ph}) ORDER BY node_id, sort, id`)
+      .all(...ids)
+      .map(releaseItemVO)
+    const requiredItems = items.filter((i) => i.required)
+    const optionalItems = items.filter((i) => !i.required)
+    const pending = items.filter((i) => i.status === 'pending' || i.status === 'ready')
+    const blocked = items.filter((i) => i.status === 'blocked')
+    const pendingRequired = requiredItems.filter((i) => i.status !== 'done' && i.status !== 'skipped')
+    const byKind = {}
+    for (const i of items) byKind[i.kind] = (byKind[i.kind] || 0) + 1
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope,
+      totals: {
+        items: items.length,
+        required: requiredItems.length,
+        optional: optionalItems.length,
+        done: items.filter((i) => i.status === 'done').length,
+        blocked: blocked.length,
+        pending: pending.length
+      },
+      byKind,
+      ready: requiredItems.length === 0 ? null : pendingRequired.length === 0,
+      blockers: pendingRequired.map((i) => ({
+        id: i.id,
+        nodeId: i.nodeId,
+        name: i.name,
+        kind: i.kind,
+        status: i.status
+      })),
+      items
+    }
+  }
+
   // ---------- agent 运行时管理（参考 multica agent_runtime / chat_session / agent_task_queue） ----------
   //
   // 三层模型：
@@ -1829,6 +2028,16 @@ export function createStore(db, options = {}) {
     getTestReport,
     finishTestReport,
     buildAcceptanceReport,
+    // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
+    RELEASE_ITEM_KINDS,
+    createReleaseItem,
+    listReleaseItems,
+    getReleaseItem,
+    upsertReleaseItem,
+    updateReleaseItem,
+    deleteReleaseItem,
+    reorderReleaseItems,
+    buildReleaseChecklist,
     // agent 运行时管理
     upsertRuntime,
     heartbeatRuntime,

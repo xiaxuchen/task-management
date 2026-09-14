@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -20,6 +20,8 @@ const STATUS_BY_CODE = {
   [CODES.PATH_NOT_FOUND]: 404,
   [CODES.PATH_AMBIGUOUS]: 409,
   [CODES.DOC_NAME_EXISTS]: 409,
+  [CODES.TEST_CASE_NAME_EXISTS]: 409,
+  [CODES.RELEASE_ITEM_NAME_EXISTS]: 409,
   [CODES.UPLOAD_INVALID_TYPE]: 400,
   [CODES.UPLOAD_TOO_LARGE]: 400,
   [CODES.GITLAB_NOT_CONFIGURED]: 400,
@@ -527,6 +529,130 @@ export function createApp({ store }) {
         return
       }
       res.json(report)
+    })
+  )
+
+  // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
+  app.get(
+    '/api/nodes/:id/release-items',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(
+        store.listReleaseItems(node.id, {
+          kind: req.query.kind || null,
+          status: req.query.status || null,
+          includeOptional: req.query.includeOptional !== 'false'
+        })
+      )
+    })
+  )
+  app.post(
+    '/api/nodes/:id/release-items',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(
+        store.createReleaseItem(
+          node.id,
+          {
+            name: b.name,
+            kind: b.kind,
+            content: b.content,
+            rollback: b.rollback,
+            status: b.status,
+            required: b.required
+          },
+          actorOf(req)
+        )
+      )
+    })
+  )
+  app.post(
+    '/api/nodes/:id/release-items/upsert',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.json(
+        store.upsertReleaseItem(
+          node.id,
+          {
+            name: b.name,
+            kind: b.kind,
+            content: b.content,
+            rollback: b.rollback,
+            status: b.status,
+            required: b.required
+          },
+          actorOf(req)
+        )
+      )
+    })
+  )
+  app.post(
+    '/api/nodes/:id/release-items/reorder',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(store.reorderReleaseItems(node.id, (req.body || {}).orderedIds || []))
+    })
+  )
+  app.patch(
+    '/api/release-items/:rid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      res.json(
+        store.updateReleaseItem(
+          Number(req.params.rid),
+          {
+            name: b.name,
+            kind: b.kind,
+            content: b.content,
+            rollback: b.rollback,
+            status: b.status,
+            required: b.required
+          },
+          actorOf(req)
+        )
+      )
+    })
+  )
+  app.delete(
+    '/api/release-items/:rid',
+    wrap((req, res) => res.json(store.deleteReleaseItem(Number(req.params.rid))))
+  )
+  app.get(
+    '/api/nodes/:id/release-checklist',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const checklist = store.buildReleaseChecklist(node.id, {
+        scope: req.query.scope === 'subtree' ? 'subtree' : 'self'
+      })
+      if (req.query.format === 'md') {
+        res.type('text/markdown').send(renderReleaseChecklistMd(checklist))
+        return
+      }
+      res.json(checklist)
+    })
+  )
+  app.post(
+    '/api/nodes/:id/release-checks',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(
+        runReleaseChecks(
+          store,
+          node.id,
+          {
+            caseIds: b.caseIds,
+            prompt: b.prompt,
+            agent: b.agent,
+            model: b.model,
+            cwd: b.cwd,
+            dryRun: !!b.dryRun
+          },
+          actorOf(req)
+        )
+      )
     })
   )
 

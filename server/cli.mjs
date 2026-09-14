@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 
 const OPTIONS = {
@@ -28,6 +28,8 @@ const OPTIONS = {
   'review-note': { type: 'string' },
   kind: { type: 'string' },
   expectation: { type: 'string' },
+  rollback: { type: 'string' },
+  optional: { type: 'boolean' },
   'case-ids': { type: 'string' },
   'case-id': { type: 'string' },
   limit: { type: 'string' },
@@ -118,6 +120,13 @@ const HELP = `task-board <命令>
   test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
   test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
+  release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
+  release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
+  release item update <rid> [--name n] [--kind k] [--content c] [--rollback r] [--status s] [--required|--optional]
+  release item remove <rid>
+  release item reorder <ref> --ids "1,2,3"
+  release checklist <ref> [--scope self|subtree] [--format json|md]   上线检查清单（完成度 + 阻塞项 + 就绪结论）
+  release check <ref> [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run]   派单执行上线前置检查（含 code/biz/release_check 用例）
   runtime list [--status online|offline]        运行时列表（含本机 CLI 实例状态）
   runtime register [--daemon <主机名>] [--provider qodercli] [--name <名>] [--visibility private|public]
   runtime heartbeat <id>                        运行时心跳（刷新 last_seen_at + 置 online）
@@ -363,6 +372,75 @@ export async function run(argv) {
       const report = store.buildAcceptanceReport(node.id, { scope: values.scope === 'subtree' ? 'subtree' : 'self' })
       if (values.format === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
       else json(report)
+      break
+    }
+    // ---------- 上线治理（`release item|checklist|check ...`） ----------
+    case 'release item': {
+      const sub = ref
+      const arg = positionals[3]
+      if (sub === 'list')
+        json(
+          store.listReleaseItems(store.resolveRef(arg).id, {
+            kind: values.kind || null,
+            status: values.status || null,
+            includeOptional: !values.optional
+          })
+        )
+      else if (sub === 'upsert')
+        json(
+          store.upsertReleaseItem(
+            store.resolveRef(arg).id,
+            {
+              name: values.name,
+              kind: values.kind || 'config',
+              content: readMaybeFile({ content: values.content, file: values.file }) ?? values.content ?? '',
+              rollback: values.rollback ?? null,
+              status: values.status || 'pending',
+              required: values.optional ? 0 : 1
+            },
+            by
+          )
+        )
+      else if (sub === 'update')
+        json(
+          store.updateReleaseItem(
+            Number(arg),
+            {
+              name: values.name ?? null,
+              kind: values.kind ?? null,
+              content: values.content !== undefined ? readMaybeFile({ content: values.content, file: values.file }) ?? values.content : undefined,
+              rollback: values.rollback !== undefined ? values.rollback : undefined,
+              status: values.status ?? null,
+              required: values.optional ? 0 : values.required ? 1 : null
+            },
+            by
+          )
+        )
+      else if (sub === 'remove') json(store.deleteReleaseItem(Number(arg)))
+      else if (sub === 'reorder')
+        json(store.reorderReleaseItems(store.resolveRef(arg).id, String(values.ids || '').split(',').map((s) => Number(s.trim()))))
+      else throw new Error(`release item 支持 list|upsert|update|remove|reorder，收到：${sub}`)
+      break
+    }
+    case 'release checklist': {
+      const node = store.resolveRef(ref)
+      const checklist = store.buildReleaseChecklist(node.id, { scope: values.scope === 'subtree' ? 'subtree' : 'self' })
+      if (values.format === 'md') process.stdout.write(renderReleaseChecklistMd(checklist) + '\n')
+      else json(checklist)
+      break
+    }
+    case 'release check': {
+      const node = store.resolveRef(ref)
+      json(
+        runReleaseChecks(store, node.id, {
+          caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
+          prompt: values.prompt || null,
+          agent: values.agent,
+          model: values.model,
+          cwd: values.cwd,
+          dryRun: !!values['dry-run']
+        }, by)
+      )
       break
     }
     // ---------- 运行时 ----------

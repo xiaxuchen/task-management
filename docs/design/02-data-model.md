@@ -355,3 +355,33 @@ index：`idx_agent_runs_node(node_id)`、`idx_agent_runs_session(session_id, id)
 约束：一次执行 = 一行；index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, id)`。
 **验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果，
 通过率以「已执行用例」为分母，未执行单列 `notRun`（避免「没跑 = 失败」的误判）。
+
+### 4.15 release_items（上线清单：上线配置 / 上线 SQL / 上线检查项）
+
+补齐「需求 → 概要设计/文档 → 回归测试 → 上线治理」的最后一段：把上线要做的**配置变更 / SQL / 检查项**
+结构化成清单，并为「上线就绪」提供一个可查询的确定结论。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE；可挂任意节点类型 |
+| name | TEXT NOT NULL | 上线项名（同节点内唯一） |
+| kind | TEXT NOT NULL | `config`（上线配置）/ `sql`（上线 SQL）/ `check`（上线检查）（CHECK 约束） |
+| content | TEXT NOT NULL DEFAULT '' | 上线内容（SQL 正文 / 开关项 / 检查说明） |
+| rollback | TEXT | 回滚方案（可空） |
+| status | TEXT NOT NULL | `pending` / `ready` / `done` / `blocked` / `skipped`（CHECK 约束） |
+| required | INTEGER NOT NULL DEFAULT 1 | 是否必做；只有必做项参与「就绪」判定 |
+| sort | INTEGER NOT NULL | 展示 / 执行顺序 |
+| created_at / updated_at | TEXT | |
+| created_by / updated_by | TEXT | 操作者（user / ai / cli / import / mcp） |
+
+约束：`UNIQUE(node_id, name)`；index：`idx_release_items_node(node_id, sort, id)`。
+
+**上线检查清单**不落表，由 `buildReleaseChecklist` 按节点（`self` / `subtree`）聚合：
+完成度 + 按类型分布 + 就绪结论 `ready` + 阻塞项 `blockers`。
+只有必做项全部落在 `done` / `skipped` 才 `ready=true`；**无必做项时 `ready=null`**
+（与验收报告 `passRate=null` 同口径，避免「没有项 = 未就绪」误判）。
+
+**执行语义复用 `test_cases` 的 kind 扩展轴**：`code_check` / `biz_check` / `release_check` 三类用例
+经 `runReleaseChecks` 拼提示词派单给 agent（复用 agent 运行时），与 `release_items` 的清单一起进上线单；
+上线 SQL / 配置的**真正执行**不在本工具内，本表只做登记与检查。

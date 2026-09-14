@@ -309,6 +309,28 @@ CREATE TABLE IF NOT EXISTS test_reports (
 CREATE INDEX IF NOT EXISTS idx_test_reports_node ON test_reports(node_id, id);
 CREATE INDEX IF NOT EXISTS idx_test_reports_case ON test_reports(case_id, id);
 
+-- 上线清单：挂在节点上的上线配置 / 上线 SQL / 上线检查项（结构化登记）。
+-- 「代码检查 / 业务检查 / 上线检查」的执行语义复用 test_cases 的 kind 扩展轴，本表只补结构化的上线项。
+CREATE TABLE IF NOT EXISTS release_items (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'config'
+    CHECK (kind IN ('config','sql','check')),
+  content TEXT NOT NULL DEFAULT '',
+  rollback TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','ready','done','blocked','skipped')),
+  required INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'user',
+  updated_by TEXT NOT NULL DEFAULT 'user',
+  UNIQUE(node_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_release_items_node ON release_items(node_id, sort, id);
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -477,6 +499,29 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_test_reports_node ON test_reports(node_id, id);
     CREATE INDEX IF NOT EXISTS idx_test_reports_case ON test_reports(case_id, id);
+  `)
+
+  // 上线清单（v4）：老库补表；SCHEMA 只对新库生效
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS release_items (
+      id INTEGER PRIMARY KEY,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'config'
+        CHECK (kind IN ('config','sql','check')),
+      content TEXT NOT NULL DEFAULT '',
+      rollback TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','ready','done','blocked','skipped')),
+      required INTEGER NOT NULL DEFAULT 1,
+      sort INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user',
+      updated_by TEXT NOT NULL DEFAULT 'user',
+      UNIQUE(node_id, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_release_items_node ON release_items(node_id, sort, id);
   `)
 
   // max_attempts 从「死字段」升级为硬上限（默认 3）。老库的历史行都带着旧的默认 1，

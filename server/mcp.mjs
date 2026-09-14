@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -728,6 +728,128 @@ export function createMcpServer({ store }) {
       const report = store.buildAcceptanceReport(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
       const text = format === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
       return { content: [{ type: 'text', text }] }
+    }
+  )
+
+  // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
+
+  server.tool(
+    'release_item_list',
+    '列出节点的上线项（上线配置 / 上线 SQL / 上线检查）；kind 可筛 config/sql/check，status 可筛 pending/ready/done/blocked/skipped',
+    {
+      node: z.union([z.number(), z.string()]),
+      kind: z.enum(['config', 'sql', 'check']).optional(),
+      status: z.enum(['pending', 'ready', 'done', 'blocked', 'skipped']).optional(),
+      includeOptional: z.boolean().optional()
+    },
+    async ({ node, kind, status, includeOptional }) => {
+      const n = store.resolveRef(String(node))
+      const list = store.listReleaseItems(n.id, {
+        kind: kind || null,
+        status: status || null,
+        includeOptional: includeOptional === undefined ? true : includeOptional
+      })
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'release_item_upsert',
+    '按名称 get-or-create 上线项（幂等）：已存在则更新内容/回滚/状态/必做，返回 created 标记',
+    {
+      node: z.union([z.number(), z.string()]),
+      name: z.string(),
+      kind: z.enum(['config', 'sql', 'check']).optional(),
+      content: z.string().optional(),
+      rollback: z.string().optional(),
+      status: z.enum(['pending', 'ready', 'done', 'blocked', 'skipped']).optional(),
+      required: z.boolean().optional()
+    },
+    async ({ node, name, kind, content, rollback, status, required }) => {
+      const n = store.resolveRef(String(node))
+      const item = store.upsertReleaseItem(
+        n.id,
+        {
+          name,
+          kind: kind || 'config',
+          content: content ?? '',
+          rollback: rollback ?? null,
+          status: status || 'pending',
+          required: required === undefined ? 1 : required
+        },
+        'mcp'
+      )
+      return { content: [{ type: 'text', text: JSON.stringify(item, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'release_item_update',
+    '更新上线项（改名 / 改类型 / 改内容 / 改回滚 / 改状态 / 改必做）',
+    {
+      id: z.number(),
+      name: z.string().optional(),
+      kind: z.enum(['config', 'sql', 'check']).optional(),
+      content: z.string().optional(),
+      rollback: z.string().optional(),
+      status: z.enum(['pending', 'ready', 'done', 'blocked', 'skipped']).optional(),
+      required: z.boolean().optional()
+    },
+    async ({ id, name, kind, content, rollback, status, required }) => {
+      const item = store.updateReleaseItem(id, { name, kind, content, rollback, status, required }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(item, null, 2) }] }
+    }
+  )
+
+  server.tool('release_item_remove', '删除上线项', { id: z.number() }, async ({ id }) => {
+    const out = store.deleteReleaseItem(id)
+    return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+  })
+
+  server.tool(
+    'release_item_reorder',
+    '按 id 顺序重排上线项',
+    { node: z.union([z.number(), z.string()]), orderedIds: z.array(z.number()) },
+    async ({ node, orderedIds }) => {
+      const n = store.resolveRef(String(node))
+      const list = store.reorderReleaseItems(n.id, orderedIds)
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'release_checklist',
+    '上线检查清单：聚合节点（含可选子树）的上线项完成度、就绪结论与阻塞项；format=md 返回可贴进上线单的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
+    async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const checklist = store.buildReleaseChecklist(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const text = format === 'md' ? renderReleaseChecklistMd(checklist) : JSON.stringify(checklist, null, 2)
+      return { content: [{ type: 'text', text }] }
+    }
+  )
+
+  server.tool(
+    'release_check',
+    '派单执行上线前置检查：把上线清单 + code_check/biz_check/release_check 用例拼成提示词交给 agent 运行时，并为每条用例开 running 报告。dryRun 只返回将要检查的内容',
+    {
+      node: z.union([z.number(), z.string()]),
+      caseIds: z.array(z.number()).optional(),
+      prompt: z.string().optional(),
+      agent: z.string().optional(),
+      model: z.string().optional(),
+      cwd: z.string().optional(),
+      dryRun: z.boolean().optional()
+    },
+    async ({ node, caseIds, prompt, agent, model, cwd, dryRun }) => {
+      const n = store.resolveRef(String(node))
+      const out = runReleaseChecks(
+        store,
+        n.id,
+        { caseIds: caseIds || null, prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun },
+        'mcp'
+      )
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
     }
   )
 

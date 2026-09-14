@@ -466,9 +466,15 @@ test('回归闭环：用例 upsert → dryRun → 报告 → 验收报告（HTTP
 })
 
 test('回归闭环：重名用例返回 TEST_CASE_NAME_EXISTS', async () => {
-  const { tmp, post, close } = await setup()
+  const { tmp, post, base, close } = await setup()
   const p = await post('/api/nodes', { type: 'project', name: 'P' })
   await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'p' })
+  const res = await fetch(`${base}/api/nodes/${p.id}/test-cases`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'A', prompt: 'q' })
+  })
+  assert.equal(res.status, 409)
   const dup = await post(`/api/nodes/${p.id}/test-cases`, { name: 'A', prompt: 'q' })
   assert.equal(dup.error.code, 'TEST_CASE_NAME_EXISTS')
   await close()
@@ -500,6 +506,105 @@ test('回归闭环：报告列表 / 单条读取 / 回写终态', async () => {
   assert.equal(acceptance.totals.pass, 1)
   assert.equal(acceptance.passRate, 1)
 
+  await close()
+  tmp.cleanup()
+})
+
+// ---------- 上线治理 ----------
+
+test('上线治理：上线项 upsert → 清单 → 就绪结论（HTTP 全链路）', async () => {
+  const { tmp, post, get, patch, del, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+
+  // 按名 upsert 幂等
+  const i1 = await post(`/api/nodes/${r.id}/release-items/upsert`, {
+    name: '执行上线 SQL',
+    kind: 'sql',
+    content: 'ALTER TABLE …',
+    rollback: 'DROP INDEX …'
+  })
+  assert.equal(i1.created, true)
+  assert.equal(i1.kind, 'sql')
+  assert.equal(i1.status, 'pending')
+  const i2 = await post(`/api/nodes/${r.id}/release-items/upsert`, {
+    name: '执行上线 SQL',
+    kind: 'sql',
+    content: 'ALTER TABLE … v2'
+  })
+  assert.equal(i2.created, false)
+  assert.equal(i2.id, i1.id)
+  assert.equal(i2.content, 'ALTER TABLE … v2')
+
+  const items = await get(`/api/nodes/${r.id}/release-items`)
+  assert.equal(items.length, 1)
+
+  // 必做项未完成 → 未就绪
+  const checklist = await get(`/api/nodes/${r.id}/release-checklist`)
+  assert.equal(checklist.ready, false)
+  assert.equal(checklist.blockers.length, 1)
+  assert.equal(checklist.blockers[0].name, '执行上线 SQL')
+
+  // 回写 done → 就绪
+  const done = await patch(`/api/release-items/${i1.id}`, { status: 'done' })
+  assert.equal(done.status, 'done')
+  assert.equal((await get(`/api/nodes/${r.id}/release-checklist`)).ready, true)
+
+  // 删除后清单为空，ready=null
+  await del(`/api/release-items/${i1.id}`, {})
+  assert.equal((await get(`/api/nodes/${r.id}/release-checklist`)).ready, null)
+
+  await close()
+  tmp.cleanup()
+})
+
+test('上线治理：重名上线项返回 RELEASE_ITEM_NAME_EXISTS（409）', async () => {
+  const { tmp, post, base, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  await post(`/api/nodes/${p.id}/release-items`, { name: 'A' })
+  const res = await fetch(`${base}/api/nodes/${p.id}/release-items`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'A' })
+  })
+  assert.equal(res.status, 409)
+  const dup = await post(`/api/nodes/${p.id}/release-items`, { name: 'A' })
+  assert.equal(dup.error.code, 'RELEASE_ITEM_NAME_EXISTS')
+  await close()
+  tmp.cleanup()
+})
+
+test('上线治理：dryRun 拼上线清单与 code/biz/release_check 用例', async () => {
+  const { tmp, post, get, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+  await post(`/api/nodes/${r.id}/release-items/upsert`, { name: '灰度开关', kind: 'config', content: 'switch=on' })
+  await post(`/api/nodes/${r.id}/test-cases/upsert`, { name: '静态检查', prompt: '跑 lint', kind: 'code_check' })
+  await post(`/api/nodes/${r.id}/test-cases/upsert`, { name: '普通回归', prompt: '跑回归', kind: 'regression' })
+
+  const dry = await post(`/api/nodes/${r.id}/release-checks`, { dryRun: true })
+  assert.equal(dry.dryRun, true)
+  assert.deepEqual(dry.cases.map((c) => c.name), ['静态检查'])
+  assert.equal(dry.items.length, 1)
+  assert.ok(dry.prompt.includes('灰度开关'))
+  assert.ok(dry.prompt.includes('静态检查'))
+  // dryRun 不落报告、不派单
+  assert.equal((await get(`/api/nodes/${r.id}/test-reports`)).length, 0)
+
+  await close()
+  tmp.cleanup()
+})
+
+test('上线治理：清单 md 输出可贴进上线单', async () => {
+  const { tmp, post, base, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  await post(`/api/nodes/${p.id}/release-items/upsert`, { name: '执行上线 SQL', kind: 'sql' })
+  const res = await fetch(`${base}/api/nodes/${p.id}/release-checklist?format=md`)
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type') || '', /text\/markdown/)
+  const md = await res.text()
+  assert.ok(md.startsWith('# 上线检查'))
+  assert.ok(md.includes('执行上线 SQL'))
   await close()
   tmp.cleanup()
 })

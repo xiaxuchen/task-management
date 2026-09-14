@@ -313,6 +313,35 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?scope=subtree'
 curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?format=md'
 ```
 
+## 上线治理（上线配置 / 上线 SQL / 上线检查清单）
+
+```bash
+# 按项名 upsert 上线项（幂等）：kind = config | sql | check
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-items/upsert \
+  -H 'content-type: application/json' \
+  -d '{"name":"执行上线 SQL","kind":"sql","content":"ALTER TABLE t ADD COLUMN x INT;","rollback":"ALTER TABLE t DROP COLUMN x;","required":true}'
+
+# 上线配置 / 检查项
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-items/upsert \
+  -H 'content-type: application/json' -d '{"name":"开灰度开关","kind":"config","content":"switch=on","rollback":"switch=off"}'
+
+# 列表：按类型 / 状态筛，includeOptional=false 只看必做
+curl -s 'http://127.0.0.1:3210/api/nodes/1/release-items?kind=sql'
+curl -s 'http://127.0.0.1:3210/api/nodes/1/release-items?includeOptional=false'
+
+# 回写状态（done / skipped 才算必做项完成）
+curl -s -X PATCH http://127.0.0.1:3210/api/release-items/1 \
+  -H 'content-type: application/json' -d '{"status":"done"}'
+
+# 上线检查清单：完成度 + 就绪结论 + 阻塞项；format=md 可直接贴上线单
+curl -s 'http://127.0.0.1:3210/api/nodes/1/release-checklist?scope=subtree'
+curl -s 'http://127.0.0.1:3210/api/nodes/1/release-checklist?format=md'
+
+# 上线前置检查：挑 code_check / biz_check / release_check 用例派单；dryRun 只回提示词
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-checks \
+  -H 'content-type: application/json' -d '{"dryRun":true}'
+```
+
 ## 错误码速查
 
 | HTTP | code | 场景 |
@@ -328,6 +357,7 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?format=md'
 | 404 | `NOT_FOUND` / `PATH_NOT_FOUND` | 资源或路径不存在 |
 | 409 | `PATH_AMBIGUOUS` / `DOC_NAME_EXISTS` / `WORKTREE_PATH_EXISTS` | 路径歧义 / 文档重名 / worktree 占用 |
 | 409 | `TEST_CASE_NAME_EXISTS` | 同节点测试用例重名 |
+| 409 | `RELEASE_ITEM_NAME_EXISTS` | 同节点上线项重名（upsert 走幂等覆盖，不报错）|
 | 500 | `GIT_UNAVAILABLE` / `GIT_FAILED` | 本机 git 不可用 / 命令失败（`details` 带 stderr）|
 | 502 | `GITLAB_AUTH_FAILED` / `GITLAB_PROJECT_NOT_FOUND` / `GITLAB_UNAVAILABLE` | token 无效 / 项目路径错 / 网络异常 |
 

@@ -72,6 +72,19 @@
 | PATCH | `/api/test-reports/:rid` | 回写报告终态 `{status, summary?, detail?, runId?}` |
 | GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR） |
 
+### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/release-items` | 该节点的上线项；`?kind=config\|sql\|check`、`?status=` 筛，`?includeOptional=false` 只看必做 |
+| POST | `/api/nodes/:id/release-items` | 新增上线项 `{name, kind?, content?, rollback?, status?, required?}`；重名 → 409 `RELEASE_ITEM_NAME_EXISTS` |
+| POST | `/api/nodes/:id/release-items/upsert` | 按项名 get-or-create 并写内容（幂等）：`{name, kind?, content?, rollback?, status?, required?}` |
+| POST | `/api/nodes/:id/release-items/reorder` | `{orderedIds[]}` 重排上线项 |
+| PATCH | `/api/release-items/:rid` | 更新上线项 `{name?, kind?, content?, rollback?, status?, required?}` |
+| DELETE | `/api/release-items/:rid` | 删除上线项 |
+| GET | `/api/nodes/:id/release-checklist` | 上线检查清单：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴上线单）|
+| POST | `/api/nodes/:id/release-checks` | 派单上线前置检查：`{caseIds?, prompt?, agent?, model?, cwd?, dryRun?}`；挑 `code_check`/`biz_check`/`release_check` 用例，为每条开 `running` 报告（dryRun 只回清单与提示词） |
+
 ### agent 运行时 / 会话 / 任务
 
 | Method | Path | 说明 |

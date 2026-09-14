@@ -44,6 +44,13 @@ export const TOOLS = [
   'test_report_get',
   'test_report_finish',
   'acceptance_report',
+  'release_item_list',
+  'release_item_upsert',
+  'release_item_update',
+  'release_item_remove',
+  'release_item_reorder',
+  'release_check',
+  'release_checklist',
   'runtime_list',
   'runtime_register',
   'runtime_heartbeat',
@@ -906,6 +913,105 @@ export function renderAcceptanceMd(report) {
   for (const i of report.items) {
     lines.push(`| ${i.name} | ${i.kind} | ${i.latestStatus} | ${i.latestReportId ?? '—'} |`)
   }
+  return lines.join('\n')
+}
+
+/**
+ * 上线清单导出：把 buildReleaseChecklist 的聚合结果渲染成可贴进 issue / 上线单的 markdown。
+ * 与 renderAcceptanceMd 同风格，便于一起贴进同一个验收 / 上线记录。
+ */
+export function renderReleaseChecklistMd(checklist) {
+  const t = checklist.totals
+  const kindLabels = { config: '上线配置', sql: '上线 SQL', check: '上线检查' }
+  const lines = [
+    `# 上线检查：${checklist.node.name}`,
+    '',
+    `- 范围：${checklist.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 上线项：${t.items} · 必做：${t.required} · 可选：${t.optional} · 已完成：${t.done} · 阻塞：${t.blocked} · 待处理：${t.pending}`,
+    `- 上线就绪：${checklist.ready == null ? '—（无必做项）' : checklist.ready ? '是' : '否'}`,
+    ''
+  ]
+  if (checklist.blockers.length > 0) {
+    lines.push('## 阻塞项', '', '| 上线项 | 类型 | 状态 |', '|---|---|---|')
+    for (const b of checklist.blockers) lines.push(`| ${b.name} | ${kindLabels[b.kind] || b.kind} | ${b.status} |`)
+    lines.push('')
+  }
+  lines.push('## 上线项明细', '', '| 上线项 | 类型 | 状态 | 必做 | 回滚 |', '|---|---|---|---|---|')
+  for (const i of checklist.items) {
+    lines.push(
+      `| ${i.name} | ${kindLabels[i.kind] || i.kind} | ${i.status} | ${i.required ? '是' : '否'} | ${i.rollback ? '有' : '—'} |`
+    )
+  }
+  return lines.join('\n')
+}
+
+/**
+ * 上线前置检查编排：把上线清单 + 已登记的 code_check / biz_check / release_check 用例
+ * 拼成一段可执行提示词派单给 agent（复用 agent 运行时），并开 running 报告。
+ * dryRun 只回将要检查的内容，不派单、不落库。
+ */
+export function runReleaseChecks(
+  store,
+  nodeRef,
+  { caseIds = null, prompt = null, agent = undefined, model = undefined, cwd = null, dryRun = false } = {},
+  by = 'user'
+) {
+  const node = store.resolveRef(String(nodeRef))
+  const checks = store
+    .listTestCases(node.id, {})
+    .filter((c) => c.kind === 'code_check' || c.kind === 'biz_check' || c.kind === 'release_check')
+    .filter((c) => (caseIds && caseIds.length ? caseIds.map(Number).includes(c.id) : true))
+  const checklist = store.buildReleaseChecklist(node.id, { scope: 'self' })
+  if (checks.length === 0 && checklist.items.length === 0) {
+    throw new AppError(CODES.VALIDATION_FAILED, '没有可执行的上线检查（先登记上线项或 code_check/biz_check/release_check 用例）', {
+      nodeId: node.id
+    })
+  }
+  const composed = composeReleaseCheckPrompt(node, checks, checklist, prompt)
+  if (dryRun) {
+    return {
+      dryRun: true,
+      node: { id: node.id, name: node.name },
+      cases: checks.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
+      items: checklist.items.map((i) => ({ id: i.id, name: i.name, kind: i.kind, status: i.status })),
+      ready: checklist.ready,
+      prompt: composed
+    }
+  }
+  const run = startAgentRun(store, node.id, { prompt: composed, agent, model, cwd }, by)
+  const reports = checks.map((c) =>
+    store.createTestReport(node.id, { caseId: c.id, runId: run.id, kind: c.kind, status: 'running', summary: `已派单检查：${c.name}` }, by)
+  )
+  return { node: { id: node.id, name: node.name }, run, reports, checklist }
+}
+
+/** 把上线清单与检查用例拼成给 agent 的上线前置检查指令 */
+export function composeReleaseCheckPrompt(node, cases, checklist, extra = null) {
+  const kindLabels = { config: '上线配置', sql: '上线 SQL', check: '上线检查' }
+  const lines = [
+    `请在当前工作目录对节点「${node.name}」（${node.type}）执行上线前检查，并给出上线就绪结论。`,
+    '逐条输出一行：`<检查项>: PASS|FAIL|BLOCKED - <依据>`；不确定时用 BLOCKED 并说明缺什么。',
+    ''
+  ]
+  if (checklist.items.length > 0) {
+    lines.push('## 上线清单')
+    checklist.items.forEach((i, n) => {
+      lines.push(`${n + 1}. [${kindLabels[i.kind] || i.kind}] ${i.name}（${i.required ? '必做' : '可选'}，当前状态 ${i.status}）`)
+      if (i.content) lines.push(`   - 内容：${i.content}`)
+      if (i.rollback) lines.push(`   - 回滚：${i.rollback}`)
+    })
+    lines.push('')
+  }
+  if (cases.length > 0) {
+    lines.push('## 检查用例')
+    cases.forEach((c, i) => {
+      lines.push(`### 用例 ${i + 1}：${c.name}（${c.kind}）`)
+      lines.push(c.prompt)
+      if (c.expectation) lines.push(`期望结果：${c.expectation}`)
+      lines.push('')
+    })
+  }
+  if (extra) lines.push('额外要求：', extra)
   return lines.join('\n')
 }
 

@@ -1,0 +1,50 @@
+# 功能设计：上线治理（上线配置 / 上线 SQL / 上线检查清单）
+
+## 1. 模块职责
+
+- `server/db.mjs`：新增 `release_items` 一张表（SCHEMA 对新库生效，`migrate()` 对老库幂等补表）。
+- `server/store.mjs`：唯一读写核心。
+  - 上线项：`createReleaseItem` / `listReleaseItems` / `getReleaseItem` / `upsertReleaseItem` / `updateReleaseItem` / `deleteReleaseItem` / `reorderReleaseItems`
+  - 聚合：`buildReleaseChecklist`（按节点或子树汇总完成度、按类型分布、就绪结论、阻塞项）
+- `server/ops.mjs`：跨 store 的编排，不绑定入口。
+  - `runReleaseChecks`：选检查用例 + 拼上线清单 → `startAgentRun` 派单 → 开 running 报告；`dryRun` 走纯预演分支。
+  - `composeReleaseCheckPrompt`：把上线清单与检查用例拼成给 agent 的上线前置检查指令。
+  - `renderReleaseChecklistMd`：聚合结果 → markdown 上线单。
+- `server/http.mjs` / `cli.mjs` / `mcp.mjs`：三入口 1:1 暴露（只做参数装配 + 错误映射）。
+
+## 2. 关键规则
+
+**R1 为什么复用 `test_cases` 的 kind 扩展轴**：回归测试闭环已经把 `kind` 设计为统一扩展轴，
+`code_check` / `biz_check` / `release_check` 三个值在表约束里已占位。
+所以「上线检查 / 代码检查 / 业务检查」的**执行**直接复用 `runReleaseChecks` 从 `test_cases` 里挑这三类用例，
+不改 `test_cases` 表结构；`release_items` 只补**结构化的上线项**（配置 / SQL / 检查项 + 回滚 + 状态）。
+
+**R2 上线项挂任意节点**：与测试用例同理——需求、子需求、任务组、子任务都可能各自需要上线动作。
+统一 `node_id` 挂载，避免为每类节点各建一张表。
+
+**R3 upsert 幂等**：AI 反复调用 `release_item_upsert` 安全（与 `doc_upsert` / `test_case_upsert` 一致）；
+按 `(node_id, name)` 唯一，`created` 标记让调用方知道是新建还是覆盖。
+
+**R4 就绪口径**：只有**必做项**（`required=1`）参与就绪判定，且必须落在 `done` / `skipped`；
+可选未完成不影响 `ready`。无必做项时 `ready=null`（与验收报告 `passRate=null` 同口径，避免「没有项 = 未就绪」误判）。
+`blocked` 单列在 `totals.blocked` 且必然出现在 `blockers` 里。
+
+**R5 执行与清单解耦**：`runReleaseChecks` 只负责「派单 + 开报告」，不阻塞等待 agent 结果；
+agent 任务结束后由前台执行者（或收尾钩子）用 `test_report_finish` 逐条回写 pass/fail，与回归测试闭环完全一致。
+
+## 3. 踩坑 / 约束
+
+- `runReleaseChecks` 的第一参是 **store**，不是 node；三入口装配时别传错（与 `runTestCases` 同一个坑）。
+- 只登记上线项（没有 `code_check` / `biz_check` / `release_check` 用例）也能 `dryRun`——
+  这时 `cases` 为空、`items` 非空，提示词只含上线清单；两条都为空才报 `VALIDATION_FAILED`。
+- 真派单同样需要节点子树内有带本地路径的登记仓库；纯清单管理（upsert / checklist / dryRun）不依赖仓库。
+- **HTTP 状态映射**：`TEST_CASE_NAME_EXISTS` / `RELEASE_ITEM_NAME_EXISTS` 必须登记在 `STATUS_BY_CODE` 里映射到 409；
+  漏登记会走默认 500，与设计文档和 AI 自纠预期不符（本轮顺手修了 `TEST_CASE_NAME_EXISTS` 这个既有缺陷）。
+
+## 4. 关联章节
+
+- 数据模型：`docs/design/02-data-model.md` §4.15
+- 接口表：`docs/design/04-api.md`「上线治理」段
+- 接口示例：`docs/api.md`
+- 测试策略：`docs/design/08-testing.md`（单测分组：`test/release-item.test.mjs`）
+- 前置功能：`../regression-loop/`（kind 扩展轴与报告模型）

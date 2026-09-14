@@ -11,7 +11,7 @@ test('openDb 建出全部表并开启 WAL / 外键', async () => {
     .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     .all()
     .map((r) => r.name)
-  for (const t of ['nodes', 'attr_defs', 'attr_values', 'commits', 'mrs', 'documents', 'repos', 'merges', 'unit_repos', 'meta']) {
+  for (const t of ['nodes', 'attr_defs', 'attr_values', 'commits', 'mrs', 'documents', 'repos', 'merges', 'unit_repos', 'test_cases', 'test_reports', 'release_items', 'meta']) {
     assert.ok(tables.includes(t), `缺表 ${t}`)
   }
   assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')
@@ -91,6 +91,14 @@ test('旧库迁移：旧 schema 直接打开，补出新列与索引且保留历
   }
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_agent_runs_session'").get().name, 'idx_agent_runs_session')
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_run_messages'").get().name, 'agent_run_messages')
+  // v3 / v4 迁移：老库也要补出回归测试与上线清单两张新表
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='test_cases'").get().name, 'test_cases')
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='test_reports'").get().name, 'test_reports')
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='release_items'").get().name, 'release_items')
+  assert.equal(
+    db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_release_items_node'").get().name,
+    'idx_release_items_node'
+  )
 
   // 历史数据保留，并且新旧列可一起读取
   const row = db.prepare('SELECT * FROM agent_runs WHERE id = 7').get()
