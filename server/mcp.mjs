@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -768,6 +768,36 @@ export function createMcpServer({ store }) {
       const gate = store.buildDeliveryGate(n.id, { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
       return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  // ---------- 概要设计大纲 / 思维导图（需求管理 → 概要设计 → 文档） ----------
+
+  server.tool(
+    'design_outline',
+    '概要设计大纲：从需求树的子需求 / 任务组 / 子任务结构推导 markdown 骨架 + mermaid 思维导图；format=md 返回可直接写入「概要设计」文档的内容',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const outline = store.buildDesignOutline(n.id, { scope })
+      const text =
+        store.normalizeFormat(format) === 'md' ? renderDesignOutlineMd(outline) : JSON.stringify(outline, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'design_outline_apply',
+    '把推导出的概要设计骨架写入各需求的「概要设计」文档（与需求就绪门禁同一份文档）；默认不覆盖已填写内容，overwrite=true 才覆盖',
+    {
+      node: z.union([z.number(), z.string()]),
+      scope: z.string().optional(),
+      overwrite: z.boolean().optional()
+    },
+    mcpValidate(async ({ node, scope, overwrite }) => {
+      const n = store.resolveRef(String(node))
+      const out = applyDesignOutline(store, n.id, { scope, overwrite: !!overwrite, by: 'mcp' })
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
     })
   )
 

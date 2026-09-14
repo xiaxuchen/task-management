@@ -40,3 +40,5 @@
 | 33 | 交付门禁复用三段既有聚合，不落表 | 交付结论 = 需求就绪 + 测试验收 + 上线治理的**只读汇总**；每个来源是三态（`pass` / `fail` / `not_applicable`），最终为 `ready` / `not_ready` / `unknown`。不适用不等于通过，全部不适用时 `ready=null` 而非绿灯；`acceptance` 的 `running` / `notRun` 也不算交付证据。落表会产生第二份真相，因此与 `acceptance_report` / `readiness` 同样纯读、不 bump revision |
 | 34 | 停用用例不参与交付门禁 | `buildAcceptanceReport` / `buildDeliveryGate` 只聚合 `enabled=1` 的用例，与 readiness 口径一致；否则停用历史用例会永远以 `notRun` 阻塞交付，而执行链默认不会选它。删除停用用例不得改变门禁结论 |
 | 35 | `format` 参数禁止静默降级 | 与 `scope` 同一条纪律：`json\|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；三入口统一由 `store.normalizeFormat` 校验，MCP 将业务错误转为 `isError` 文本而不是泄漏 SDK `-32602`。markdown 渲染器必须转义表格单元格中的 `\|` 与换行 |
+| 36 | 概要设计骨架从需求树推导，不落表 | 需求就绪门禁把「概要设计」文档列成硬门禁，但没有生成侧。骨架（mermaid mindmap + 逐层小节）**从用户已经在维护的需求树结构推导**，比让 AI 重读需求再梳理更快且与看板同源；聚合只读、不 bump revision，落库走 `upsertDocument`。写入的文档名复用 `config.readiness.designDoc`，保证「一键写入」与门禁判定的是同一份文档，否则会出现写入成功但门禁不通过的假成功 |
+| 37 | 概要设计 apply 默认不覆盖已填内容 | 概要是被反复追加精炼的文档，而树结构会持续变化；每次 apply 都覆盖会冲掉人工 / AI 写的方案。默认跳过非空文档（`written:false / reason=already_filled`），仅显式 `overwrite:true` 覆盖。批量写多份文档的误伤面比单份 `doc_upsert` 大，因此保守值放在安全侧 |

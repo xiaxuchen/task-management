@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -564,6 +564,35 @@ export function createApp({ store }) {
         return
       }
       res.json(gate)
+    })
+  )
+
+  // ---------- 概要设计大纲 / 思维导图（需求管理 → 概要设计 → 文档） ----------
+  app.get(
+    '/api/nodes/:id/design-outline',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const outline = store.buildDesignOutline(node.id, { scope: req.query.scope })
+      if (store.normalizeFormat(req.query.format) === 'md') {
+        res.type('text/markdown').send(renderDesignOutlineMd(outline))
+        return
+      }
+      res.json(outline)
+    })
+  )
+
+  app.post(
+    '/api/nodes/:id/design-outline/apply',
+    wrap((req, res) => {
+      const body = req.body || {}
+      const node = store.resolveRef(refOf(req))
+      res.json(
+        applyDesignOutline(store, node.id, {
+          scope: body.scope,
+          overwrite: !!body.overwrite,
+          by: actorOf(req)
+        })
+      )
     })
   )
 
