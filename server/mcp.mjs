@@ -730,10 +730,17 @@ export function createMcpServer({ store }) {
       format: z.string().optional()
     },
     async ({ node, scope, format }) => {
-      const n = store.resolveRef(String(node))
-      const report = store.buildAcceptanceReport(n.id, { scope })
-      const text = format === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
-      return { content: [{ type: 'text', text }] }
+      try {
+        const n = store.resolveRef(String(node))
+        const report = store.buildAcceptanceReport(n.id, { scope })
+        const text = store.normalizeFormat(format) === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
+        return { content: [{ type: 'text', text }] }
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: `${e.code || 'ERROR'}: ${e.message}` }],
+          isError: true
+        }
+      }
     }
   )
 
