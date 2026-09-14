@@ -109,3 +109,67 @@ test('workflow_map：登记进能力清单（MCP / CLI / REST 1:1 的发现入�
   const { TOOLS } = await import('../server/ops.mjs')
   assert.ok(TOOLS.includes('workflow_map'))
 })
+
+test('workflow_map：上线分支带稳定写入引用（上线项 ID / 检查用例 / 最近报告）', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const config = store.upsertReleaseItem(r.id, { name: '配置 A', kind: 'config', status: 'pending' })
+  const sql = store.upsertReleaseItem(r.id, { name: 'SQL A', kind: 'sql', status: 'pending' })
+  const check = store.upsertReleaseItem(r.id, { name: '检查项 A', kind: 'check', status: 'pending' })
+  const codeCase = store.upsertTestCase(r.id, { name: 'lint', prompt: '跑 lint', kind: 'code_check' })
+  const codeReport = store.createTestReport(r.id, { caseId: codeCase.id, kind: 'code_check', status: 'running' })
+
+  const map = store.buildWorkflowMap(r.id)
+  assert.deepEqual(branchOf(map, 'release_config', r.id).meta.releaseItems.map((i) => i.id), [config.id])
+  assert.deepEqual(branchOf(map, 'release_sql', r.id).meta.releaseItems.map((i) => i.id), [sql.id])
+  assert.deepEqual(branchOf(map, 'release_check', r.id).meta.releaseItems.map((i) => i.id), [check.id])
+  assert.equal(branchOf(map, 'code_check', r.id).meta.checkCases[0].id, codeCase.id)
+  assert.equal(branchOf(map, 'code_check', r.id).meta.checkCases[0].latestReportId, codeReport.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'pending')
+})
+
+test('workflow_map：上线项状态回写后图状态随之翻转，写回边界只影响目标项', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const sql = store.upsertReleaseItem(r.id, { name: 'SQL A', kind: 'sql', status: 'pending' })
+  const unrelated = store.upsertReleaseItem(r.id, { name: '配置 B', kind: 'config', status: 'done' })
+
+  const before = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(before, 'release_sql', r.id).status, 'fail')
+  const revisionBefore = store.getRevision()
+
+  store.updateReleaseItem(sql.id, { status: 'done' })
+  const after = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(after, 'release_sql', r.id).status, 'pass')
+  assert.equal(branchOf(after, 'release_config', r.id).status, 'pass')
+  assert.equal(store.getReleaseItem(unrelated.id).status, 'done')
+  assert.equal(store.getRevision(), revisionBefore + 1)
+})
+
+test('workflow_map：检查报告回写后 code/biz/release_check 图上状态翻转', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const codeCase = store.upsertTestCase(r.id, { name: 'lint', prompt: '跑 lint', kind: 'code_check' })
+  const bizCase = store.upsertTestCase(r.id, { name: '业务校验', prompt: '跑业务校验', kind: 'biz_check' })
+  const releaseCase = store.upsertTestCase(r.id, { name: '上线检查', prompt: '跑上线检查', kind: 'release_check' })
+  const codeReport = store.createTestReport(r.id, { caseId: codeCase.id, kind: 'code_check', status: 'running' })
+  const bizReport = store.createTestReport(r.id, { caseId: bizCase.id, kind: 'biz_check', status: 'running' })
+  const releaseReport = store.createTestReport(r.id, { caseId: releaseCase.id, kind: 'release_check', status: 'running' })
+
+  let map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'pending')
+  assert.equal(branchOf(map, 'biz_check', r.id).status, 'pending')
+  assert.equal(branchOf(map, 'release_check', r.id).status, 'pending')
+
+  store.finishTestReport(codeReport.id, { status: 'pass' })
+  store.finishTestReport(bizReport.id, { status: 'fail' })
+  store.finishTestReport(releaseReport.id, { status: 'blocked' })
+
+  map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'pass')
+  assert.equal(branchOf(map, 'biz_check', r.id).status, 'fail')
+  assert.equal(branchOf(map, 'release_check', r.id).status, 'fail')
+  assert.equal(branchOf(map, 'code_check', r.id).meta.checkCases[0].latestStatus, 'pass')
+  assert.equal(branchOf(map, 'biz_check', r.id).meta.checkCases[0].latestStatus, 'fail')
+  assert.equal(branchOf(map, 'release_check', r.id).meta.checkCases[0].latestStatus, 'blocked')
+})

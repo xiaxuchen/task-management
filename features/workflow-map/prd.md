@@ -1,6 +1,6 @@
 # 功能：研发主线思维导图（workflow-map）
 
-- 代码：`server/store.mjs`（`buildWorkflowMap`）、`server/ops.mjs`（`renderWorkflowMapMd`）、`server/{http,cli,mcp}.mjs`、`web/src/components/WorkflowMapPane.vue`
+- 代码：`server/store.mjs`（`buildWorkflowMap`）、`server/ops.mjs`（`renderWorkflowMapMd`）、`server/{http,cli,mcp}.mjs`、`web/src/components/WorkflowMapPane.vue`、既有 `release_*` / `test_*` 写接口
 - 入口：HTTP（`/api/nodes/:id/workflow-map`）· CLI（`workflow map <ref>`）· MCP（`workflow_map`）
 - 相邻功能：`../requirement-readiness/`、`../documents/`、`../regression-loop/`、`../release-governance/`、`../delivery-gate/`
 
@@ -30,6 +30,10 @@ TaskBoard 已有需求文档、概要设计、AI 可回归测试、测试报告�
 - R8 返回 `stages`、`units`、`nodes`、`edges`、`totals`，同时给出可直接渲染的图结构；支持 `format=md` 输出摘要与待关注分支。
 - R9 Web 抽屉新增「主线」页签：阶段节点与需求分支节点按状态着色，支持切换 `self` / `subtree`，点击节点查看依据，点击需求分支可定位节点。
 - R10 纯读聚合：不写库、不落表、不改变 `revision`。
+- R11 上线治理交互：图本身始终只读；右侧证据面板可显式触发既有写接口——
+  - 上线配置 / 上线 SQL / 上线检查项：回写 `status`；
+  - 代码检查 / 业务检查 / 上线检查用例：dry-run 后派单，并按最近报告回写 `pass` / `fail` / `blocked`；
+  - 每次写回完成后重新读取图；`running` 仍为 `pending`，`empty` 仍不为通过。
 
 ## 3. 非目标（首版）
 
@@ -40,7 +44,7 @@ TaskBoard 已有需求文档、概要设计、AI 可回归测试、测试报告�
 
 ## 4. 验收标准
 
-- `test/workflow-map.test.mjs`：阶段投影、四态区分、`scope=subtree` 多需求单元、非法 `scope` 拒绝、纯读不产生 revision、markdown 渲染、能力清单登记。
+- `test/workflow-map.test.mjs`：阶段投影、四态区分、`scope=subtree` 多需求单元、非法 `scope` 拒绝、纯读不产生 revision、上线写引用、上线项与检查报告回写后状态翻转、markdown 渲染、能力清单登记。
 - `test/http.test.mjs`：HTTP 全链路（需求资料 → 用例 → 报告 → 上线项）与 `format=md`。
 - `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/04-api.md` + `docs/api.md`
   + `docs/design/06-ui.md` + `docs/design/08-testing.md` + `features/README.md`）。

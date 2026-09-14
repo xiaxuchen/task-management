@@ -6,6 +6,7 @@
 - `server/ops.mjs`：`renderWorkflowMapMd(map)` 输出可贴进 issue / 评审记录的 markdown。
 - `server/http.mjs` / `cli.mjs` / `mcp.mjs`：三入口 1:1 暴露。
 - `web/src/components/WorkflowMapPane.vue`：SVG 可视化与证据查看。
+- 写回不新增 store 写能力：面板只调用既有 `updateReleaseItem` / `runReleaseChecks` / `finishTestReport` 对应的 HTTP 接口，复用其校验、状态机和 revision 语义。
 
 ## 2. 图模型
 
@@ -28,6 +29,26 @@ root（当前范围）
 ```
 
 `nodes` 同时包含 `root` / `stage` / `unit` / `branch`；`edges` 表示“范围 → 阶段 → 分支”与“需求单元 → 分支证据”的连线。
+
+上线分支额外带稳定引用，供显式写回定位，不改变图本身只读：
+
+```json
+{
+  "stage": "release_sql",
+  "meta": { "releaseItems": [{ "id": 12, "name": "执行上线 SQL", "status": "pending", "required": true }] }
+}
+```
+
+代码 / 业务 / 上线检查分支带 `checkCases`：
+
+```json
+{
+  "stage": "code_check",
+  "meta": {
+    "checkCases": [{ "id": 21, "name": "lint", "latestReportId": 33, "latestStatus": "running" }]
+  }
+}
+```
 
 ## 3. 关键规则
 
@@ -58,6 +79,15 @@ root（当前范围）
 
 **R6 scope 校验**：直接复用 `store.normalizeScope`，非法值返回 `VALIDATION_FAILED`，不静默降级。
 
+**R7 读图与写回分离**：
+
+- `GET /workflow-map` 仍是纯读聚合；
+- UI 只有在用户明确选择状态或点击「通过 / 不通过 / 阻塞 / 执行检查」时才调用既有写接口；
+- 上线项回写走 `PATCH /api/release-items/:rid`；
+- 检查派单走 `POST /api/nodes/:id/release-checks`；
+- 检查结论回写走 `PATCH /api/test-reports/:rid`；
+- 终态报告若要改正已有结论，UI 显式传 `overwrite:true`，与报告状态机一致。
+
 ## 4. 对外接口
 
 ```js
@@ -78,6 +108,7 @@ MCP：`workflow_map({ node, scope?, format? })`
 - 节点颜色对应四态；
 - 点击节点在右侧查看依据；文档分支列出文档填写状态，用例分支显示关联用例数与最近报告；
 - 点击需求单元可打开对应节点抽屉。
+- 上线配置 / 上线 SQL / 上线检查分支在右侧显示上线项状态选择器；代码 / 业务 / 上线检查分支显示检查用例、最近报告与「通过 / 不通过 / 阻塞」回写按钮；每次写回后刷新图。
 
 ## 6. 踩坑 / 约束
 

@@ -88,7 +88,7 @@
 
 | Method | Path | 说明 |
 |---|---|---|
-| GET | `/api/nodes/:id/workflow-map` | 研发主线思维导图：`?scope=self\|subtree`，`?format=json\|md`。以节点树为骨架，投影需求管理 / 概要设计 / 文档管理 / 思维导图 / AI 可回归测试 / 测试报告 / 验收报告，以及上线配置 / 上线 SQL / 上线检查 / 代码检查 / 业务检查；每个需求单元在各阶段生成分支，状态为 `pass` / `fail` / `pending` / `empty`（空态 ≠ 通过）；返回 `stages` / `units` / `nodes` / `edges` / `totals`；**纯读聚合，不写库、不动 revision** |
+| GET | `/api/nodes/:id/workflow-map` | 研发主线思维导图：`?scope=self\|subtree`，`?format=json\|md`。以节点树为骨架，投影需求管理 / 概要设计 / 文档管理 / 思维导图 / AI 可回归测试 / 测试报告 / 验收报告，以及上线配置 / 上线 SQL / 上线检查 / 代码检查 / 业务检查；每个需求单元在各阶段生成分支，状态为 `pass` / `fail` / `pending` / `empty`（空态 ≠ 通过）；返回 `stages` / `units` / `nodes` / `edges` / `totals`，上线分支附 `releaseItems` / `checkCases` / `latestReportId` 稳定引用；**纯读聚合，不写库、不动 revision**；图上的写回由既有 `release-items` / `release-checks` / `test-reports` 接口显式完成 |
 
 ### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
 

@@ -1063,7 +1063,9 @@ export function runReleaseChecks(
   const checks = checkNodeIds
     .flatMap((nid) => store.listTestCases(nid, {}))
     .filter((c) => c.kind === 'code_check' || c.kind === 'biz_check' || c.kind === 'release_check')
-    .filter((c) => (caseIds && caseIds.length ? caseIds.map(Number).includes(c.id) : true))
+    // 显式空数组表示“本次不选任何检查用例”，只执行已登记的上线清单；
+    // undefined/null 才表示不过滤。否则 UI 在“仅上线项”场景无法表达空集合。
+    .filter((c) => (Array.isArray(caseIds) ? caseIds.map(Number).includes(c.id) : true))
   const checklist = store.buildReleaseChecklist(node.id, { scope: effectiveScope })
   if (checks.length === 0 && checklist.items.length === 0) {
     // 若本节点没东西、但子树有，明确提示用 scope=subtree：避免「子树有上线项却没进检查」的误解

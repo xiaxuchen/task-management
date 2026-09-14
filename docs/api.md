@@ -424,6 +424,11 @@ curl -s 'http://127.0.0.1:3210/api/nodes/12/workflow-map?format=md'
 > 分支状态：`pass` 已有证据且通过；`fail` 有数据但未通过 / 必做项未完成；
 > `pending` 执行中或等待结论；`empty` 尚未登记，**不等于通过**。
 > 纯读投影，不写库、不动 revision。
+>
+> 图形接口返回的上线分支带稳定引用：上线项 `meta.releaseItems[*].id`、检查用例
+> `meta.checkCases[*].id` 与 `latestReportId`。Web「主线」面板使用这些引用显式调用
+> `PATCH /api/release-items/:rid`、`POST /api/nodes/:id/release-checks`、
+> `PATCH /api/test-reports/:rid`，写回后重新读取图。
 
 ## 错误码速查
 

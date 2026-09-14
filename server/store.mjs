@@ -1787,6 +1787,41 @@ export function createStore(db, options = {}) {
     return reports[0].status
   }
 
+  /** 每个检查用例的最近一次报告（前端按用例回写终态时使用）。 */
+  function latestReportsByCase(nodeId, kind) {
+    const reports = listTestReports(nodeId, { kind, limit: 300 })
+    const byCase = new Map()
+    for (const report of reports) {
+      if (report.caseId == null || byCase.has(report.caseId)) continue
+      byCase.set(report.caseId, report)
+    }
+    return byCase
+  }
+
+  function releaseItemsMeta(items) {
+    return items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      kind: item.kind,
+      status: item.status,
+      required: item.required,
+      rollback: item.rollback
+    }))
+  }
+
+  function checkCasesMeta(cases, reportByCase) {
+    return cases.map((testCase) => {
+      const latest = reportByCase.get(testCase.id) || null
+      return {
+        id: testCase.id,
+        name: testCase.name,
+        kind: testCase.kind,
+        latestReportId: latest ? latest.id : null,
+        latestStatus: latest ? latest.status : 'not_run'
+      }
+    })
+  }
+
   function mapReportStatus(status) {
     if (!status) return 'empty'
     if (status === 'pass') return 'pass'
@@ -1945,12 +1980,14 @@ export function createStore(db, options = {}) {
         workflowItem({
           stage: 'release_config',
           unit,
-          ...mapReleaseItems(releaseItems.filter((i) => i.kind === 'config'))
+          ...mapReleaseItems(releaseItems.filter((i) => i.kind === 'config')),
+          meta: { releaseItems: releaseItemsMeta(releaseItems.filter((i) => i.kind === 'config')) }
         }),
         workflowItem({
           stage: 'release_sql',
           unit,
-          ...mapReleaseItems(releaseItems.filter((i) => i.kind === 'sql'))
+          ...mapReleaseItems(releaseItems.filter((i) => i.kind === 'sql')),
+          meta: { releaseItems: releaseItemsMeta(releaseItems.filter((i) => i.kind === 'sql')) }
         }),
         workflowItem({
           stage: 'release_check',
@@ -1960,21 +1997,31 @@ export function createStore(db, options = {}) {
             releaseCheckItems.length === 0 && releaseCheckCases.length === 0
               ? '暂无登记'
               : `检查项 ${releaseCheckItems.length} 项 · 检查用例 ${releaseCheckCases.length} 条 · ${releaseCheckItemSummary.detail}`,
-          meta: { caseIds: releaseCheckCases.map((c) => c.id) }
+          meta: {
+            caseIds: releaseCheckCases.map((c) => c.id),
+            releaseItems: releaseItemsMeta(releaseCheckItems),
+            checkCases: checkCasesMeta(releaseCheckCases, latestReportsByCase(unit.id, 'release_check'))
+          }
         }),
         workflowItem({
           stage: 'code_check',
           unit,
           status: codeCheckCases.length === 0 ? 'empty' : mapReportStatus(latestReportStatusForKind(unit.id, 'code_check')),
           detail: codeCheckCases.length === 0 ? '暂无代码检查用例' : `代码检查用例 ${codeCheckCases.length} 条`,
-          meta: { caseIds: codeCheckCases.map((c) => c.id) }
+          meta: {
+            caseIds: codeCheckCases.map((c) => c.id),
+            checkCases: checkCasesMeta(codeCheckCases, latestReportsByCase(unit.id, 'code_check'))
+          }
         }),
         workflowItem({
           stage: 'biz_check',
           unit,
           status: bizCheckCases.length === 0 ? 'empty' : mapReportStatus(latestReportStatusForKind(unit.id, 'biz_check')),
           detail: bizCheckCases.length === 0 ? '暂无业务检查用例' : `业务检查用例 ${bizCheckCases.length} 条`,
-          meta: { caseIds: bizCheckCases.map((c) => c.id) }
+          meta: {
+            caseIds: bizCheckCases.map((c) => c.id),
+            checkCases: checkCasesMeta(bizCheckCases, latestReportsByCase(unit.id, 'biz_check'))
+          }
         })
       )
     }

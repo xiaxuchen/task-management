@@ -90,6 +90,51 @@
                 <strong>{{ selected.meta.latestReportId }}</strong>
               </div>
             </template>
+
+            <template v-if="isReleaseItemBranch && selected.meta.releaseItems && selected.meta.releaseItems.length">
+              <el-divider content-position="left">上线项回写</el-divider>
+              <div v-for="item in selected.meta.releaseItems" :key="item.id" class="release-write-row">
+                <div class="release-write-title">
+                  <span>{{ item.name }}</span>
+                  <el-tag v-if="item.required" size="small" type="warning" effect="plain">必做</el-tag>
+                </div>
+                <el-select
+                  v-model="item.status"
+                  size="small"
+                  style="width:100%"
+                  :disabled="writing"
+                  @change="saveReleaseStatus(item)"
+                >
+                  <el-option v-for="s in releaseStatuses" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </div>
+            </template>
+
+            <template v-if="isCheckBranch">
+              <el-divider content-position="left">检查回写</el-divider>
+              <div v-if="!selected.meta.checkCases || !selected.meta.checkCases.length" class="inspector-empty">暂无检查用例</div>
+              <div v-for="item in selected.meta.checkCases || []" :key="item.id" class="check-write-row">
+                <div class="release-write-title">
+                  <span>{{ item.name }}</span>
+                  <el-tag size="small" :type="checkStatusTag(item.latestStatus)" effect="plain">{{ checkStatusLabel(item.latestStatus) }}</el-tag>
+                </div>
+                <div class="check-actions">
+                  <el-button size="small" :disabled="writing || !item.latestReportId" @click="finishCheck(item, 'pass')">通过</el-button>
+                  <el-button size="small" :disabled="writing || !item.latestReportId" @click="finishCheck(item, 'fail')">不通过</el-button>
+                  <el-button size="small" :disabled="writing || !item.latestReportId" @click="finishCheck(item, 'blocked')">阻塞</el-button>
+                </div>
+                <p v-if="!item.latestReportId" class="item-hint">先执行检查，产生报告后可回写结论</p>
+              </div>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="writing"
+                :disabled="!(selected.meta.caseIds?.length || selected.meta.releaseItems?.length)"
+                @click="dispatchCheck"
+              >
+                执行检查
+              </el-button>
+            </template>
           </template>
           <el-empty v-else description="点击图中的节点查看详情" />
         </aside>
@@ -100,6 +145,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 
 const props = defineProps({ nodeId: Number })
@@ -109,6 +155,14 @@ const scope = ref('self')
 const loading = ref(false)
 const map = ref({ node: {}, scope: 'self', status: 'empty', totals: {}, stages: [], units: [], nodes: [], edges: [] })
 const selectedId = ref(null)
+const writing = ref(false)
+const releaseStatuses = [
+  { value: 'pending', label: '待处理' },
+  { value: 'ready', label: '就绪' },
+  { value: 'done', label: '完成' },
+  { value: 'blocked', label: '阻塞' },
+  { value: 'skipped', label: '跳过' }
+]
 
 const NODE_WIDTH = 208
 const NODE_HEIGHT = 72
@@ -211,8 +265,16 @@ const layout = computed(() => {
 })
 
 const selected = computed(() => layout.value.nodes.find((n) => n.id === selectedId.value) || null)
+const isReleaseItemBranch = computed(
+  () => selected.value?.type === 'branch' && ['release_config', 'release_sql'].includes(selected.value.stage)
+)
+const isCheckBranch = computed(
+  () => selected.value?.type === 'branch' && ['release_check', 'code_check', 'biz_check'].includes(selected.value.stage)
+)
 const statusLabel = (s) => ({ pass: '通过', fail: '未通过', pending: '待处理', empty: '暂无' }[s] || s)
 const statusTagType = (s) => ({ pass: 'success', fail: 'danger', pending: 'warning', empty: 'info' }[s] || 'info')
+const checkStatusLabel = (s) => ({ pass: '通过', fail: '未通过', blocked: '阻塞', running: '执行中', not_run: '未执行' }[s] || s)
+const checkStatusTag = (s) => ({ pass: 'success', fail: 'danger', blocked: 'warning', running: 'warning', not_run: 'info' }[s] || 'info')
 const typeLabel = (node) =>
   ({
     root: '范围',
@@ -234,6 +296,61 @@ async function load() {
 
 function selectNode(node) {
   selectedId.value = node.id
+}
+
+async function afterWrite(message) {
+  ElMessage.success(message)
+  await load()
+}
+
+async function saveReleaseStatus(item) {
+  writing.value = true
+  try {
+    await api.releaseItemUpdate(item.id, { status: item.status })
+    await afterWrite('上线项状态已回写')
+  } catch (e) {
+    ElMessage.error(e.message || String(e))
+  } finally {
+    writing.value = false
+  }
+}
+
+async function finishCheck(item, status) {
+  if (!item.latestReportId) return
+  writing.value = true
+  try {
+    await api.testReportFinish(item.latestReportId, { status, overwrite: true })
+    await afterWrite('检查结论已回写')
+  } catch (e) {
+    ElMessage.error(e.message || String(e))
+  } finally {
+    writing.value = false
+  }
+}
+
+async function dispatchCheck() {
+  const caseIds = selected.value?.meta?.caseIds || []
+  const releaseItemIds = selected.value?.meta?.releaseItems?.map((item) => item.id) || []
+  const unitNodeId = selected.value?.unitId
+  if (!caseIds.length && !releaseItemIds.length) return
+  writing.value = true
+  try {
+    const out = await api.releaseCheck(unitNodeId || props.nodeId, { scope: 'self', caseIds, dryRun: true })
+    ElMessage.info(`将执行 ${out.cases.length} 条检查，已生成提示词`)
+    try {
+      await ElMessageBox.confirm('确认派单执行这组上线检查？', '执行检查', { type: 'warning' })
+    } catch {
+      return
+    }
+    try {
+      await api.releaseCheck(unitNodeId || props.nodeId, { scope: 'self', caseIds })
+      await afterWrite('检查已派单')
+    } catch (e) {
+      ElMessage.error(e.message || String(e))
+    }
+  } finally {
+    writing.value = false
+  }
 }
 
 watch(() => props.nodeId, load)
@@ -373,6 +490,28 @@ onMounted(load)
   justify-content: space-between;
   gap: 8px;
   padding: 5px 0;
+  font-size: 12px;
+}
+.release-write-row,
+.check-write-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #f2f3f5;
+}
+.release-write-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.check-actions {
+  display: flex;
+  gap: 4px;
+}
+.inspector-empty,
+.item-hint {
+  color: #909399;
   font-size: 12px;
 }
 @media (max-width: 900px) {
