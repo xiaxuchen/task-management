@@ -205,3 +205,72 @@ test('标签级分支配置 CRUD + resolveBranchTargets 继承/覆盖', async (t
   assert.equal(store.listBranchConfigs().length, 1)
   assert.throws(() => store.deleteBranchConfig('前端'), (e) => e.code === 'NOT_FOUND')
 })
+
+// ---------- pickBranchForCommit：开发分支推断 ----------
+
+test('pickBranchForCommit：按提交 message 的需求编号选分支，避免误判最长的集成分支', async (t) => {
+  const { tmp, git } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-pick-'))
+  const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  g(['init', '-q', '-b', 'main'])
+  g(['config', 'user.email', 't@t.local'])
+  g(['config', 'user.name', 't'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'init'])
+
+  // 需求 3.1.1 的开发分支；提交 subject 里带需求编号
+  g(['checkout', '-q', '-b', 'feature-send-receive-3.1.1-inner-buy-flag'])
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'feat(3.1.1): inner buy flag'])
+  const sha = g(['rev-parse', '--short', 'HEAD']).trim()
+
+  // 一条更长的集成分支也包含该提交（仅按长度会选它，属误判）
+  g(['checkout', '-q', '-b', 'feature-transfer-3.4.1-material-apply-id-fix'])
+  fs.writeFileSync(path.join(dir, 'c.txt'), 'c\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'chore: integration'])
+
+  const picked = await git.pickBranchForCommit(dir, sha)
+  assert.equal(picked, 'feature-send-receive-3.1.1-inner-buy-flag')
+})
+
+test('pickBranchForCommit：merge 提交归属其合入目标分支', async (t) => {
+  const { tmp, git } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-pick-merge-'))
+  const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  g(['init', '-q', '-b', 'main'])
+  g(['config', 'user.email', 't@t.local'])
+  g(['config', 'user.name', 't'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'init'])
+
+  g(['checkout', '-q', '-b', 'feature-something'])
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'feat: something'])
+
+  g(['checkout', '-q', 'main'])
+  g(['checkout', '-q', '-b', 'feature-merge'])
+  g(['merge', '-q', '--no-ff', '-m', "Merge branch 'feature-something' into feature-merge", 'feature-something'])
+  const mergeSha = g(['rev-parse', '--short', 'HEAD']).trim()
+
+  // 一条更长的集成分支也包含该 merge 提交：仅按长度会选它，merge 目标规则应选 feature-merge
+  g(['checkout', '-q', '-b', 'feature-merge-longer-integration-branch'])
+  fs.writeFileSync(path.join(dir, 'd.txt'), 'd\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'chore: more integration'])
+
+  const picked = await git.pickBranchForCommit(dir, mergeSha)
+  assert.equal(picked, 'feature-merge')
+})

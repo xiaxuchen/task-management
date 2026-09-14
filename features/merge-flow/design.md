@@ -8,7 +8,10 @@
 ## 后端
 
 **git.mjs**
-- `pickBranchForCommit(dir, sha)`：`branch -a --contains` → 排除 feature-merge → 最具体 feature-*
+- `pickBranchForCommit(dir, sha)`：`branch -a --contains` → ① merge 提交优先归属其 message 里的合入目标分支
+  （`Merge branch 'x' into feature-merge` → `feature-merge`）；② 普通提交排除 `feature-merge` 后，优先分支名
+  含提交 message 中需求编号（如 `3.1.1`）的 `feature-*`，其次最具体的 `feature-*`。避免仅按长度取最长时，
+  把长命集成分支（如 `feature-transfer-3.4.1-material-apply-id-fix`）误判成开发分支。
 - `mergeBranch(dir, source, target, message)`：
   1. `status --porcelain` 检查未解决冲突（UU|AA|DD|AU|UA|DU|UD）→ 有则 `{conflict:true, reason:'unresolved_conflicts'}`
   2. `merge-base --is-ancestor source target` → 是则 `{alreadyMerged:true}`

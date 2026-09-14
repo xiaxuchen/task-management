@@ -20,6 +20,8 @@ const OPTIONS = {
   sha: { type: 'string' },
   repo: { type: 'string' },
   note: { type: 'string' },
+  branch: { type: 'string' },
+  'overwrite-branch': { type: 'boolean' },
   subtree: { type: 'boolean' },
   scope: { type: 'string' },
   'review-status': { type: 'string' },
@@ -94,7 +96,7 @@ const HELP = `task-board <命令>
   attr set <ref> k=v [k2=v2 ...]
   attr-def add --type t --key k --label l [--data-type text|textarea|number|date|select|url] [--options '[...]'] [--required]
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
-  commit add <ref> --sha <sha> [--repo <名>] [--note <说明>]
+  commit add <ref> --sha <sha> [--repo <名>] [--note <说明>] [--branch <分支>] [--overwrite-branch]
   commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
   commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
   commit duplicates <ref> [--scope self|subtree]   重复检测（same-sha / patch-id / merge 覆盖）
@@ -242,7 +244,19 @@ export async function run(argv) {
       break
     case 'commit add': {
       const node = store.resolveRef(ref)
-      json(store.addCommit(node.id, { repo: values.repo, sha: values.sha, note: values.note }, by))
+      json(
+        store.addCommit(
+          node.id,
+          {
+            repo: values.repo,
+            sha: values.sha,
+            note: values.note,
+            branch: values.branch,
+            overwriteBranch: !!values['overwrite-branch']
+          },
+          by
+        )
+      )
       break
     }
     case 'commit review':

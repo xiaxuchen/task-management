@@ -277,16 +277,35 @@ export async function branchesContaining(dir, sha) {
   return out
 }
 
-/** 为提交挑选"开发分支"：排除 feature-merge，优先最具体的 feature-*（含子需求/子任务 slug），否则回退第一个 */
+/** 提交 subject（如 feat(26Q3-3.5.4): …）；取不到返回 null */
+async function commitSubject(dir, sha) {
+  const r = await gitTry(dir, ['log', '-1', '--format=%s', sha])
+  if (!r.ok) return null
+  return String(r.stdout || '').trim() || null
+}
+
+/**
+ * 为提交挑选"开发分支"：
+ * ① merge 提交 → 归属其合入目标分支（如 "Merge branch 'x' into feature-merge" → feature-merge）；
+ * ② 普通提交 → 排除 feature-merge 后，优先分支名与提交 message 中需求编号（如 3.5.4）匹配的 feature-*，
+ *    其次最具体的 feature-*（最长），否则回退第一个。
+ * 注意：仅按长度取最长会把长命集成分支（如 feature-transfer-3.4.1-material-apply-id-fix）误判成开发分支。
+ */
 export async function pickBranchForCommit(dir, sha) {
   const all = await branchesContaining(dir, sha)
   if (!all.length) return null
+  const subject = await commitSubject(dir, sha)
+  const mergeTarget = subject && subject.match(/^Merge (?:branch|remote-tracking branch) '[^']+' into (\S+)/)
+  if (mergeTarget && all.includes(mergeTarget[1])) return mergeTarget[1]
   const feats = all.filter((b) => b.startsWith('feature-') && b !== 'feature-merge')
-  if (feats.length) {
-    // 最具体 = 最长（如 feature-send-receive-3.1.1-inner-buy-flag > feature-send-receive）
-    return feats.sort((a, b) => b.length - a.length)[0]
+  if (!feats.length) return all[0]
+  const ticket = subject && subject.match(/\b(\d+\.\d+\.\d+)\b/)
+  if (ticket) {
+    const hit = feats.filter((b) => b.includes(ticket[1]))
+    if (hit.length) return hit.sort((a, b) => b.length - a.length)[0]
   }
-  return all[0]
+  // 最具体 = 最长（如 feature-send-receive-3.1.1-inner-buy-flag > feature-send-receive）
+  return feats.sort((a, b) => b.length - a.length)[0]
 }
 
 /**

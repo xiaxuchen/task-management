@@ -277,7 +277,7 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'commit_add',
-    '登记 commit（branch 可选：不传时自动从本机 git 推断开发分支）',
+    '登记 commit（branch 可选：不传时自动从本机 git 推断开发分支，优先匹配提交 message 中的需求编号；显式传入则视为纠正并覆盖已有值）',
     { ref: z.string(), sha: z.string(), repo: z.string().optional(), note: z.string().optional(), branch: z.string().optional() },
     async ({ ref, sha, repo, note, branch }) => {
       const node = store.resolveRef(ref)
@@ -292,7 +292,7 @@ export function createMcpServer({ store }) {
           // 推断失败不阻断
         }
       }
-      return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note, branch: br }, 'ai'), null, 2) }] }
+      return { content: [{ type: 'text', text: JSON.stringify(store.addCommit(node.id, { repo, sha, note, branch: br, overwriteBranch: !!branch }, 'ai'), null, 2) }] }
     }
   )
 

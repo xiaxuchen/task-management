@@ -263,7 +263,8 @@ export function createApp({ store }) {
           // 推断失败不阻断
         }
       }
-      res.status(201).json(store.addCommit(node.id, { repo, sha, note, branch: br }, actorOf(req)))
+      // 显式传了 branch 视为纠正（允许覆盖已有值）；自动推断只回填空值
+      res.status(201).json(store.addCommit(node.id, { repo, sha, note, branch: br, overwriteBranch: !!branch }, actorOf(req)))
     })
   )
   app.delete(

@@ -13,3 +13,4 @@
 - fix(subreq-view): 修复单击节点 EDT 卡死——setCaretPosition(0) 触发 JEditorPane HTML BoxView 布局死循环（jstack 实锤）；改 scrollRectToVisible 安全滚动
 - feat(review-layout): commit 列表操作移入列表头（全选⇄/反选/仅看待审在列表上方）；顶栏摘要左 + 按钮组右对齐
 - feat(node-crud): 节点树右键菜单支持增删改（新建子节点/重命名/删除，类型约束与后端一致，完成后自动刷新）
+- fix(commit-branch): 开发分支推断更准——merge 提交归属合入目标分支、普通提交优先匹配 message 需求编号，避免误判最长的集成分支；显式传 branch 视为纠正可覆盖已有值（overwriteBranch）；补 git-track UT

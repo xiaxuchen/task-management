@@ -661,7 +661,7 @@ export function createStore(db, options = {}) {
       .map(commitVO)
   }
 
-  function addCommit(nodeId, { repo = null, sha, note = null, branch = null } = {}, by = 'user') {
+  function addCommit(nodeId, { repo = null, sha, note = null, branch = null, overwriteBranch = false } = {}, by = 'user') {
     rawNode(nodeId)
     const s = String(sha || '').trim()
     if (!SHA_RE.test(s)) throw new AppError(CODES.VALIDATION_FAILED, 'sha 必须是 7–40 位十六进制', { sha: s })
@@ -671,8 +671,8 @@ export function createStore(db, options = {}) {
     }
     const existing = db.prepare('SELECT * FROM commits WHERE node_id = ? AND sha = ?').get(nodeId, s)
     if (existing) {
-      // 已存在：补齐 branch（若原来没有而这次给了）
-      if (branch && !existing.branch) {
+      // 已存在：补齐 branch（原来没有而这次给了）；overwriteBranch 时允许显式纠正已有值
+      if (branch && (overwriteBranch ? branch !== existing.branch : !existing.branch)) {
         db.prepare('UPDATE commits SET branch = ? WHERE id = ?').run(branch, existing.id)
         bumpRevision()
         return { ...commitVO(db.prepare('SELECT * FROM commits WHERE id = ?').get(existing.id)), created: false }
