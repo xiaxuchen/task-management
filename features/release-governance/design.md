@@ -37,6 +37,13 @@
 **已存在**时只更新显式传入的字段，其余保持原样。否则「只想改 content」会把 `rollback` / `status` 静默清掉。
 需要显式清空就传空值（`rollback: null` / `content: ''`）。
 
+**R4.3 补默认值是 store 的职责，不是入口的**：三个入口（HTTP / CLI / MCP）必须把**调用方真正传了的字段**
+原样交给 store，未传的保持 `undefined`；**入口不得**先补成 `kind||'config'`、`rollback??null`、`status||'pending'`、
+`required===undefined?1:required` 之类的默认值再交给 store——那样 store 看到的就永远是「显式传入」，
+已存在项的 `rollback` / `status` / `required` 会被默认值静默回退。
+新建时的默认值由 `createReleaseItem` 的形参默认值兜底，因此入口一律透传即可同时满足两段语义。
+（背景：5c38748 上 store / HTTP 正确，但 CLI 与 MCP 在参数装配处补了默认值，独立测试发现三入口不一致。）
+
 **R5 执行与清单解耦**：`runReleaseChecks` 只负责「派单 + 开报告」，不阻塞等待 agent 结果；
 agent 任务结束后由前台执行者（或收尾钩子）用 `test_report_finish` 逐条回写 pass/fail，与回归测试闭环完全一致。
 

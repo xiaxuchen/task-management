@@ -796,11 +796,13 @@ export function createMcpServer({ store }) {
         n.id,
         {
           name,
-          kind: kind || 'config',
-          content: content ?? '',
-          rollback: rollback ?? null,
-          status: status || 'pending',
-          required: required === undefined ? 1 : required
+          // 只传显式给出的字段：未传的交给 store 决定（新建取默认值、已存在保持原样）。
+          // 与 CLI / HTTP 保持同一语义——入口补默认值会让既有的 rollback / status / required 静默回退。
+          kind,
+          content,
+          rollback,
+          status,
+          required
         },
         'mcp'
       )

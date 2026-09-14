@@ -471,11 +471,16 @@ export async function run(argv) {
             store.resolveRef(arg).id,
             {
               name: values.name,
-              kind: values.kind || 'config',
-              content: readMaybeFile({ content: values.content, file: values.file }) ?? values.content ?? '',
-              rollback: values.rollback ?? null,
-              status: values.status || 'pending',
-              required: values.optional ? 0 : 1
+              // 只传显式给出的字段：未传的交给 store 决定（新建取默认值、已存在保持原样）。
+              // 入口若在这里补默认值，会把既有的 rollback / status / required 静默回退（独立测试发现的三入口语义不一致）。
+              kind: values.kind,
+              content:
+                values.content !== undefined || values.file !== undefined
+                  ? readMaybeFile({ content: values.content, file: values.file })
+                  : undefined,
+              rollback: values.rollback,
+              status: values.status,
+              required: values.optional ? 0 : values.required ? 1 : undefined
             },
             by
           )

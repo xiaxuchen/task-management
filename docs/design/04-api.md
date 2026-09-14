@@ -90,7 +90,7 @@
 |---|---|---|
 | GET | `/api/nodes/:id/release-items` | 该节点的上线项；`?kind=config\|sql\|check`、`?status=` 筛，`?includeOptional=false` 只看必做 |
 | POST | `/api/nodes/:id/release-items` | 新增上线项 `{name, kind?, content?, rollback?, status?, required?}`；重名 → 409 `RELEASE_ITEM_NAME_EXISTS` |
-| POST | `/api/nodes/:id/release-items/upsert` | 按项名 get-or-create 并写内容（幂等）：`{name, kind?, content?, rollback?, status?, required?}` |
+| POST | `/api/nodes/:id/release-items/upsert` | 按项名 get-or-create 并写内容（幂等）：`{name, kind?, content?, rollback?, status?, required?}`。**新建**时未传字段取默认值；**已存在**时只更新显式传入的字段（未传的保持原样）；入口一律透传、不补默认值 |
 | POST | `/api/nodes/:id/release-items/reorder` | `{orderedIds[]}` 重排上线项 |
 | PATCH | `/api/release-items/:rid` | 更新上线项 `{name?, kind?, content?, rollback?, status?, required?}` |
 | DELETE | `/api/release-items/:rid` | 删除上线项 |
