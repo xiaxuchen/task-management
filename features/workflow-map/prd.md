@@ -44,7 +44,8 @@ TaskBoard 已有需求文档、概要设计、AI 可回归测试、测试报告�
 
 ## 4. 验收标准
 
-- `test/workflow-map.test.mjs`：阶段投影、四态区分、`scope=subtree` 多需求单元、非法 `scope` 拒绝、纯读不产生 revision、上线写引用、上线项与检查报告回写后状态翻转、markdown 渲染、能力清单登记。
+- `test/workflow-map.test.mjs`：阶段投影、四态区分、`scope=subtree` 多需求单元、非法 `scope` 拒绝、纯读不产生 revision、上线写引用、上线项与检查报告回写后状态翻转、D1 裸项目/空文档、D3 逐检查用例聚合、D4 `release_check` 上线项引用、markdown 渲染、能力清单登记。
+- `test/format-validation.test.mjs`：D2 三入口 `format` 值域一致（HTTP 400 `VALIDATION_FAILED` / CLI 非零 / MCP `isError`）与纯读 revision 不变。
 - `test/http.test.mjs`：HTTP 全链路（需求资料 → 用例 → 报告 → 上线项）与 `format=md`。
 - `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/04-api.md` + `docs/api.md`
   + `docs/design/06-ui.md` + `docs/design/08-testing.md` + `features/README.md`）。

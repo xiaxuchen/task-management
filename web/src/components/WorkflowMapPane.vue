@@ -266,7 +266,7 @@ const layout = computed(() => {
 
 const selected = computed(() => layout.value.nodes.find((n) => n.id === selectedId.value) || null)
 const isReleaseItemBranch = computed(
-  () => selected.value?.type === 'branch' && ['release_config', 'release_sql'].includes(selected.value.stage)
+  () => selected.value?.type === 'branch' && ['release_config', 'release_sql', 'release_check'].includes(selected.value.stage)
 )
 const isCheckBranch = computed(
   () => selected.value?.type === 'branch' && ['release_check', 'code_check', 'biz_check'].includes(selected.value.stage)

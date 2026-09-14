@@ -62,6 +62,50 @@ test('workflow_map：未填需求与未跑验收体现为待关注分支，不�
   assert.ok(report.id > 0)
 })
 
+// ---------- D1 回归：空白预置文档 / mindmap 不得把裸项目抬成 pass ----------
+
+test('D1回归：裸项目整体状态非 pass，空白预置文档不作为通过证据', async (t) => {
+  const { tmp, store, p } = await setup()
+  t.after(() => tmp.cleanup())
+  // setup 新建项目时会预置一份空白「描述」文档；它只能证明“文档已登记”，不能证明“已填写”。
+  const docs = store.listDocuments(p.id)
+  assert.equal(docs.length, 1)
+  assert.equal(String(docs[0].content || '').trim(), '')
+
+  const map = store.buildWorkflowMap(p.id)
+  assert.notEqual(map.status, 'pass')
+  assert.equal(branchOf(map, 'documents', p.id).status, 'fail')
+  assert.equal(branchOf(map, 'mindmap', p.id).status, 'pass')
+  assert.equal(stageOf(map, 'mindmap').status, 'pass')
+  // mindmap 是展示性阶段，单独为 pass，但不得参与根聚合（否则裸项目会假绿）。
+  assert.notEqual(map.status, 'pass')
+})
+
+test('D1回归：空需求（预置空文档）整体非 pass，填写文档后才转 pass', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  let map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'documents', r.id).status, 'fail')
+  let ready = store.buildRequirementReadiness(r.id)
+  assert.equal(ready.ready, false)
+  assert.notEqual(map.status, 'pass')
+
+  // 只有填了正文，文档分支才允许 pass（需求/设计/用例仍需补齐，整体仍不通过）。
+  store.upsertDocument(r.id, '需求内容', '需求正文')
+  store.upsertDocument(r.id, '概要设计', '设计正文')
+  map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'documents', r.id).status, 'pass')
+
+  // 三条门禁齐备后该分支不再被空文档拉失败
+  store.upsertTestCase(r.id, { name: '回归用例', prompt: '跑单测' })
+  map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'requirement', r.id).status, 'pass')
+  assert.equal(branchOf(map, 'design', r.id).status, 'pass')
+  assert.equal(branchOf(map, 'regression', r.id).status, 'pass')
+  ready = store.buildRequirementReadiness(r.id)
+  assert.equal(ready.ready, true)
+})
+
 test('workflow_map：scope=subtree 纳入需求两层并分别给出分支', async (t) => {
   const { tmp, store, p, r, s } = await setup()
   t.after(() => tmp.cleanup())
@@ -172,4 +216,53 @@ test('workflow_map：检查报告回写后 code/biz/release_check 图上状态�
   assert.equal(branchOf(map, 'code_check', r.id).meta.checkCases[0].latestStatus, 'pass')
   assert.equal(branchOf(map, 'biz_check', r.id).meta.checkCases[0].latestStatus, 'fail')
   assert.equal(branchOf(map, 'release_check', r.id).meta.checkCases[0].latestStatus, 'blocked')
+})
+
+// ---------- D3 回归：检查分支按逐用例最严重状态收敛，不能被一条 pass 掩盖 ----------
+
+test('D3回归：同一 kind 部分用例未执行时检查分支不得整体 pass', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const a = store.upsertTestCase(r.id, { name: 'A', prompt: 'p', kind: 'code_check' })
+  const b = store.upsertTestCase(r.id, { name: 'B', prompt: 'p', kind: 'code_check' })
+  const ra = store.createTestReport(r.id, { caseId: a.id, kind: 'code_check', status: 'running' })
+  store.finishTestReport(ra.id, { status: 'pass' })
+
+  let map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'pending')
+  assert.equal(branchOf(map, 'code_check', r.id).meta.checkCases.find((c) => c.id === b.id).latestStatus, 'not_run')
+
+  const rb = store.createTestReport(r.id, { caseId: b.id, kind: 'code_check', status: 'running' })
+  map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'pending')
+
+  store.finishTestReport(rb.id, { status: 'pass' })
+  map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'pass')
+
+  // blocked/error/cancelled 归 fail；running 归 pending
+  const c = store.upsertTestCase(r.id, { name: 'C', prompt: 'p', kind: 'code_check' })
+  const rc = store.createTestReport(r.id, { caseId: c.id, kind: 'code_check', status: 'running' })
+  store.finishTestReport(rc.id, { status: 'blocked' })
+  map = store.buildWorkflowMap(r.id)
+  assert.equal(branchOf(map, 'code_check', r.id).status, 'fail')
+  assert.equal(branchOf(map, 'code_check', r.id).meta.checkCases.find((item) => item.id === c.id).latestStatus, 'blocked')
+})
+
+// ---------- D4 回归：release_check 分支必须同时保留上线项写引用 ----------
+
+test('D4回归：release_check 分支保留 kind=check 上线项稳定 ID，供前端显式回写', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const item = store.upsertReleaseItem(r.id, { name: '上线检查项 A', kind: 'check', status: 'pending' })
+  const map = store.buildWorkflowMap(r.id)
+  const branch = branchOf(map, 'release_check', r.id)
+  assert.equal(branch.meta.releaseItems.length, 1)
+  assert.equal(branch.meta.releaseItems[0].id, item.id)
+  assert.equal(branch.meta.releaseItems[0].status, 'pending')
+  // UI 回写区判断必须覆盖 release_check；这里锁住契约所需元数据，前端构建用例再锁组件行为。
+  assert.deepEqual(
+    branch.meta.releaseItems.map((i) => i.id),
+    [item.id]
+  )
 })

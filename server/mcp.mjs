@@ -723,7 +723,12 @@ export function createMcpServer({ store }) {
   server.tool(
     'acceptance_report',
     '验收报告：聚合节点（含可选子树）的用例最近结果、通过率与未覆盖清单；format=md 返回可贴进 issue 的 markdown',
-    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
+    {
+      node: z.union([z.number(), z.string()]),
+      scope: z.enum(['self', 'subtree']).optional(),
+      // 保持 string 由 store.normalizeFormat 统一校验，使三入口的非法 format 都归一到 VALIDATION_FAILED。
+      format: z.string().optional()
+    },
     async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
       const report = store.buildAcceptanceReport(n.id, { scope })
@@ -759,12 +764,27 @@ export function createMcpServer({ store }) {
   server.tool(
     'workflow_map',
     '研发主线思维导图：把节点（含可选子树）投影为需求管理 → 概要设计/文档 → AI 可回归测试 → 测试报告 → 验收报告 → 上线配置/SQL/检查与代码/业务检查的只读图；format=md 返回可贴进 issue 的 markdown',
-    { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
+    {
+      node: z.union([z.number(), z.string()]),
+      scope: z.enum(['self', 'subtree']).optional(),
+      // 保持 string 由 store.normalizeFormat 统一校验，使三入口的非法 format 都归一到 VALIDATION_FAILED。
+      format: z.string().optional()
+    },
     async ({ node, scope, format }) => {
-      const n = store.resolveRef(String(node))
-      const map = store.buildWorkflowMap(n.id, { scope })
-      const text = format === 'md' ? renderWorkflowMapMd(map) : JSON.stringify(map, null, 2)
-      return { content: [{ type: 'text', text }] }
+      try {
+        const n = store.resolveRef(String(node))
+        const normalized = store.normalizeFormat(format)
+        const map = store.buildWorkflowMap(n.id, { scope })
+        const text = normalized === 'md' ? renderWorkflowMapMd(map) : JSON.stringify(map, null, 2)
+        return { content: [{ type: 'text', text }] }
+      } catch (e) {
+        // 与 HTTP / CLI 一样把非法 format / scope 归一到 VALIDATION_FAILED；
+        // MCP 侧显式转成 isError，避免 handler 抛异常后客户端无语义结果。
+        return {
+          content: [{ type: 'text', text: `${e.code || 'ERROR'}: ${e.message}` }],
+          isError: true
+        }
+      }
     }
   )
 

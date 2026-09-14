@@ -457,10 +457,11 @@ export async function run(argv) {
     // ---------- 研发主线思维导图（`workflow map <ref>`） ----------
     case 'workflow map': {
       const node = store.resolveRef(ref)
+      const format = store.normalizeFormat(values.format)
       const map = store.buildWorkflowMap(node.id, {
         scope: values.scope
       })
-      if (values.format === 'md') process.stdout.write(renderWorkflowMapMd(map) + '\n')
+      if (format === 'md') process.stdout.write(renderWorkflowMapMd(map) + '\n')
       else json(map)
       break
     }

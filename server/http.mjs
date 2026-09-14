@@ -572,10 +572,11 @@ export function createApp({ store }) {
     '/api/nodes/:id/workflow-map',
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
+      const format = store.normalizeFormat(req.query.format)
       const map = store.buildWorkflowMap(node.id, {
         scope: req.query.scope
       })
-      if (req.query.format === 'md') {
+      if (format === 'md') {
         res.type('text/markdown').send(renderWorkflowMapMd(map))
         return
       }

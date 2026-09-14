@@ -425,6 +425,10 @@ curl -s 'http://127.0.0.1:3210/api/nodes/12/workflow-map?format=md'
 > `pending` 执行中或等待结论；`empty` 尚未登记，**不等于通过**。
 > 纯读投影，不写库、不动 revision。
 >
+> `format` 只接受 `json` / `md`（缺省 `json`）；`xml` / `JSON` / 空串等非法值在
+> REST / CLI / MCP 统一返回 `VALIDATION_FAILED`（HTTP 400、CLI 非零、MCP `isError`），
+> 不会把拼错的格式静默当 JSON 消费。
+>
 > 图形接口返回的上线分支带稳定引用：上线项 `meta.releaseItems[*].id`、检查用例
 > `meta.checkCases[*].id` 与 `latestReportId`。Web「主线」面板使用这些引用显式调用
 > `PATCH /api/release-items/:rid`、`POST /api/nodes/:id/release-checks`、

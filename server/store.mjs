@@ -13,6 +13,7 @@ const REVIEW_STATUSES = ['pending', 'approved', 'issue']
  * 让「子树未就绪」被汇报成 `ready=true`，调用方带着未就绪需求进入回归/上线。
  */
 const SCOPE_VALUES = ['self', 'subtree']
+const FORMAT_VALUES = ['json', 'md']
 
 /**
  * scope 解析：缺省（undefined / null）→ fallback；其余必须在值域内，否则 VALIDATION_FAILED。
@@ -23,6 +24,19 @@ function normalizeScope(scope, fallback = 'self') {
   const v = String(scope)
   if (!SCOPE_VALUES.includes(v)) {
     throw new AppError(CODES.VALIDATION_FAILED, `未知 scope ${scope}`, { scope, allowed: SCOPE_VALUES })
+  }
+  return v
+}
+
+/**
+ * format 枚举值域。REST / CLI / MCP 共用同一校验口径：
+ * 缺省 → json；json / md 原样返回；其它值（含空串）一律 VALIDATION_FAILED。
+ */
+function normalizeFormat(format, fallback = 'json') {
+  if (format === undefined || format === null) return fallback
+  const v = String(format)
+  if (!FORMAT_VALUES.includes(v)) {
+    throw new AppError(CODES.VALIDATION_FAILED, `未知 format ${format}`, { format, allowed: FORMAT_VALUES })
   }
   return v
 }
@@ -1739,6 +1753,9 @@ export function createStore(db, options = {}) {
   ]
 
   const WORKFLOW_STATUS_WEIGHT = { fail: 4, pending: 3, pass: 2, empty: 1 }
+  // 仅参与整体聚合的阶段：mindmap 是“这张图已渲染出来”的展示性事实，
+  // 不能作为研发进展证据，否则空项目也会被它抬成 pass。
+  const WORKFLOW_EVIDENCE_STAGES = new Set(WORKFLOW_STAGES.map((s) => s.key).filter((key) => key !== 'mindmap'))
   const workflowWorstStatus = (items) => {
     const statuses = items.map((i) => i.status || 'empty')
     return statuses.reduce(
@@ -1765,6 +1782,26 @@ export function createStore(db, options = {}) {
           : `通过 ${counts.pass || 0} · 未通过 ${counts.fail || 0} · 待处理 ${counts.pending || 0} · 空 ${counts.empty || 0}`,
       counts
     }
+  }
+
+  /**
+   * 检查类阶段按“逐用例最严重状态”收敛：
+   * fail/blocked/error/cancelled → fail；running/not_run → pending；全部 pass 才 pass。
+   * 不能用“最新一条报告”代表整个检查分支，否则一条 pass 会掩盖同 kind 下未执行的用例。
+   */
+  function workflowCheckStatus(checkCases) {
+    if (!checkCases.length) return 'empty'
+    let hasPending = false
+    for (const item of checkCases) {
+      const status = item.latestStatus || 'not_run'
+      if (status === 'pass') continue
+      if (status === 'running' || status === 'not_run') {
+        hasPending = true
+        continue
+      }
+      return 'fail'
+    }
+    return hasPending ? 'pending' : 'pass'
   }
 
   function workflowItem({ stage, unit, status, detail, meta = {} }) {
@@ -1909,11 +1946,12 @@ export function createStore(db, options = {}) {
       const releaseCheckCases = cases.filter((c) => c.kind === 'release_check')
       const releaseCheckItems = releaseItems.filter((i) => i.kind === 'check')
       const releaseCheckItemSummary = mapReleaseItems(releaseCheckItems)
-      const releaseCheckCaseStatus =
-        releaseCheckCases.length === 0 ? 'empty' : mapReportStatus(latestReportStatusForKind(unit.id, 'release_check'))
+      const codeCheckMeta = checkCasesMeta(codeCheckCases, latestReportsByCase(unit.id, 'code_check'))
+      const bizCheckMeta = checkCasesMeta(bizCheckCases, latestReportsByCase(unit.id, 'biz_check'))
+      const releaseCheckMeta = checkCasesMeta(releaseCheckCases, latestReportsByCase(unit.id, 'release_check'))
       const releaseCheckStatus = workflowWorstStatus([
         { status: releaseCheckItemSummary.status },
-        { status: releaseCheckCaseStatus }
+        { status: workflowCheckStatus(releaseCheckMeta) }
       ])
 
       branchItems.push(
@@ -1932,7 +1970,8 @@ export function createStore(db, options = {}) {
         workflowItem({
           stage: 'documents',
           unit,
-          status: docs.length > 0 ? 'pass' : 'empty',
+          // 空白预置文档只算“登记了文档”，不算通过证据。
+          status: docs.length === 0 ? 'empty' : docsFilled.length > 0 ? 'pass' : 'fail',
           detail: `文档 ${docs.length} 份 · 已填写 ${docsFilled.length} 份`,
           meta: { documents: docs.map((d) => ({ id: d.id, name: d.name, filled: String(d.content || '').trim() !== '' })) }
         }),
@@ -2000,27 +2039,27 @@ export function createStore(db, options = {}) {
           meta: {
             caseIds: releaseCheckCases.map((c) => c.id),
             releaseItems: releaseItemsMeta(releaseCheckItems),
-            checkCases: checkCasesMeta(releaseCheckCases, latestReportsByCase(unit.id, 'release_check'))
+            checkCases: releaseCheckMeta
           }
         }),
         workflowItem({
           stage: 'code_check',
           unit,
-          status: codeCheckCases.length === 0 ? 'empty' : mapReportStatus(latestReportStatusForKind(unit.id, 'code_check')),
+          status: workflowCheckStatus(codeCheckMeta),
           detail: codeCheckCases.length === 0 ? '暂无代码检查用例' : `代码检查用例 ${codeCheckCases.length} 条`,
           meta: {
             caseIds: codeCheckCases.map((c) => c.id),
-            checkCases: checkCasesMeta(codeCheckCases, latestReportsByCase(unit.id, 'code_check'))
+            checkCases: codeCheckMeta
           }
         }),
         workflowItem({
           stage: 'biz_check',
           unit,
-          status: bizCheckCases.length === 0 ? 'empty' : mapReportStatus(latestReportStatusForKind(unit.id, 'biz_check')),
+          status: workflowCheckStatus(bizCheckMeta),
           detail: bizCheckCases.length === 0 ? '暂无业务检查用例' : `业务检查用例 ${bizCheckCases.length} 条`,
           meta: {
             caseIds: bizCheckCases.map((c) => c.id),
-            checkCases: checkCasesMeta(bizCheckCases, latestReportsByCase(unit.id, 'biz_check'))
+            checkCases: bizCheckMeta
           }
         })
       )
@@ -2046,7 +2085,10 @@ export function createStore(db, options = {}) {
       }
     }
 
-    const rootStatus = workflowWorstStatus(stages.map((s) => ({ status: s.status })))
+    // 根状态只聚合“证据阶段”，排除 mindmap 这类展示性阶段。
+    const rootStatus = workflowWorstStatus(
+      stages.filter((s) => WORKFLOW_EVIDENCE_STAGES.has(s.key)).map((s) => ({ status: s.status }))
+    )
     const rootNode = nodes.find((n) => n.id === `root:${root.id}`)
     if (rootNode) rootNode.status = rootStatus
 
@@ -2895,7 +2937,9 @@ export function createStore(db, options = {}) {
     buildAcceptanceReport,
     // 需求就绪门禁（需求管理闭环的前置判定）
     SCOPE_VALUES,
+    FORMAT_VALUES,
     normalizeScope,
+    normalizeFormat,
     buildRequirementReadiness,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,

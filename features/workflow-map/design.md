@@ -79,6 +79,9 @@ root（当前范围）
 
 **R6 scope 校验**：直接复用 `store.normalizeScope`，非法值返回 `VALIDATION_FAILED`，不静默降级。
 
+**R6.1 format 校验**：REST / CLI / MCP 共用 `store.normalizeFormat`。只接受 `json` / `md`，
+缺省为 `json`；`xml` / `JSON` / 空串等非法值统一 `VALIDATION_FAILED`，并保持只读（不改 revision）。
+
 **R7 读图与写回分离**：
 
 - `GET /workflow-map` 仍是纯读聚合；
@@ -115,3 +118,11 @@ MCP：`workflow_map({ node, scope?, format? })`
 - **验收口径会纳入所有用例**：图中若新增一条尚未执行的 `code_check`，验收阶段会因 `notRun` 变为 `fail`。这是既有验收口径的正确反映，不是图把代码检查混进验收。
 - **需求分支与证据分支是两个维度**：`unit` 节点表示需求单元，`branch` 节点表示该需求在某阶段的证据；连线保留两种关系，避免前端只能做成一棵树。
 - **空态不等于通过**：`empty` 单独一色并计入 totals，避免“尚未登记”被误读成完成。
+- **空白预置文档不是通过证据**：新建节点会预置空白文档；`documents` 分支在有文档但正文全空时为
+  `fail`，不是 `pass`。
+- **展示性阶段不参与根聚合**：`mindmap` 单独展示为 `pass`，但根状态排除它；否则裸项目会因为没有
+  任何研发证据却变成整体 `pass`。
+- **检查分支按逐用例聚合**：同一 `kind` 下逐条用例取最严重值；`fail/blocked/error/cancelled` → `fail`，
+  `running/not_run` → `pending`，全部 `pass` 才 `pass`，不能用一条通过报告掩盖另一条未执行用例。
+- **`release_check` 双写入口**：该分支既有 `kind=check` 上线项状态回写，也有 `release_check` 检查用例的
+  dry-run / 派单 / 报告回写。
