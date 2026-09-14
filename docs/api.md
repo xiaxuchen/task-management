@@ -396,10 +396,14 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/design-outline?format=md'
 curl -s -X POST http://127.0.0.1:3210/api/nodes/1/design-outline/apply \
   -H 'content-type: application/json' -d '{"scope":"self"}'
 
+# 预演：只回报将写哪些，不落库、不动 revision（与 overwrite 同传也只预演）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/design-outline/apply \
+  -H 'content-type: application/json' -d '{"dryRun":true,"overwrite":true}'
+
 # CLI / MCP 等价入口
 # node bin/taskboard.js design outline "项目A/需求1" [--scope self|subtree] [--format json|md]
 # node bin/taskboard.js design apply   "项目A/需求1" [--scope self|subtree] [--overwrite] [--dry-run]
-# MCP: design_outline { node, scope?, format? } / design_outline_apply { node, scope?, overwrite? }
+# MCP: design_outline { node, scope?, format? } / design_outline_apply { node, scope?, overwrite?, dryRun? }
 ```
 
 > 只对 `requirement` / `subreq` 推导；挂在项目上用 `scope=subtree` 逐需求各出一份。

@@ -83,7 +83,7 @@
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/api/nodes/:id/design-outline` | 概要设计大纲：`?scope=self\|subtree`，`?format=json\|md`。从需求树的子需求 / 任务组 / 子任务结构推导骨架；`md` 含 mermaid mindmap + 逐层小节（按节点类型给出「目标与范围 / 子需求设计 / 任务组拆分 / 实现要点 / 缺陷处理」），可直接写入「概要设计」文档；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；**纯读聚合，不写库、不动 revision** |
-| POST | `/api/nodes/:id/design-outline/apply` | 把推导出的骨架写入各需求的「概要设计」文档（文档名取 `config.readiness.designDoc`，与需求就绪门禁同一份）：`{scope?, overwrite?}`。默认 `overwrite:false`——已有非空文档原样保留并回报 `written:false / reason=already_filled`；`overwrite:true` 才覆盖。返回逐单元 `results[]` 与 `written` / `skipped` 计数 |
+| POST | `/api/nodes/:id/design-outline/apply` | 把推导出的骨架写入各需求的「概要设计」文档（文档名取 `config.readiness.designDoc`，与需求就绪门禁同一份）：`{scope?, overwrite?, dryRun?}`。默认 `overwrite:false`——已有非空文档原样保留并回报 `written:false / reason=already_filled`；`overwrite:true` 才覆盖。`dryRun:true` 只回报将写哪些、**不落库不动 revision**（与 `overwrite:true` 组合时也只预演，不覆盖）。返回逐单元 `results[]` 与 `written` / `skipped` 计数 |
 
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 

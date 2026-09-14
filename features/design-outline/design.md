@@ -42,6 +42,9 @@
 
 **R6 dryRun 与只读分离**：推导是纯读，落库是单独一步。`dryRun` 停在推导 + 计划层面，
 回报将写哪些、原因是什么（`dry_run` / `already_filled`），保证 AI 可以先预演再落库。
+**入口必须显式透传 `dryRun`**：`applyDesignOutline` 本身支持 `dryRun`，但参数要由入口装配。
+HTTP 曾漏传 `body.dryRun`（D1），MCP 曾缺 `dryRun` schema 并静默吞参（D2）——两者都让「预览」失效，
+叠 `overwrite:true` 会无声覆盖人工设计正文。入口装配必须与 CLI 对齐，且不许静默忽略未知参数。
 
 **R7 mermaid 转义**：mermaid 的 `["..."]` / `root(("..."))` 语法对双引号与换行敏感，节点名是用户输入。
 `mermaidText()` 把双引号换成单引号、换行压平、去掉会与语法冲突的括号，避免一个名字里带 `"` 的任务
@@ -63,6 +66,10 @@
   `normalizeScope` 才报错（见 `features/requirement-readiness/design.md` R5.1）。
 - **前端页签只在 `project` / `requirement` / `subreq` 上加载**：`group` / `task` / `defect`
   上 `self` 推导会 400，抽屉加载时应直接跳过而不是让页面弹错。
+- **actor 值域**：MCP 入口传 `by: 'mcp'`；`ACTORS` 若不含 `mcp` 会被 `actor()` 静默降级成 `user`，
+  AI 生成的设计在审计上就冒充「用户写的」（D3）。`ACTORS` 已纳入 `mcp`（`ai` 保留以免改写历史语义）。
+- **入口参数漏装配是这类缺陷的通用形态**：store 层正确不代表入口正确。新增带「预演 / 覆盖」语义的写接口时，
+  三入口的参数装配要有对应用例，尤其 `overwrite` + `dryRun` 的组合（危险组合）必须显式覆盖。
 
 ## 4. 关联章节
 

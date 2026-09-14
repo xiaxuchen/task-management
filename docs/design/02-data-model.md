@@ -5,6 +5,11 @@
 
 存储：SQLite（Node 内置 `node:sqlite`），开启 WAL 与外键；数据文件 `~/.taskboard/data.db`。
 
+> **审计 actor 值域**：各表 `created_by` / `updated_by` 的允许值为
+> `user`（Web）· `ai`（MCP 早期工具）· `mcp`（MCP 入口）· `cli`（命令行）· `import`（导入），
+> 由 `store.mjs` 的 `ACTORS` 单点校验；**值域外的 actor 回退 `user`**（见 `test/store-revision.test.mjs`）。
+> `ai` 与 `mcp` 都表示「AI 经 MCP 写入」，两个值都保留以免改写历史审计语义，新工具统一用 `mcp`。
+
 ### 4.1 nodes（节点，结构表）
 
 | 字段 | 类型 | 说明 |

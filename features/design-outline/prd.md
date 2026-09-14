@@ -27,7 +27,9 @@
   **与需求就绪门禁判定的是同一份文档** —— 写对才算通过门禁。
 - R5 默认不覆盖：`overwrite=false`（缺省）时已有**非空**内容的「概要设计」文档原样保留，只回报
   `written:false / reason=already_filled`；避免把人工或 AI 写好的设计冲掉。`overwrite=true` 才覆盖。
-- R6 `dryRun` 只回报将写哪些、不落库不动 revision，与其余写接口的预演语义一致。
+- R6 `dryRun` 只回报将写哪些、不落库不动 revision，与其余写接口的预演语义一致；
+  **三入口都必须真正接受并透传该参数**（HTTP 请求体 `dryRun`、CLI `--dry-run`、MCP `dryRun`），
+  任一入口静默丢弃都会让「预览」变成实写——叠 `overwrite:true` 即无声覆盖人工设计正文，属数据安全问题。
 - R7 `scope=self|subtree` 值域统一走 `store.normalizeScope`，非法值一律 `VALIDATION_FAILED`，
   禁止静默降级成 `self`（参见需求就绪门禁 R5a）。
 - R8 `buildDesignOutline` 是**只读聚合**，不写库、不动 revision；真正的落库由 `applyDesignOutline`
@@ -47,7 +49,9 @@
   节点名含双引号 / 换行时 mermaid 语法不被破坏；空态提示；`apply` 写入后 `design_doc` 门禁转通过；
   默认不覆盖已有正文；`overwrite=true` 才覆盖；`dryRun` 不落库；文档名随 `config.readiness.designDoc`。
 - `test/design-outline-entrypoints.test.mjs`：HTTP JSON / md / apply 全链路、非法 scope/format 400、
-  apply 后 readiness 转 ready；MCP 与 store 结果逐字段一致、非法 scope 返回 `isError`；
+  apply 后 readiness 转 ready；**HTTP apply 透传 `dryRun`（含 `overwrite+dryRun` 组合不覆盖人工正文）**；
+  **MCP apply 接受并透传 `dryRun`**、**MCP 落库 actor 记为 `mcp`**；MCP 与 store 结果逐字段一致、
+  非法 scope 返回 `isError`；
   CLI `design outline` / `design apply` / `--dry-run` / `--format md`；三入口 1:1。
 - `npm test` 全绿；`npm run build` 通过；文档同步（本目录 + `docs/design/04-api.md` + `docs/api.md`
   + `docs/design/09-decisions.md` + `features/README.md` + `AGENTS.md`）。

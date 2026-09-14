@@ -168,8 +168,8 @@ release check "项目A/需求1" [--scope subtree] [--dry-run] [--no-wait]   # �
 4. 单点更新用 `node upsert` / `attr set`（幂等，可反复调用）
 5. 破坏性操作（删除 / 移动）必须带 `--confirm`（HTTP 侧为 `confirm: true`），否则 400 `CONFIRM_REQUIRED`
 
-**写操作会记录 actor**：CLI 默认 `cli`，MCP 为 `ai`，Web 为 `user`，导入为 `import`；
-可用 `--actor ai` 覆盖。UI 上有徽标区分。
+**写操作会记录 actor**：CLI 默认 `cli`，MCP 为 `mcp`（早期工具为 `ai`），Web 为 `user`，导入为 `import`；
+可用 `--actor ai` 覆盖。值域外一律回退 `user`（`store.mjs` 的 `ACTORS` 单点校验）。UI 上有徽标区分。
 
 ## 关键约束（不要做）
 

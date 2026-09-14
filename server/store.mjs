@@ -1,7 +1,11 @@
 import { AppError, CODES } from './errors.mjs'
 import { CHILD_TYPES, LEAF_TYPES } from './db.mjs'
 
-const ACTORS = new Set(['user', 'ai', 'cli', 'import'])
+// actor 值域：写操作审计字段的允许值。'mcp' 与 'ai' 都表示「AI 经 MCP 写入」——
+// 历史工具传 'ai'，部分工具传 'mcp'；'mcp' 此前不在值域内会被静默降级成 'user'，
+// 让 AI 写的文档在审计上冒充「用户写的」。两个值都保留，避免历史审计语义被改写，
+// 新工具统一用 'mcp'。非法值仍回退 'user'（见 actor()）。
+const ACTORS = new Set(['user', 'ai', 'cli', 'import', 'mcp'])
 const now = () => new Date().toISOString()
 const REVIEW_STATUSES = ['pending', 'approved', 'issue']
 

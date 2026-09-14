@@ -590,6 +590,7 @@ export function createApp({ store }) {
         applyDesignOutline(store, node.id, {
           scope: body.scope,
           overwrite: !!body.overwrite,
+          dryRun: !!body.dryRun,
           by: actorOf(req)
         })
       )

@@ -792,11 +792,12 @@ export function createMcpServer({ store }) {
     {
       node: z.union([z.number(), z.string()]),
       scope: z.string().optional(),
-      overwrite: z.boolean().optional()
+      overwrite: z.boolean().optional(),
+      dryRun: z.boolean().optional().describe('只回报将写哪些、不落库不动 revision（预演）')
     },
-    mcpValidate(async ({ node, scope, overwrite }) => {
+    mcpValidate(async ({ node, scope, overwrite, dryRun }) => {
       const n = store.resolveRef(String(node))
-      const out = applyDesignOutline(store, n.id, { scope, overwrite: !!overwrite, by: 'mcp' })
+      const out = applyDesignOutline(store, n.id, { scope, overwrite: !!overwrite, dryRun: !!dryRun, by: 'mcp' })
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
     })
   )

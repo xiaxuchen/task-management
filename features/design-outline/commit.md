@@ -1,3 +1,4 @@
 # 提交记录：概要设计大纲 / 思维导图
 
 - feat(design-outline): 概要设计大纲 / 思维导图——补上「需求管理 → 概要设计 → 文档」主线的生成侧。buildDesignOutline 从用户已在维护的需求树（子需求 / 任务组 / 子任务 / 缺陷）只读推导结构树与计数（不落表、不动 revision）；renderDesignOutlineMd 产出可写入「概要设计」文档的 markdown 骨架（mermaid mindmap + 逐层小节，节点名做 mermaid 语法转义）；applyDesignOutline 经 upsertDocument 落库，文档名复用 config.readiness.designDoc 保证与需求就绪门禁判定同一份文档，默认不覆盖已填内容（overwrite 显式放行），支持 dryRun 预演；三入口 1:1（GET/POST /api/nodes/:id/design-outline[/apply] · CLI design outline|apply · MCP design_outline / design_outline_apply）+ NodeDrawer「概要设计」页签；补 25 条 UT（结构推导 / scope 值域 / 只读语义 / mermaid 转义 / 覆盖策略 / 三入口契约）
+- fix(design-outline): 按高级测试回归报告收口 D1/D2/D3——① D1（数据安全）HTTP apply 漏装配 body.dryRun，导致 {"overwrite":true,"dryRun":true} 真覆盖并销毁人工设计正文；路由补 dryRun 透传，补 HTTP dryRun + overwrite 组合回归用例 ② D2 MCP design_outline_apply 缺 dryRun schema 且静默吞参，补 schema 与透传 ③ D3 store ACTORS 缺 mcp 使 MCP 落库 actor 降级成 user（AI 写的文档冒充用户写的）；纳入 mcp（保留 ai 以免改写历史语义），同步数据模型 / AGENTS actor 值域说明；补 6 条入口回归（在旧实现上全部失败）

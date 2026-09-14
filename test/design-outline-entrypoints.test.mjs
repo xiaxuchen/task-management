@@ -114,6 +114,42 @@ test('HTTP design-outline/apply：写入「概要设计」并让 readiness 通�
   assert.equal(readiness.ready, true)
 })
 
+// D1 回归（数据安全）：HTTP apply 必须透传 body.dryRun —— 否则 {"overwrite":true,"dryRun":true}
+// 会真覆盖并销毁已有设计正文，而调用方以为只是在预览。
+test('D1 回归：HTTP apply 透传 dryRun，不落库不动 revision', async (t) => {
+  const { tmp, store, post, cleanup } = await httpSetup()
+  t.after(cleanup)
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  const before = store.getRevision()
+
+  const out = await post(`/api/nodes/${r.id}/design-outline/apply`, { dryRun: true })
+  assert.equal(out.dryRun, true, 'HTTP 必须把 body.dryRun 透传给 applyDesignOutline')
+  assert.equal(out.written, 0)
+  assert.equal(store.getRevision(), before, 'dryRun 不得 bump revision')
+  assert.equal(store.listDocuments(r.id).find((d) => d.name === '概要设计'), undefined, 'dryRun 不得建文档')
+})
+
+test('D1 回归：HTTP apply 的 overwrite+dryRun 组合只预演，绝不覆盖已有正文', async (t) => {
+  const { tmp, store, post, cleanup } = await httpSetup()
+  t.after(cleanup)
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  store.upsertDocument(r.id, '概要设计', '人工写好的设计正文')
+  const before = store.getRevision()
+
+  const out = await post(`/api/nodes/${r.id}/design-outline/apply`, { overwrite: true, dryRun: true })
+  assert.equal(out.dryRun, true)
+  assert.equal(out.overwrite, true)
+  assert.equal(out.written, 0)
+  assert.equal(
+    store.listDocuments(r.id).find((d) => d.name === '概要设计').content,
+    '人工写好的设计正文',
+    '预演绝不能销毁人工正文'
+  )
+  assert.equal(store.getRevision(), before)
+})
+
 test('HTTP design-outline：非法 scope / format 一律 400 VALIDATION_FAILED，不静默降级', async (t) => {
   const { tmp, store, base, cleanup } = await httpSetup()
   t.after(cleanup)
@@ -171,6 +207,62 @@ test('MCP design_outline / design_outline_apply 与 store 结果逐字段一致'
   const parsed = JSON.parse(applied.content[0].text)
   assert.equal(parsed.written, 1)
   assert.ok(store.listDocuments(r.id).find((d) => d.name === '概要设计'))
+})
+
+// D2 回归：MCP 必须接受 dryRun 并透传 —— 此前 schema 缺该字段，传了会被静默吞掉且真落库。
+test('D2 回归：MCP design_outline_apply 接受并透传 dryRun，不落库不动 revision', async (t) => {
+  const { tmp, store, call, close } = await mcpSetup()
+  t.after(async () => {
+    await close()
+    tmp.cleanup()
+  })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  const before = store.getRevision()
+
+  const out = await call('design_outline_apply', { node: r.id, dryRun: true })
+  assert.equal(out.isError, undefined, 'dryRun 应被 schema 接受，不得报协议错')
+  const parsed = JSON.parse(out.content[0].text)
+  assert.equal(parsed.dryRun, true, 'MCP 必须把 dryRun 透传给 applyDesignOutline')
+  assert.equal(parsed.written, 0)
+  assert.equal(store.getRevision(), before, 'dryRun 不得 bump revision')
+  assert.equal(store.listDocuments(r.id).find((d) => d.name === '概要设计'), undefined, 'dryRun 不得建文档')
+})
+
+test('D2 回归：MCP design_outline_apply 的 overwrite+dryRun 组合只预演，不覆盖人工正文', async (t) => {
+  const { tmp, store, call, close } = await mcpSetup()
+  t.after(async () => {
+    await close()
+    tmp.cleanup()
+  })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  store.upsertDocument(r.id, '概要设计', '人工写好的设计正文')
+  const before = store.getRevision()
+
+  const out = await call('design_outline_apply', { node: r.id, overwrite: true, dryRun: true })
+  const parsed = JSON.parse(out.content[0].text)
+  assert.equal(parsed.dryRun, true)
+  assert.equal(parsed.written, 0)
+  assert.equal(store.listDocuments(r.id).find((d) => d.name === '概要设计').content, '人工写好的设计正文')
+  assert.equal(store.getRevision(), before)
+})
+
+// D3 回归：MCP 经 'mcp' actor 写入的文档，审计字段必须是 'mcp'（此前 ACTORS 不含 'mcp'，被降级成 'user'）。
+test("D3 回归：MCP design_outline_apply 的审计 actor 记为 'mcp'，不降级成 'user'", async (t) => {
+  const { tmp, store, call, close } = await mcpSetup()
+  t.after(async () => {
+    await close()
+    tmp.cleanup()
+  })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+
+  const out = await call('design_outline_apply', { node: r.id })
+  assert.equal(JSON.parse(out.content[0].text).written, 1)
+  const doc = store.listDocuments(r.id).find((d) => d.name === '概要设计')
+  assert.equal(doc.updatedBy, 'mcp')
+  assert.equal(doc.createdBy, 'mcp')
 })
 
 test('MCP design_outline：非法 scope 返回 isError + VALIDATION_FAILED（不泄漏 SDK -32602）', async (t) => {
