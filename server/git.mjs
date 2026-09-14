@@ -284,26 +284,60 @@ async function commitSubject(dir, sha) {
   return String(r.stdout || '').trim() || null
 }
 
+/** 版本号边界正则：`1.1.1` 不匹配 `11.1.1` / `1.1.10`，避免子串碰撞把集成分支误判成开发分支 */
+function versionBoundaryRe(version) {
+  const esc = String(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^\\d.])${esc}([^\\d.]|$)`)
+}
+
+/** 从若干候选分支里，按版本号边界匹配挑一个（命中多条取最具体的）；无命中返回 null */
+function pickByVersion(branches, version) {
+  if (!version) return null
+  const re = versionBoundaryRe(version)
+  const hit = branches.filter((b) => re.test(b))
+  return hit.length ? hit.sort((a, b) => b.length - a.length)[0] : null
+}
+
 /**
  * 为提交挑选"开发分支"：
- * ① merge 提交 → 归属其合入目标分支（如 "Merge branch 'x' into feature-merge" → feature-merge）；
- * ② 普通提交 → 排除 feature-merge 后，优先分支名与提交 message 中需求编号（如 3.5.4）匹配的 feature-*，
- *    其次最具体的 feature-*（最长），否则回退第一个。
+ * ① GitHub PR merge → 归属 subject 里的源分支（`Merge pull request #12 from org/feature-login-1.1.1`）；
+ * ② 经典 merge → 归属其合入目标分支（`Merge branch 'x' into feature-merge` → feature-merge）；
+ * ③ 普通提交 → 排除 feature-merge 后，优先分支名与提交 message 中需求编号（如 3.5.4）**按版本号边界**匹配的
+ *    feature-*，其次最具体的 feature-*（最长），否则回退第一个。
+ *
+ * 约束：squash merge（GitHub「Squash and merge」）把多个提交压成一个普通提交，subject 里不再有 merge 元数据，
+ * 无法可靠推断源分支——只能退化为需求编号边界匹配 / 最长 feature-*。走 squash 流程时请在登记 commit 时
+ * **显式传 `branch`**（HTTP/MCP `branch` 参数、CLI `commit add --branch`）纠正归属。
+ *
  * 注意：仅按长度取最长会把长命集成分支（如 feature-transfer-3.4.1-material-apply-id-fix）误判成开发分支。
  */
 export async function pickBranchForCommit(dir, sha) {
   const all = await branchesContaining(dir, sha)
   if (!all.length) return null
   const subject = await commitSubject(dir, sha)
+  const feats = all.filter((b) => b.startsWith('feature-') && b !== 'feature-merge')
+  const ticket = subject && subject.match(/\b(\d+\.\d+\.\d+)\b/)
+
+  // ① GitHub PR merge：subject 只带源分支（`from <owner>/<branch>`），据此归属开发分支。
+  //    注意源分支是 merge 提交的祖先，`branch --contains <merge>` 不会列出它，因此以 subject 为准直接返回。
+  const pr = subject && subject.match(/^Merge pull request #\d+ from (\S+)/)
+  if (pr) {
+    // `from <owner>/<branch>`：只去掉第一段 owner，保留 branch 自身可能含的斜杠
+    const head = pr[1].replace(/^[^/]+\//, '')
+    if (head && head !== pr[1] && head !== 'main' && head !== 'master') return head
+  }
+
+  // ② 经典 merge：归属合入目标分支
   const mergeTarget = subject && subject.match(/^Merge (?:branch|remote-tracking branch) '[^']+' into (\S+)/)
   if (mergeTarget && all.includes(mergeTarget[1])) return mergeTarget[1]
-  const feats = all.filter((b) => b.startsWith('feature-') && b !== 'feature-merge')
+
+  const pool = feats.length ? feats : all
   if (!feats.length) return all[0]
-  const ticket = subject && subject.match(/\b(\d+\.\d+\.\d+)\b/)
-  if (ticket) {
-    const hit = feats.filter((b) => b.includes(ticket[1]))
-    if (hit.length) return hit.sort((a, b) => b.length - a.length)[0]
-  }
+
+  // ③ 普通提交：需求编号按版本号边界匹配（避免 1.1.1 命中 11.1.1）
+  const byTicket = pickByVersion(pool, ticket && ticket[1])
+  if (byTicket) return byTicket
+
   // 最具体 = 最长（如 feature-send-receive-3.1.1-inner-buy-flag > feature-send-receive）
   return feats.sort((a, b) => b.length - a.length)[0]
 }

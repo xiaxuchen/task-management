@@ -274,3 +274,109 @@ test('pickBranchForCommit：merge 提交归属其合入目标分支', async (t) 
   const picked = await git.pickBranchForCommit(dir, mergeSha)
   assert.equal(picked, 'feature-merge')
 })
+
+test('pickBranchForCommit：需求编号按版本号边界匹配，不被更长分支的版本号子串命中', async (t) => {
+  const { tmp, git } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-pick-boundary-'))
+  const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  g(['init', '-q', '-b', 'main'])
+  g(['config', 'user.email', 't@t.local'])
+  g(['config', 'user.name', 't'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'init'])
+
+  // 工单 1.1.1 的真实开发分支
+  g(['checkout', '-q', '-b', 'feature-login-1.1.1'])
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'feat(1.1.1): login'])
+  const sha = g(['rev-parse', '--short', 'HEAD']).trim()
+
+  // 版本号 11.1.1 含子串 1.1.1，且分支更长——裸 includes 会误判到它
+  g(['checkout', '-q', '-b', 'feature-other-11.1.1-integration-very-long-branch'])
+  fs.writeFileSync(path.join(dir, 'c.txt'), 'c\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'chore: integration'])
+
+  const picked = await git.pickBranchForCommit(dir, sha)
+  assert.equal(picked, 'feature-login-1.1.1')
+})
+
+test('pickBranchForCommit：GitHub PR merge 归属 subject 里的源分支', async (t) => {
+  const { tmp, git } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-pick-pr-'))
+  const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  g(['init', '-q', '-b', 'main'])
+  g(['config', 'user.email', 't@t.local'])
+  g(['config', 'user.name', 't'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'init'])
+
+  g(['checkout', '-q', '-b', 'feature-login-1.1.1'])
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'feat(1.1.1): login'])
+
+  // 模拟 GitHub「Create a merge commit」：subject 只带源分支，target 不在 subject 里
+  g(['checkout', '-q', 'main'])
+  g(['merge', '-q', '--no-ff', '-m', 'Merge pull request #12 from org/feature-login-1.1.1', 'feature-login-1.1.1'])
+  const mergeSha = g(['rev-parse', '--short', 'HEAD']).trim()
+
+  // 更长集成分支也含该提交：无 PR 规则时会回退到最长分支，属误判
+  g(['checkout', '-q', '-b', 'feature-merge-longer-integration-branch-extra'])
+  fs.writeFileSync(path.join(dir, 'd.txt'), 'd\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'chore: more integration'])
+
+  const picked = await git.pickBranchForCommit(dir, mergeSha)
+  assert.equal(picked, 'feature-login-1.1.1')
+})
+
+test('pickBranchForCommit：squash merge 无法推断源分支时回退最长 feature，可用显式 branch 覆盖', async (t) => {
+  const { tmp, git, store } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-pick-squash-'))
+  const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  g(['init', '-q', '-b', 'main'])
+  g(['config', 'user.email', 't@t.local'])
+  g(['config', 'user.name', 't'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'init'])
+
+  // GitHub「Squash and merge」的产物：落在 main 上的一条普通提交，
+  // 既无 merge 元数据、也无源分支名 —— 推断只能退化为最长 feature-*。
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'feat: login (#12)'])
+  const squashSha = g(['rev-parse', '--short', 'HEAD']).trim()
+
+  // 一条更长的集成分支也从 main 开出，同样包含该提交
+  g(['checkout', '-q', '-b', 'feature-merge-longest-integration-branch'])
+  fs.writeFileSync(path.join(dir, 'c.txt'), 'c\n')
+  g(['add', '.'])
+  g(['commit', '-q', '-m', 'chore: integration'])
+
+  // 无 merge 元数据 → 只能退化为最长 feature-*（约束：squash 推断不可靠）
+  const picked = await git.pickBranchForCommit(dir, squashSha)
+  assert.equal(picked, 'feature-merge-longest-integration-branch')
+
+  // 显式 branch 覆盖路径：登记时传 branch 即写入真实开发分支
+  const { t: task } = makeTask(store)
+  store.addRepo({ name: 'demo', localPath: dir })
+  const c = store.addCommit(task.id, { repo: 'demo', sha: squashSha, branch: 'feature-login-1.1.1' })
+  assert.equal(c.branch, 'feature-login-1.1.1')
+})

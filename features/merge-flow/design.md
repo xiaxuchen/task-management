@@ -8,10 +8,21 @@
 ## 后端
 
 **git.mjs**
-- `pickBranchForCommit(dir, sha)`：`branch -a --contains` → ① merge 提交优先归属其 message 里的合入目标分支
-  （`Merge branch 'x' into feature-merge` → `feature-merge`）；② 普通提交排除 `feature-merge` 后，优先分支名
-  含提交 message 中需求编号（如 `3.1.1`）的 `feature-*`，其次最具体的 `feature-*`。避免仅按长度取最长时，
-  把长命集成分支（如 `feature-transfer-3.4.1-material-apply-id-fix`）误判成开发分支。
+- `pickBranchForCommit(dir, sha)`：`branch -a --contains` → `git log -1 --format=%s` 取 subject，按序判定：
+  1. **GitHub PR merge**（`Merge pull request #12 from org/feature-login-1.1.1`）→ 归属 subject 里的源分支。
+     源分支是 merge 提交的祖先，不在 `branch --contains` 结果里，因此以 subject 为准直接返回。
+  2. **经典 merge**（`Merge branch 'x' into feature-merge`）→ 归属其合入目标分支 `feature-merge`。
+  3. **普通提交** → 排除 `feature-merge` 后，优先分支名与 subject 中需求编号（如 `3.1.1`）**按版本号边界**
+     匹配的 `feature-*`，其次最具体的 `feature-*`。
+
+  两个易错点：① 需求编号必须按版本号边界匹配，`includes('1.1.1')` 会命中 `11.1.1`，命中多条又按长度取最长，
+     正好挑中最长的集成分支——与本函数要修的问题同类；用 `(^|[^\d.])1\.1\.1([^\d.]|$)` 语义的边界正则替代。
+  ② 仅按长度取最长会把长命集成分支（如 `feature-transfer-3.4.1-material-apply-id-fix`）误判成开发分支。
+
+  **约束（squash merge）**：GitHub「Squash and merge」把多个提交压成一条普通提交，subject 里不再有 merge
+  元数据、也不带源分支名，无法可靠推断归属——只能退化为需求编号边界匹配 / 最长 `feature-*`。走 squash
+  流程时请在登记 commit 时**显式传 `branch`**（HTTP/MCP `branch` 参数、CLI `commit add --branch`）；
+  显式传入视为纠正（`overwriteBranch`），可覆盖已有值。
 - `mergeBranch(dir, source, target, message)`：
   1. `status --porcelain` 检查未解决冲突（UU|AA|DD|AU|UA|DU|UD）→ 有则 `{conflict:true, reason:'unresolved_conflicts'}`
   2. `merge-base --is-ancestor source target` → 是则 `{alreadyMerged:true}`
