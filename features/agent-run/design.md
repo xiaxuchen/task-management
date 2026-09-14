@@ -1,5 +1,9 @@
 # 设计 · agent 测试运行
 
+> **演进说明（2026-09）**：本文描述的是最初的「扁平运行记录」实现。
+> 现已升级为三层模型（运行时/会话/任务 + 消息流），见
+> [`../agent-runtime/design.md`](../agent-runtime/design.md)；本文保留作为目标背景。
+
 ## 设计要点
 
 - 表 `agent_runs`（node_id / agent / model / prompt / cwd / status / output / exit_code / started_at / finished_at / created_by）
@@ -7,7 +11,8 @@
 - cwd 缺省自动推导：节点子树内 commits 关联仓库中第一个存在本地路径的（resolveRunCwd）；无 → VALIDATION_FAILED
 - 服务启动时 `failStaleAgentRuns()` 清理残留 running（子进程随服务退出）
 - 入口：`POST /api/nodes/:id/agent-runs` + `GET` 列表 + `GET /api/agent-runs/:id`；CLI `agent run/runs`；MCP `agent_run / agent_runs_list`
-- 插件：TestRunnerDialog（提示词 + 运行 + 历史下拉 + 输出区，运行中 2s 轮询）
+- 插件：原 TestRunnerDialog（提示词 + 运行 + 历史下拉 + 输出区，运行中 2s 轮询）；
+  已升级为 `AgentConsoleDialog`（见 `../agent-runtime/design.md`）
 
 ## Qoder IDE 前台模式（ideMode）
 
@@ -15,7 +20,7 @@
 - 用途：测试运行/派单在 **Qoder IDE 前台会话**执行（用户可见可交互），而非后台无头
 - 闭环：提示词内附 **run #id + 回写指令**；Agent 完成后经 MCP `agent_run_update`（id/status/output）回写运行记录 → 插件历史即时可见
 - 入口：`POST /api/nodes/:id/agent-runs { prompt, ideMode: true }`；MCP `agent_run_get / agent_run_update`；
-  插件 TestRunnerDialog「⚡ 在 Qoder IDE 运行（前台）」按钮（详见 `features/qoder-integration/`）
+  插件 AgentConsoleDialog「⚡ 在 Qoder IDE 运行（前台）」按钮（详见 `features/qoder-integration/`）
 
 ## 注意事项
 

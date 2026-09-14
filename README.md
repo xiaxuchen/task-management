@@ -4,7 +4,7 @@
 
 - **AI 是主要操作者**：同一套核心能力同时开放给 Web / HTTP API / CLI / MCP 四个入口
 - 纯本地运行：Node 内置 SQLite，数据落在 `~/.taskboard/`，无需外部服务
-- **配套 IDE 插件**（本仓库内）：`idea-plugin/`（IDEA 任务板插件：需求树 / Review / PRD tab / 测试运行）、`idea-layout-manager/`（窗口布局管理）
+- **配套 IDE 插件**（本仓库内）：`idea-plugin/`（IDEA 任务板插件：需求树 / Review / PRD tab / Agent 控制台）、`idea-layout-manager/`（窗口布局管理）
 
 ## 快速开始
 

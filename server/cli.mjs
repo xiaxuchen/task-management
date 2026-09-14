@@ -4,7 +4,7 @@ import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
-import { startAgentRun } from './agent.mjs'
+import { startAgentRun, retryAndDispatch } from './agent.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -27,6 +27,23 @@ const OPTIONS = {
   prompt: { type: 'string' },
   model: { type: 'string' },
   cwd: { type: 'string' },
+  agent: { type: 'string' },
+  session: { type: 'string' },
+  resume: { type: 'boolean' },
+  runtime: { type: 'string' },
+  daemon: { type: 'string' },
+  provider: { type: 'string' },
+  'device-info': { type: 'string' },
+  visibility: { type: 'string' },
+  id: { type: 'string' },
+  'runtime-mode': { type: 'string' },
+  reason: { type: 'string' },
+  'failure-reason': { type: 'string' },
+  'cli-session': { type: 'string' },
+  'work-dir': { type: 'string' },
+  'exit-code': { type: 'string' },
+  title: { type: 'string' },
+  'since-seq': { type: 'string' },
   ids: { type: 'string' },
   branches: { type: 'boolean' },
   keep: { type: 'string' },
@@ -82,8 +99,20 @@ const HELP = `task-board <命令>
   commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
   commit duplicates <ref> [--scope self|subtree]   重复检测（same-sha / patch-id / merge 覆盖）
   commit dedupe --keep <cid> --remove "1,2,3"      一键去重（保留 keep，删除重复登记）
-  agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>]   触发 agent 执行（默认 qodercli，异步）
-  agent runs <ref>                   agent 运行历史（含输出）
+  runtime list [--status online|offline]        运行时列表（含本机 CLI 实例状态）
+  runtime register [--daemon <主机名>] [--provider qodercli] [--name <名>] [--visibility private|public]
+  runtime heartbeat <id>                        运行时心跳（刷新 last_seen_at + 置 online）
+  runtime status <id> --status online|offline   手动改运行时状态
+  runtime remove <id>                           删除运行时（有未完成任务时拒绝）
+  agent session list <ref> [--status active|archived]    节点上的 agent 会话
+  agent session new <ref> [--agent qodercli] [--title <标题>]   新建会话（不复用旧的）
+  agent session get <sid> / agent session archive <sid>
+  agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>] [--agent qodercli]
+                                    [--session <sid>] [--resume] [--runtime <id>]   触发任务（异步；--resume 续跑会话）
+  agent runs <ref> [--session <sid>]              任务历史（含输出与状态）
+  agent run get <rid> / agent run messages <rid> [--since-seq N]
+  agent run cancel <rid> [--reason <原因>] / agent run retry <rid>
+  agent run update <rid> --status success|failed|timeout|cancelled [--exit-code N] [--failure-reason r] [--cli-session s] [--work-dir d]
   repo add --name <名> [--local-path <路径>] [--gitlab-project <路径>] [--tags 前端,后端]
   repo update <名|id> [--local-path p] [--tags t] [--test-branch b] [--pre-branch b] [--release-branch b]
   branch-config list                 标签级追踪目标列表（测试/预发/上线）
@@ -231,13 +260,98 @@ export async function run(argv) {
         removeIds: String(values.remove || '').split(',').map((s) => Number(s.trim()))
       }, by))
       break
+    // ---------- 运行时 ----------
+    case 'runtime list':
+      json({ summary: store.agentRuntimeSummary(), items: store.listRuntimes({ status: values.status || null }) })
+      break
+    case 'runtime register':
+      json(
+        store.upsertRuntime(
+          {
+            name: values.name,
+            daemonId: values.daemon,
+            provider: values.provider,
+            runtimeMode: values['runtime-mode'] || 'local',
+            status: values.status || 'online',
+            deviceInfo: values['device-info'] || '',
+            visibility: values.visibility || 'private'
+          },
+          by
+        )
+      )
+      break
+    case 'runtime heartbeat':
+      json(store.heartbeatRuntime(Number(ref || values.id)))
+      break
+    case 'runtime status':
+      json(store.setRuntimeStatus(Number(ref || values.id), values.status))
+      break
+    case 'runtime remove':
+      json(store.deleteRuntime(Number(ref || values.id)))
+      break
+    // ---------- 会话（`agent session <list|new|get|archive> [arg]`） ----------
+    case 'agent session': {
+      const sub = ref
+      const arg = positionals[3]
+      if (sub === 'list') json(store.listAgentSessions(store.resolveRef(arg).id, { status: values.status || null }))
+      else if (sub === 'new')
+        json(
+          store.createAgentSession(
+            store.resolveRef(arg).id,
+            { agent: values.agent || undefined, title: values.title, workDir: values.cwd },
+            by
+          )
+        )
+      else if (sub === 'get') json(store.getAgentSession(Number(arg)))
+      else if (sub === 'archive') json(store.archiveAgentSession(Number(arg)))
+      else throw new Error(`agent session 支持 list|new|get|archive，收到：${sub}`)
+      break
+    }
+    // ---------- 任务（runs） ----------
     case 'agent run': {
-      const node = store.resolveRef(ref)
-      json(startAgentRun(store, node.id, { prompt: values.prompt, model: values.model, cwd: values.cwd }, by))
+      // 既支持 `agent run <ref> --prompt ...`，也支持 `agent run get|cancel|retry|update|messages <rid>`
+      const sub = ref
+      if (['get', 'cancel', 'retry', 'update', 'messages'].includes(sub)) {
+        const rid = Number(positionals[3] || values.id)
+        if (sub === 'get') json(store.getAgentRun(rid))
+        else if (sub === 'cancel') json(store.cancelAgentRun(rid, { reason: values.reason || 'manual' }))
+        else if (sub === 'retry') json(retryAndDispatch(store, rid, by))
+        else if (sub === 'messages') json(store.listAgentRunMessages(rid, { sinceSeq: Number(values['since-seq']) || 0 }))
+        else {
+          if (!values.status) throw new Error('agent run update 需要 --status')
+          json(
+            store.finishAgentRun(rid, {
+              status: values.status,
+              exitCode: values['exit-code'] !== undefined ? Number(values['exit-code']) : null,
+              failureReason: values['failure-reason'] ?? null,
+              cliSessionId: values['cli-session'] ?? null,
+              workDir: values['work-dir'] ?? null
+            })
+          )
+        }
+        break
+      }
+      const node = store.resolveRef(sub)
+      json(
+        startAgentRun(
+          store,
+          node.id,
+          {
+            prompt: values.prompt,
+            agent: values.agent,
+            model: values.model,
+            cwd: values.cwd,
+            sessionId: values.session ? Number(values.session) : null,
+            resume: !!values.resume,
+            runtimeId: values.runtime ? Number(values.runtime) : null
+          },
+          by
+        )
+      )
       break
     }
     case 'agent runs':
-      json(store.listAgentRuns(store.resolveRef(ref).id))
+      json(store.listAgentRuns(store.resolveRef(ref).id, { sessionId: values.session ? Number(values.session) : null }))
       break
     case 'commit diff':
       json(await getCommitDiff(store, Number(ref)))

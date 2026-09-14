@@ -127,9 +127,54 @@ CREATE TABLE IF NOT EXISTS branch_configs (
   updated_at TEXT NOT NULL
 );
 
+-- agent 运行时（一台机器上的一个 agent CLI 实例；参考 multica agent_runtime）
+-- 本机场景下 daemon_id = 主机名，provider = 具体 CLI（qodercli / echo / …）
+CREATE TABLE IF NOT EXISTS agent_runtimes (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  daemon_id TEXT,
+  runtime_mode TEXT NOT NULL DEFAULT 'local' CHECK (runtime_mode IN ('local','cloud')),
+  provider TEXT NOT NULL DEFAULT 'qodercli',
+  status TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online','offline')),
+  device_info TEXT NOT NULL DEFAULT '',
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','public')),
+  metadata TEXT NOT NULL DEFAULT '{}',
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'user',
+  UNIQUE(daemon_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runtimes_status ON agent_runtimes(status);
+
+-- agent 会话（一个节点 + 一个 agent 上可续跑的连续对话；参考 multica chat_session）
+-- cli_session_id 对应 multica 的 session_id，用于 --resume 续跑同一个 CLI 会话
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  agent TEXT NOT NULL DEFAULT 'qodercli',
+  runtime_id INTEGER REFERENCES agent_runtimes(id) ON DELETE SET NULL,
+  title TEXT NOT NULL DEFAULT '',
+  cli_session_id TEXT,
+  work_dir TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
+  run_count INTEGER NOT NULL DEFAULT 0,
+  last_activity_at TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'user'
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_node ON agent_sessions(node_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_activity ON agent_sessions(status, last_activity_at);
+
+-- agent 任务（队列 + 生命周期；参考 multica agent_task_queue）
+-- 每次触发 = 一行；重试/续跑通过 parent_run_id + attempt 串起来
 CREATE TABLE IF NOT EXISTS agent_runs (
   id INTEGER PRIMARY KEY,
   node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  runtime_id INTEGER REFERENCES agent_runtimes(id) ON DELETE SET NULL,
   agent TEXT NOT NULL DEFAULT 'qodercli',
   model TEXT NOT NULL DEFAULT 'DeepSeek-Flash',
   prompt TEXT NOT NULL,
@@ -137,12 +182,38 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   status TEXT NOT NULL DEFAULT 'running',
   output TEXT,
   exit_code INTEGER,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  max_attempts INTEGER NOT NULL DEFAULT 1,
+  parent_run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+  failure_reason TEXT,
+  cli_session_id TEXT,
+  work_dir TEXT,
+  priority INTEGER NOT NULL DEFAULT 0,
+  resumed INTEGER NOT NULL DEFAULT 0,
+  wait_reason TEXT,
   started_at TEXT NOT NULL,
   finished_at TEXT,
   created_by TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_node ON agent_runs(node_id);
+-- idx_agent_runs_session 依赖 session_id，老库在 migrate() 补列后才能建，见 migrate()
+
+-- 任务消息流（参考 multica task_message）：把 agent 输出从单块文本升级成带 seq 的事件流
+CREATE TABLE IF NOT EXISTS agent_run_messages (
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  tool TEXT,
+  content TEXT,
+  input TEXT,
+  output TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(run_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_run_messages_run ON agent_run_messages(run_id, seq);
 
 CREATE TABLE IF NOT EXISTS ide_requests (
   id INTEGER PRIMARY KEY,
@@ -266,6 +337,69 @@ function migrate(db) {
     ['patch_id', 'TEXT'],
     ['branch', 'TEXT']
   ])
+  // agent 运行时管理（v2）：老库补列补表，SCHEMA 只对新库生效
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_runtimes (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      daemon_id TEXT,
+      runtime_mode TEXT NOT NULL DEFAULT 'local' CHECK (runtime_mode IN ('local','cloud')),
+      provider TEXT NOT NULL DEFAULT 'qodercli',
+      status TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online','offline')),
+      device_info TEXT NOT NULL DEFAULT '',
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','public')),
+      metadata TEXT NOT NULL DEFAULT '{}',
+      last_seen_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user',
+      UNIQUE(daemon_id, provider)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtimes_status ON agent_runtimes(status);
+    CREATE TABLE IF NOT EXISTS agent_sessions (
+      id INTEGER PRIMARY KEY,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      agent TEXT NOT NULL DEFAULT 'qodercli',
+      runtime_id INTEGER REFERENCES agent_runtimes(id) ON DELETE SET NULL,
+      title TEXT NOT NULL DEFAULT '',
+      cli_session_id TEXT,
+      work_dir TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
+      run_count INTEGER NOT NULL DEFAULT 0,
+      last_activity_at TEXT,
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user'
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_sessions_node ON agent_sessions(node_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_sessions_activity ON agent_sessions(status, last_activity_at);
+    CREATE TABLE IF NOT EXISTS agent_run_messages (
+      id INTEGER PRIMARY KEY,
+      run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      tool TEXT,
+      content TEXT,
+      input TEXT,
+      output TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(run_id, seq)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_run_messages_run ON agent_run_messages(run_id, seq);
+  `)
+  addColumns(db, 'agent_runs', [
+    ['session_id', 'INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL'],
+    ['runtime_id', 'INTEGER REFERENCES agent_runtimes(id) ON DELETE SET NULL'],
+    ['attempt', 'INTEGER NOT NULL DEFAULT 1'],
+    ['max_attempts', 'INTEGER NOT NULL DEFAULT 1'],
+    ['parent_run_id', 'INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL'],
+    ['failure_reason', 'TEXT'],
+    ['cli_session_id', 'TEXT'],
+    ['work_dir', 'TEXT'],
+    ['priority', 'INTEGER NOT NULL DEFAULT 0'],
+    ['resumed', 'INTEGER NOT NULL DEFAULT 0'],
+    ['wait_reason', 'TEXT']
+  ])
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id, id)')
 }
 
 function addColumns(db, table, additions) {

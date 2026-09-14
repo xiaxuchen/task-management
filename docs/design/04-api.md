@@ -56,5 +56,28 @@
 | POST | `/api/uploads` | 上传图片：请求体 JSON `{ name, data }`（`data` 为 base64，`express.json` 限额 20 MB），存入 `~/.taskboard/uploads/`，返回 `{ url: "/uploads/<name>" }` |
 | GET | `/uploads/:name` | 图片静态访问（Markdown 预览使用） |
 
-状态码：参数/父子类型/必填校验失败 → `400`；资源不存在 → `404`；唯一约束冲突 / 路径歧义 → `409`；GitLab 侧错误 → `502`（`details` 带原始信息）。破坏性操作未显式确认 → `400`，`code = CONFIRM_REQUIRED`。合并预检发现冲突不改工作区，返回 `200` + 冲突清单（`state = precheck_conflict`）；本机 git 不可用 / 失败 → `500`（`GIT_UNAVAILABLE` / `GIT_FAILED`）。
+### agent 运行时 / 会话 / 任务
 
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/runtimes` | 运行时列表 + 总览统计 `{summary, items}`；`?status=online\|offline` |
+| POST | `/api/runtimes` | 注册/更新运行时 `{name, daemonId, provider?, runtimeMode?, deviceInfo?, visibility?}`（按 daemonId+provider 幂等） |
+| GET | `/api/runtimes/:id` | 运行时详情 |
+| POST | `/api/runtimes/:id/heartbeat` | 心跳：刷新 `last_seen_at` 并置 online |
+| PATCH | `/api/runtimes/:id` | `{status: online\|offline}` 手动改状态 |
+| DELETE | `/api/runtimes/:id` | 删除运行时（有未完成任务时 `400`；历史任务解绑保留） |
+| GET | `/api/nodes/:id/agent-sessions` | 节点上的会话列表（`?status=active\|archived`） |
+| POST | `/api/nodes/:id/agent-sessions` | 新建会话 `{agent?, workDir?, title?}`（不复用旧会话） |
+| GET | `/api/agent-sessions/:sid` | 会话详情 |
+| PATCH | `/api/agent-sessions/:sid` | 更新 `{title?, status?, cliSessionId?, workDir?}` |
+| DELETE | `/api/agent-sessions/:sid` | 归档会话（置 `archived`） |
+| POST | `/api/nodes/:id/agent-runs` | 派单：`{prompt, agent?, model?, cwd?, ideMode?, sessionId?, resume?, runtimeId?}`；异步执行，返回任务 |
+| GET | `/api/nodes/:id/agent-runs` | 任务历史 `?limit=&sessionId=`（倒序） |
+| GET | `/api/agent-runs/:rid` | 任务详情 |
+| GET | `/api/agent-runs/:rid/messages` | 任务消息流 `?sinceSeq=`（按 seq 增量拉取） |
+| POST | `/api/agent-runs/:rid/messages` | 追加一条消息 `{type, tool?, content?, input?, output?}` |
+| POST | `/api/agent-runs/:rid/cancel` | 取消未完成任务并终止本地子进程 `{reason?}` |
+| POST | `/api/agent-runs/:rid/retry` | 重试已结束任务（新建 attempt+1 子任务，回指原任务） |
+| PATCH | `/api/agent-runs/:rid` | 回写终态 `{status, output?, exitCode?, failureReason?, cliSessionId?, workDir?}` |
+
+状态码：参数/父子类型/必填校验失败 → `400`；资源不存在 → `404`；唯一约束冲突 / 路径歧义 → `409`；GitLab 侧错误 → `502`（`details` 带原始信息）。破坏性操作未显式确认 → `400`，`code = CONFIRM_REQUIRED`。合并预检发现冲突不改工作区，返回 `200` + 冲突清单（`state = precheck_conflict`）；本机 git 不可用 / 失败 → `500`（`GIT_UNAVAILABLE` / `GIT_FAILED`）。

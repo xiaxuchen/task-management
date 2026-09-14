@@ -245,6 +245,41 @@ curl -s -X PUT http://127.0.0.1:3210/api/config \
 curl -s -X POST http://127.0.0.1:3210/api/config/gitlab/test
 ```
 
+## agent 运行时 / 会话 / 任务
+
+三层模型：**运行时（机器级执行环境）→ 会话（可续跑的连续对话）→ 任务（一次执行）**，
+任务之上挂一层按 `seq` 递增的消息流。服务启动时会把本机 qodercli 运行时注册为在线。
+
+```bash
+# 运行时列表 + 总览（online / activeRuns / activeSessions）
+curl -s http://127.0.0.1:3210/api/runtimes
+
+# 注册/更新运行时（按 daemonId + provider 幂等 upsert）
+curl -s -X POST http://127.0.0.1:3210/api/runtimes \
+  -H 'content-type: application/json' \
+  -d '{"name":"MacBook-Pro · qodercli","daemonId":"MacBook-Pro.local","provider":"qodercli"}'
+
+# 心跳（刷新 last_seen_at + 置 online）
+curl -s -X POST http://127.0.0.1:3210/api/runtimes/1/heartbeat
+
+# 节点上的会话（可续跑的连续对话）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/agent-sessions'
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/agent-sessions \
+  -H 'content-type: application/json' -d '{"agent":"qodercli","title":"第一次评审"}'
+
+# 派单（异步；缺省自动挂该节点活动会话并注册本机运行时）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/agent-runs \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"跑一遍单测","agent":"qodercli","resume":true}'
+
+# 任务详情 / 消息流（sinceSeq 增量拉取）/ 取消 / 重试
+curl -s http://127.0.0.1:3210/api/agent-runs/7
+curl -s 'http://127.0.0.1:3210/api/agent-runs/7/messages?sinceSeq=4'
+curl -s -X POST http://127.0.0.1:3210/api/agent-runs/7/cancel \
+  -H 'content-type: application/json' -d '{"reason":"user_cancelled"}'
+curl -s -X POST http://127.0.0.1:3210/api/agent-runs/7/retry
+```
+
 ## 错误码速查
 
 | HTTP | code | 场景 |

@@ -1,6 +1,6 @@
 # Task Board IDEA 插件
 
-在 IntelliJ IDEA 内完成"节点级 Review"：需求树 → 提交/合并状态 → 原生 Diff → 审查 → 对照需求文档 → 测试运行。
+在 IntelliJ IDEA 内完成"节点级 Review"：需求树 → 提交/合并状态 → 原生 Diff → 审查 → 对照需求文档 → Agent 派单。
 
 ## 功能
 
@@ -14,7 +14,7 @@
 | **显隐开关** | 顶栏 **☑ diff / ☑ 文档** 开关（勾选=显示、状态实时）——收起文档→diff 全宽；收起 diff→文档全宽 |
 | **布局设置** | diff 宽度% / TaskBoard 高度% 可配；拖分隔条自动记忆（应用级持久化） |
 | **PRD（飞书）** | 编辑器区 tab（自定义 FileEditor + JCEF），首次登录后持久；`prdAnchor` 支持锚点定位 |
-| **测试运行** | 「▶ 后台运行（qodercli）」或「⚡ 在 Qoder IDE 运行（前台）」（run#id 绑定，Agent 完成后 MCP 回写） |
+| **Agent 控制台** | 运行时状态条（在线数）+ 会话选择（可续跑/新建）+ 提示词派单；「▶ 后台运行（qodercli）」/「⚡ 在 Qoder IDE 运行（前台）」；任务状态胶囊 + 消息流（增量拉取）+ 取消/重试 |
 | **Qoder 联动** | 「派给 Qoder」派单（激活面板+新会话+提示词就绪）；「复制上下文」；**选区自动捕获**（零点击，Qoder 提问时 hook 自动注入选中代码/任务上下文，见 `features/qoder-integration/`） |
 | **IDE 桥** | 每 3s 轮询 `ide_requests`，网页点「在 IDEA 查看」自动打开（单 commit 定位文件 / 多 commit 合并变更） |
 

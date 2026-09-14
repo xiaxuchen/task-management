@@ -1,0 +1,1 @@
+- feat(agent-runtime): agent 运行时三层模型（运行时/会话/任务 + 消息流）对齐 multica——心跳、续跑（--resume）、重试链（attempt/parentRunId）、取消、失败分类；三入口 1:1；IDEA 插件 AgentConsoleDialog（运行时状态条 + 会话选择 + 任务状态胶囊 + 消息流增量拉取）

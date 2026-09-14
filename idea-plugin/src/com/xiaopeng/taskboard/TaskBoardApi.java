@@ -261,16 +261,107 @@ public class TaskBoardApi {
 
     /** ideMode=true：只创建运行记录（由 Qoder IDE 前台会话执行），不后台 spawn */
     public JsonObject startAgentRun(long nodeId, String prompt, boolean ideMode) throws Exception {
+        return startAgentRun(nodeId, prompt, ideMode, null);
+    }
+
+    /** ideMode=true 且指定会话：前台任务也归属所选会话，便于历史归组 */
+    public JsonObject startAgentRun(long nodeId, String prompt, boolean ideMode, Long sessionId) throws Exception {
         JsonObject body = new JsonObject();
         body.addProperty("prompt", prompt);
         if (ideMode) {
             body.addProperty("ideMode", true);
         }
+        if (sessionId != null) body.addProperty("sessionId", sessionId);
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-runs"))
                 .timeout(Duration.ofSeconds(30))
                 .header("content-type", "application/json")
                 .header("x-taskboard-actor", "idea")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /**
+     * 触发任务（完整参数版）。
+     * resume=true 续跑会话里上一次 CLI 会话；sessionId 指定会话；runtimeId 指定运行时。
+     */
+    public JsonObject startAgentRun(long nodeId, String prompt, String model, String agent,
+                                    Long sessionId, boolean resume, Long runtimeId) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("prompt", prompt);
+        if (model != null && !model.isEmpty()) body.addProperty("model", model);
+        if (agent != null && !agent.isEmpty()) body.addProperty("agent", agent);
+        if (sessionId != null) body.addProperty("sessionId", sessionId);
+        if (resume) body.addProperty("resume", true);
+        if (runtimeId != null) body.addProperty("runtimeId", runtimeId);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-runs"))
+                .timeout(Duration.ofSeconds(30))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return send(req);
+    }
+
+    /** 任务消息流（事件流；sinceSeq 增量拉取） */
+    public JsonArray listAgentRunMessages(long runId, long sinceSeq) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/agent-runs/" + runId + "/messages?sinceSeq=" + sinceSeq))
+                .timeout(Duration.ofSeconds(30))
+                .header("x-taskboard-actor", "idea")
+                .GET()
+                .build();
+        return sendAny(req).getAsJsonArray();
+    }
+
+    /** 取消任务（未结束任务置 cancelled，服务端会杀掉本地子进程） */
+    public JsonObject cancelAgentRun(long runId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/agent-runs/" + runId + "/cancel"))
+                .timeout(Duration.ofSeconds(30))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        return send(req);
+    }
+
+    /** 重试任务（新建 attempt+1 的子任务，服务端只建记录，需再调 dispatch 启动） */
+    public JsonObject retryAgentRun(long runId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/agent-runs/" + runId + "/retry"))
+                .timeout(Duration.ofSeconds(30))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        return send(req);
+    }
+
+    /** 节点上的 agent 会话 */
+    public JsonArray listAgentSessions(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-sessions"))
+                .timeout(Duration.ofSeconds(30))
+                .header("x-taskboard-actor", "idea")
+                .GET()
+                .build();
+        return sendAny(req).getAsJsonArray();
+    }
+
+    /** 新建 agent 会话（不复用旧会话） */
+    public JsonObject startAgentSession(long nodeId) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/nodes/" + nodeId + "/agent-sessions"))
+                .timeout(Duration.ofSeconds(30))
+                .header("content-type", "application/json")
+                .header("x-taskboard-actor", "idea")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        return send(req);
+    }
+
+    /** 运行时常量：{ summary, items } */
+    public JsonObject listRuntimes() throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/runtimes"))
+                .timeout(Duration.ofSeconds(15))
+                .header("x-taskboard-actor", "idea")
+                .GET()
                 .build();
         return send(req);
     }

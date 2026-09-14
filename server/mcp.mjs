@@ -5,7 +5,7 @@ import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates } from './ops.mjs'
-import { startAgentRun } from './agent.mjs'
+import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
 export function createMcpServer({ store }) {
@@ -325,21 +325,146 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'agent_run',
-    '触发 agent 执行提示词（默认 qodercli + DeepSeek-Flash；工作目录自动取节点关联仓库，可显式传 cwd）。异步运行，用 agent_runs_list 查结果',
-    { ref: z.string(), prompt: z.string(), agent: z.string().optional(), model: z.string().optional(), cwd: z.string().optional() },
-    async ({ ref, prompt, agent, model, cwd }) => {
+    '触发 agent 任务（默认 qodercli + DeepSeek-Flash；工作目录自动取节点关联仓库，可显式传 cwd）。' +
+      'sessionId 指定会话（缺省自动挂该节点活动会话），resume=true 续跑会话里上一次 CLI 会话，runtimeId 指定运行时。异步执行，用 agent_runs_list 查结果',
+    {
+      ref: z.string(),
+      prompt: z.string(),
+      agent: z.string().optional(),
+      model: z.string().optional(),
+      cwd: z.string().optional(),
+      sessionId: z.number().optional(),
+      resume: z.boolean().optional(),
+      runtimeId: z.number().optional()
+    },
+    async ({ ref, prompt, agent, model, cwd, sessionId, resume, runtimeId }) => {
       const node = store.resolveRef(ref)
-      return { content: [{ type: 'text', text: JSON.stringify(startAgentRun(store, node.id, { prompt, agent, model, cwd }, 'ai'), null, 2) }] }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              startAgentRun(store, node.id, { prompt, agent, model, cwd, sessionId, resume, runtimeId }, 'ai'),
+              null,
+              2
+            )
+          }
+        ]
+      }
     }
   )
 
   server.tool(
     'agent_runs_list',
-    'agent 运行历史（含输出与状态）',
-    { ref: z.string(), limit: z.number().optional() },
-    async ({ ref, limit }) => {
+    'agent 任务历史（含输出、状态、attempt/失败原因；可按 sessionId 过滤）',
+    { ref: z.string(), limit: z.number().optional(), sessionId: z.number().optional() },
+    async ({ ref, limit, sessionId }) => {
       const node = store.resolveRef(ref)
-      return { content: [{ type: 'text', text: JSON.stringify(store.listAgentRuns(node.id, { limit: limit || 20 }), null, 2) }] }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(store.listAgentRuns(node.id, { limit: limit || 20, sessionId: sessionId || null }), null, 2)
+          }
+        ]
+      }
+    }
+  )
+
+  // ---------- 运行时 ----------
+
+  server.tool('runtime_list', '运行时列表（本机 agent CLI 实例状态 + 总览统计）', { status: z.enum(['online', 'offline']).optional() }, async ({ status }) => {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ summary: store.agentRuntimeSummary(), items: store.listRuntimes({ status: status || null }) }, null, 2)
+        }
+      ]
+    }
+  })
+
+  server.tool(
+    'runtime_register',
+    '注册/更新运行时（按 daemonId + provider 幂等 upsert；注册即视为 online 心跳）',
+    {
+      name: z.string().optional(),
+      daemonId: z.string(),
+      provider: z.string().optional(),
+      runtimeMode: z.enum(['local', 'cloud']).optional(),
+      status: z.enum(['online', 'offline']).optional(),
+      deviceInfo: z.string().optional(),
+      visibility: z.enum(['private', 'public']).optional()
+    },
+    async (args) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.upsertRuntime(args, 'ai'), null, 2) }] }
+    }
+  )
+
+  server.tool('runtime_heartbeat', '运行时心跳（刷新 last_seen_at + 置 online）', { id: z.number() }, async ({ id }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.heartbeatRuntime(id), null, 2) }] }
+  })
+
+  server.tool(
+    'runtime_status',
+    '手动改运行时状态（online/offline）',
+    { id: z.number(), status: z.enum(['online', 'offline']) },
+    async ({ id, status }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.setRuntimeStatus(id, status), null, 2) }] }
+    }
+  )
+
+  server.tool('runtime_remove', '删除运行时（存在未完成任务时拒绝，历史任务解绑保留）', { id: z.number() }, async ({ id }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.deleteRuntime(id), null, 2) }] }
+  })
+
+  // ---------- 会话 ----------
+
+  server.tool(
+    'agent_session_list',
+    '节点上的 agent 会话（可续跑的连续对话；含 runCount / cliSessionId）',
+    { ref: z.string(), status: z.enum(['active', 'archived']).optional() },
+    async ({ ref, status }) => {
+      const node = store.resolveRef(ref)
+      return { content: [{ type: 'text', text: JSON.stringify(store.listAgentSessions(node.id, { status: status || null }), null, 2) }] }
+    }
+  )
+
+  server.tool(
+    'agent_session_new',
+    '新建 agent 会话（不复用旧会话）',
+    { ref: z.string(), agent: z.string().optional(), workDir: z.string().optional(), title: z.string().optional() },
+    async ({ ref, agent, workDir, title }) => {
+      const node = store.resolveRef(ref)
+      return { content: [{ type: 'text', text: JSON.stringify(store.createAgentSession(node.id, { agent, workDir, title }, 'ai'), null, 2) }] }
+    }
+  )
+
+  server.tool('agent_session_archive', '归档 agent 会话', { id: z.number() }, async ({ id }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.archiveAgentSession(id), null, 2) }] }
+  })
+
+  // ---------- 任务消息流 / 取消 / 重试 ----------
+
+  server.tool(
+    'agent_run_messages',
+    '读取任务消息流（事件流；sinceSeq 增量拉取）',
+    { id: z.number(), sinceSeq: z.number().optional() },
+    async ({ id, sinceSeq }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.listAgentRunMessages(id, { sinceSeq: sinceSeq || 0 }), null, 2) }] }
+    }
+  )
+
+  server.tool('agent_run_cancel', '取消任务（未结束任务置 cancelled，并杀掉本地子进程）', { id: z.number(), reason: z.string().optional() }, async ({ id, reason }) => {
+    return { content: [{ type: 'text', text: JSON.stringify(store.cancelAgentRun(id, { reason: reason || 'manual' }), null, 2) }] }
+  })
+
+  server.tool(
+    'agent_run_retry',
+    '重试任务（新建 attempt+1 的子任务并指向原任务；后台任务会立刻重新执行，前台任务只重建记录）',
+    { id: z.number() },
+    async ({ id }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(retryAndDispatch(store, id, 'ai'), null, 2) }] }
     }
   )
 
@@ -480,11 +605,29 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'agent_run_update',
-    '回写 agent 运行结果（Qoder IDE 完成任务后调用：追加输出 + 置为 success/failed/timeout）',
-    { id: z.number(), status: z.enum(['success', 'failed', 'timeout']), output: z.string().optional() },
-    async ({ id, status, output }) => {
-      if (output) store.appendAgentRunOutput(id, output)
-      const run = store.finishAgentRun(id, { status })
+    '回写 agent 任务结果（Qoder IDE 等前台执行者完成后调用：追加输出 + 置终态）。' +
+      'cliSessionId/workDir 会沉淀到会话，供下次 --resume 续跑',
+    {
+      id: z.number(),
+      status: z.enum(['success', 'failed', 'timeout', 'cancelled']),
+      output: z.string().optional(),
+      exitCode: z.number().optional(),
+      failureReason: z.string().optional(),
+      cliSessionId: z.string().optional(),
+      workDir: z.string().optional()
+    },
+    async ({ id, status, output, exitCode, failureReason, cliSessionId, workDir }) => {
+      if (output) {
+        store.appendAgentRunOutput(id, output)
+        store.appendAgentRunMessage(id, { type: 'text', content: output })
+      }
+      const run = store.finishAgentRun(id, {
+        status,
+        exitCode: exitCode ?? null,
+        failureReason: failureReason ?? null,
+        cliSessionId: cliSessionId ?? null,
+        workDir: workDir ?? null
+      })
       return { content: [{ type: 'text', text: JSON.stringify(run, null, 2) }] }
     }
   )

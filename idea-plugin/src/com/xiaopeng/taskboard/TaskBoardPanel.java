@@ -2224,12 +2224,12 @@ public class TaskBoardPanel extends JPanel {
         addAction(group, "标记有问题…", "对勾选的 commit 标记有问题（可填写意见）", AllIcons.Actions.Cancel, this::markCheckedWithNote);
         addAction(group, "重置待审", "对勾选的 commit 重置为待审", AllIcons.Actions.Rollback, () -> markChecked("pending", null));
         group.add(Separator.getInstance());
-        addAction(group, "测试", "写提示词触发 agent（qodercli · DeepSeek-Flash）在关联仓库执行测试", AllIcons.Actions.Execute, () -> {
+        addAction(group, "Agent", "Agent 控制台：运行时 / 会话 / 任务（写提示词派单，可续跑、取消、重试）", AllIcons.Actions.Execute, () -> {
             if (currentNodeId < 0) {
                 reviewSummary.setText("请先从节点树进入一个节点");
                 return;
             }
-            new TestRunnerDialog(project, api, currentNodeId, currentNodeName).show();
+            new AgentConsoleDialog(project, api, currentNodeId, currentNodeName).show();
         });
         group.add(Separator.getInstance());
         addAction(group, "对照布局", "一键铺排：左 diff + 右列（需求概设⇄PRD） + TaskBoard底部（比例可在「布局设置」中调整）", AllIcons.Actions.SplitVertically, this::openReviewLayout);

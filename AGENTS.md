@@ -93,7 +93,7 @@ docs/design.md    ← 主设计文档权威副本
 
 ## AI 操作入口
 
-**MCP 工具（29 个，与 REST 接口 1:1）**
+**MCP 工具（与 REST 接口 1:1；权威清单以 `schema` 返回为准）**
 
 ```
 读取  schema · tree · node_get · attr_defs · doc_list · commit_list · repo_list · config_get
@@ -102,7 +102,16 @@ docs/design.md    ← 主设计文档权威副本
       doc_upsert · doc_create · doc_update · doc_remove · doc_reorder
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
 批量  batch · import_outline
+agent 运行时  runtime_list · runtime_register · runtime_heartbeat · runtime_status · runtime_remove
+agent 会话    agent_session_list · agent_session_new · agent_session_archive
+agent 任务    agent_run · agent_runs_list · agent_run_get · agent_run_messages
+              agent_run_cancel · agent_run_retry · agent_run_update
 ```
+
+**agent 三层模型**（对齐 multica）：运行时（机器级 CLI 实例，daemon_id + provider 唯一）→
+会话（节点上一个 agent 的可续跑对话，沉淀 `cliSessionId` / `workDir`）→ 任务（一次执行，
+`attempt` / `parentRunId` 串重试链）；任务输出按 `seq` 落消息流，UI 用 `sinceSeq` 增量拉取。
+派单缺省会自动注册本机运行时并复用该节点的活动会话。
 
 **CLI**（`node bin/taskboard.js <cmd>`；`npm link` 后可省前缀）
 
@@ -116,6 +125,15 @@ doc upsert "项目A/需求1" --name 需求内容 --file desc.md   # 按文档名
 import --file outline.md --dry-run     # 大纲导入，先预演
 batch --file ops.json                  # 多步一次调用
 node delete <ref> --confirm            # 破坏性操作必须 --confirm
+
+runtime list                           # 运行时列表（含在线状态与总览）
+agent session list "项目A/需求1"        # 该节点上的会话（可续跑标注）
+agent session new "项目A/需求1" --title 评审
+agent run "项目A/需求1" --prompt "跑单测" --resume   # 派单；--resume 续跑会话
+agent runs "项目A/需求1"                # 任务历史
+agent run messages <rid>               # 任务消息流（事件流）
+agent run cancel <rid> / agent run retry <rid>
+agent run update <rid> --status success --cli-session <id>   # 前台执行者回写
 ```
 
 **推荐工作流**

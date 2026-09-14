@@ -5,6 +5,12 @@ const ACTORS = new Set(['user', 'ai', 'cli', 'import'])
 const now = () => new Date().toISOString()
 const REVIEW_STATUSES = ['pending', 'approved', 'issue']
 
+/** 写事务抢锁失败时的兜底重试（busy_timeout 之外的保险） */
+const SQLITE_BUSY_RETRIES = 5
+const SQLITE_BUSY_RETRY_MS = 40
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+const isSqliteBusy = (e) => /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i.test(String((e && e.message) || e))
+
 /** 预置文档名（与 config.docPresets 默认值一致） */
 const DEFAULT_DOC_PRESETS = {
   project: ['描述'],
@@ -781,12 +787,78 @@ export function createStore(db, options = {}) {
     bumpRevision()
   }
 
-  // agent 运行记录（测试节点：写提示词触发 agent）
+  // ---------- agent 运行时管理（参考 multica agent_runtime / chat_session / agent_task_queue） ----------
+  //
+  // 三层模型：
+  //   agent_runtimes  —— 机器级执行环境（daemon_id + provider 唯一），带 online/offline 心跳；
+  //   agent_sessions  —— 节点上一个 agent 的连续对话（可 --resume 续跑同一个 CLI 会话）；
+  //   agent_runs      —— 一次任务（队列条目），带 attempt/parent_run_id 重试链 + 消息流。
+
+  const TERMINAL_RUN_STATUSES = new Set(['success', 'failed', 'timeout', 'cancelled'])
+  const AGENT_OUTPUT_LIMIT = 200 * 1024
+  const AGENT_HEARTBEAT_STALE_MS = 90 * 1000
+
+  function parseJson(raw, fallback = {}) {
+    if (raw == null || raw === '') return fallback
+    try {
+      const v = JSON.parse(raw)
+      return v && typeof v === 'object' ? v : fallback
+    } catch {
+      return fallback
+    }
+  }
+
+  function safeParse(s) {
+    try {
+      return JSON.parse(s)
+    } catch {
+      return s
+    }
+  }
+
+  function runtimeVO(r) {
+    if (!r) return null
+    return {
+      id: r.id,
+      name: r.name,
+      daemonId: r.daemon_id,
+      runtimeMode: r.runtime_mode,
+      provider: r.provider,
+      status: r.status,
+      deviceInfo: r.device_info,
+      visibility: r.visibility,
+      metadata: parseJson(r.metadata, {}),
+      lastSeenAt: r.last_seen_at,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      createdBy: r.created_by
+    }
+  }
+
+  function sessionVO(r) {
+    if (!r) return null
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      agent: r.agent,
+      runtimeId: r.runtime_id,
+      title: r.title,
+      cliSessionId: r.cli_session_id,
+      workDir: r.work_dir,
+      status: r.status,
+      runCount: r.run_count,
+      lastActivityAt: r.last_activity_at,
+      createdAt: r.created_at,
+      createdBy: r.created_by
+    }
+  }
 
   function agentRunVO(r) {
     return {
       id: r.id,
       nodeId: r.node_id,
+      sessionId: r.session_id,
+      runtimeId: r.runtime_id,
       agent: r.agent,
       model: r.model,
       prompt: r.prompt,
@@ -794,26 +866,236 @@ export function createStore(db, options = {}) {
       status: r.status,
       output: r.output,
       exitCode: r.exit_code,
+      attempt: r.attempt,
+      maxAttempts: r.max_attempts,
+      parentRunId: r.parent_run_id,
+      failureReason: r.failure_reason,
+      cliSessionId: r.cli_session_id,
+      workDir: r.work_dir,
+      priority: r.priority,
+      resumed: !!r.resumed,
+      waitReason: r.wait_reason,
       startedAt: r.started_at,
       finishedAt: r.finished_at,
       createdBy: r.created_by
     }
   }
 
-  function createAgentRun(nodeId, { agent = 'qodercli', model = 'DeepSeek-Flash', prompt, cwd = null } = {}, by = 'user') {
+  // ---------- 运行时 ----------
+
+  /** 注册/更新运行时（按 daemon_id + provider 幂等 upsert；daemon 心跳也走这里） */
+  function upsertRuntime({ name, daemonId, runtimeMode = 'local', provider = 'qodercli', status = 'online', deviceInfo = '', visibility = 'private', metadata = {} } = {}, by = 'system') {
+    const d = String(daemonId || '').trim()
+    const p = String(provider || '').trim()
+    if (!d) throw new AppError(CODES.VALIDATION_FAILED, 'daemonId 不能为空', { field: 'daemonId' })
+    if (!p) throw new AppError(CODES.VALIDATION_FAILED, 'provider 不能为空', { field: 'provider' })
+    if (!['online', 'offline'].includes(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `status 非法：${status}`, { status })
+    }
+    const ts = now()
+    const metaJson = JSON.stringify(metadata || {})
+    const existing = db.prepare('SELECT * FROM agent_runtimes WHERE daemon_id = ? AND provider = ?').get(d, p)
+    if (existing) {
+      db.prepare(
+        `UPDATE agent_runtimes SET name=?, runtime_mode=?, status=?, device_info=?, visibility=?, metadata=?,
+           last_seen_at=CASE WHEN ?='online' THEN ? ELSE last_seen_at END, updated_at=? WHERE id=?`
+      ).run(
+        String(name || existing.name), runtimeMode, status, deviceInfo,
+        visibility, metaJson, status, ts, ts, existing.id
+      )
+      bumpRevision()
+      return runtimeVO(db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(existing.id))
+    }
+    const info = db
+      .prepare(
+        `INSERT INTO agent_runtimes (name,daemon_id,runtime_mode,provider,status,device_info,visibility,metadata,last_seen_at,created_at,updated_at,created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(String(name || p), d, runtimeMode, p, status, deviceInfo, visibility, metaJson, status === 'online' ? ts : null, ts, ts, actor(by))
+    bumpRevision()
+    return runtimeVO(db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  /** 心跳：刷新 last_seen_at 并置 online。故意不 bumpRevision——心跳是高频噪声 */
+  function heartbeatRuntime(id) {
+    const r = db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `运行时 ${id} 不存在`, { id })
+    const ts = now()
+    db.prepare("UPDATE agent_runtimes SET status='online', last_seen_at=?, updated_at=? WHERE id=?").run(ts, ts, Number(id))
+    return runtimeVO(db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(id)))
+  }
+
+  function setRuntimeStatus(id, status) {
+    if (!['online', 'offline'].includes(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `status 非法：${status}`, { status })
+    }
+    const r = db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `运行时 ${id} 不存在`, { id })
+    db.prepare('UPDATE agent_runtimes SET status=?, updated_at=? WHERE id=?').run(status, now(), Number(id))
+    bumpRevision()
+    return runtimeVO(db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(id)))
+  }
+
+  function getRuntime(id) {
+    const r = db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `运行时 ${id} 不存在`, { id })
+    return runtimeVO(r)
+  }
+
+  /** 运行时列表：读时收敛——把超时未心跳的 online 行降级为 offline，不需要后台任务 */
+  function listRuntimes({ status = null } = {}) {
+    const stale = new Date(Date.now() - AGENT_HEARTBEAT_STALE_MS).toISOString()
+    db.prepare("UPDATE agent_runtimes SET status='offline', updated_at=? WHERE status='online' AND (last_seen_at IS NULL OR last_seen_at < ?)")
+      .run(now(), stale)
+    const rows = status
+      ? db.prepare('SELECT * FROM agent_runtimes WHERE status = ? ORDER BY id ASC').all(status)
+      : db.prepare('SELECT * FROM agent_runtimes ORDER BY id ASC').all()
+    return rows.map(runtimeVO)
+  }
+
+  function deleteRuntime(id) {
+    const r = db.prepare('SELECT * FROM agent_runtimes WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `运行时 ${id} 不存在`, { id })
+    const active = db.prepare('SELECT COUNT(*) c FROM agent_runs WHERE runtime_id = ? AND finished_at IS NULL').get(Number(id)).c
+    if (active > 0) {
+      throw new AppError(CODES.VALIDATION_FAILED, `运行时 ${id} 仍有 ${active} 个未完成任务，不能删除`, { active })
+    }
+    // 历史行解绑（不级联删除任务历史），再删运行时本身
+    db.prepare('UPDATE agent_runs SET runtime_id = NULL WHERE runtime_id = ?').run(Number(id))
+    db.prepare('UPDATE agent_sessions SET runtime_id = NULL WHERE runtime_id = ?').run(Number(id))
+    db.prepare('DELETE FROM agent_runtimes WHERE id = ?').run(Number(id))
+    bumpRevision()
+    return { ok: true, id: Number(id) }
+  }
+
+  // ---------- 会话 ----------
+
+  /** 取/建该 (node, agent) 的活动会话（幂等；续跑同一会话时用它） */
+  function ensureAgentSession(nodeId, { agent = 'qodercli', runtimeId = null, workDir = null, title = '' } = {}, by = 'user') {
+    rawNode(nodeId)
+    const existing = db
+      .prepare("SELECT * FROM agent_sessions WHERE node_id = ? AND agent = ? AND status = 'active' ORDER BY id DESC LIMIT 1")
+      .get(Number(nodeId), agent)
+    if (existing) {
+      if (runtimeId && existing.runtime_id !== Number(runtimeId)) {
+        db.prepare('UPDATE agent_sessions SET runtime_id = ? WHERE id = ?').run(Number(runtimeId), existing.id)
+      }
+      if (workDir && existing.work_dir !== workDir) {
+        db.prepare('UPDATE agent_sessions SET work_dir = ? WHERE id = ?').run(workDir, existing.id)
+      }
+      return sessionVO(db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(existing.id))
+    }
+    const info = db
+      .prepare('INSERT INTO agent_sessions (node_id,agent,runtime_id,title,work_dir,status,run_count,last_activity_at,created_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(Number(nodeId), agent, runtimeId ? Number(runtimeId) : null, String(title || ''), workDir, 'active', 0, now(), now(), actor(by))
+    bumpRevision()
+    return sessionVO(db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  /** 显式新建会话（不复用旧会话；「新会话」按钮用） */
+  function createAgentSession(nodeId, { agent = 'qodercli', runtimeId = null, workDir = null, title = '' } = {}, by = 'user') {
+    rawNode(nodeId)
+    const info = db
+      .prepare('INSERT INTO agent_sessions (node_id,agent,runtime_id,title,work_dir,status,run_count,last_activity_at,created_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(Number(nodeId), agent, runtimeId ? Number(runtimeId) : null, String(title || ''), workDir, 'active', 0, now(), now(), actor(by))
+    bumpRevision()
+    return sessionVO(db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function getAgentSession(id) {
+    const r = db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(Number(id))
+    if (!r) throw new AppError(CODES.NOT_FOUND, `agent 会话 ${id} 不存在`, { id })
+    return sessionVO(r)
+  }
+
+  function listAgentSessions(nodeId, { status = null, limit = 50 } = {}) {
+    rawNode(nodeId)
+    const rows = status
+      ? db.prepare('SELECT * FROM agent_sessions WHERE node_id = ? AND status = ? ORDER BY COALESCE(last_activity_at, created_at) DESC LIMIT ?').all(Number(nodeId), status, Number(limit))
+      : db.prepare('SELECT * FROM agent_sessions WHERE node_id = ? ORDER BY COALESCE(last_activity_at, created_at) DESC LIMIT ?').all(Number(nodeId), Number(limit))
+    return rows.map(sessionVO)
+  }
+
+  function updateAgentSession(id, { title, status, cliSessionId, workDir } = {}) {
+    const cur = db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `agent 会话 ${id} 不存在`, { id })
+    if (status && !['active', 'archived'].includes(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `status 非法：${status}`, { status })
+    }
+    db.prepare('UPDATE agent_sessions SET title=?, status=?, cli_session_id=?, work_dir=? WHERE id=?').run(
+      title !== undefined ? String(title) : cur.title,
+      status !== undefined ? status : cur.status,
+      cliSessionId !== undefined ? cliSessionId : cur.cli_session_id,
+      workDir !== undefined ? workDir : cur.work_dir,
+      Number(id)
+    )
+    bumpRevision()
+    return sessionVO(db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(Number(id)))
+  }
+
+  function archiveAgentSession(id) {
+    return updateAgentSession(id, { status: 'archived' })
+  }
+
+  // ---------- 任务（run） ----------
+
+  function touchSession(sessionId, ts) {
+    if (!sessionId) return
+    db.prepare('UPDATE agent_sessions SET run_count = run_count + 1, last_activity_at = ? WHERE id = ?').run(ts, Number(sessionId))
+  }
+
+  /**
+   * 创建任务。sessionId 缺省时自动挂到该 (node, agent) 的活动会话（没有就建）；
+   * parentRunId + attempt 构成重试链；resumed 表示这次是续跑同一个 CLI 会话。
+   */
+  function createAgentRun(
+    nodeId,
+    {
+      agent = 'qodercli',
+      model = 'DeepSeek-Flash',
+      prompt,
+      cwd = null,
+      sessionId = null,
+      runtimeId = null,
+      attempt = 1,
+      maxAttempts = 1,
+      parentRunId = null,
+      priority = 0,
+      resumed = false
+    } = {},
+    by = 'user'
+  ) {
     rawNode(nodeId)
     const p = String(prompt || '').trim()
     if (!p) throw new AppError(CODES.VALIDATION_FAILED, 'prompt 不能为空', { field: 'prompt' })
+    const ts = now()
+    let sid = sessionId ? Number(sessionId) : null
+    if (sid) {
+      const s = db.prepare('SELECT id FROM agent_sessions WHERE id = ?').get(sid)
+      if (!s) throw new AppError(CODES.NOT_FOUND, `agent 会话 ${sid} 不存在`, { sessionId: sid })
+    } else {
+      sid = ensureAgentSession(nodeId, { agent, runtimeId, workDir: cwd }, by).id
+    }
     const info = db
-      .prepare('INSERT INTO agent_runs (node_id,agent,model,prompt,cwd,status,started_at,created_by) VALUES (?,?,?,?,?,?,?,?)')
-      .run(nodeId, agent, model, p, cwd, 'running', now(), actor(by))
+      .prepare(
+        `INSERT INTO agent_runs (node_id,session_id,runtime_id,agent,model,prompt,cwd,status,attempt,max_attempts,parent_run_id,priority,resumed,started_at,created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        Number(nodeId), sid, runtimeId ? Number(runtimeId) : null, agent, model, p, cwd,
+        'running', Number(attempt) || 1, Number(maxAttempts) || 1,
+        parentRunId ? Number(parentRunId) : null, Number(priority) || 0, resumed ? 1 : 0, ts, actor(by)
+      )
+    touchSession(sid, ts)
     bumpRevision()
     return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(info.lastInsertRowid)))
   }
 
-  const AGENT_OUTPUT_LIMIT = 200 * 1024
-
-  /** 追加执行输出（限 200KB） */
+  /**
+   * 追加执行输出（限 200KB）。
+   * 大块 stdout 会按「无换行 + ≤4KB」切成多条 text 消息，落进消息流——
+   * 这样 UI 可以按 seq 增量拉取，而不是每次整块重读 output 字段。
+   */
   function appendAgentRunOutput(id, chunk) {
     const cur = db.prepare('SELECT output FROM agent_runs WHERE id = ?').get(Number(id))
     if (!cur) return
@@ -823,14 +1105,172 @@ export function createStore(db, options = {}) {
     db.prepare('UPDATE agent_runs SET output = ? WHERE id = ?').run(next, Number(id))
   }
 
-  function finishAgentRun(id, { status, exitCode = null } = {}) {
-    if (!['success', 'failed', 'timeout'].includes(status)) {
+  /**
+   * 追加一条任务消息（事件流；参考 multica task_message）。seq 服务端自增，保证顺序稳定。
+   * 「读 MAX + 写」必须包在同一个写事务里，否则 MCP/CLI 等独立进程并发追加同一条任务时
+   * 会各自读到同一个 MAX，撞 UNIQUE(run_id, seq)。BEGIN IMMEDIATE 让写事务一开始就持写锁，
+   * 并在拿不到锁时按 busy_timeout + 重试兜底。
+   */
+  function appendAgentRunMessage(runId, { type, tool = null, content = null, input = null, output = null } = {}) {
+    const rid = Number(runId)
+    const run = db.prepare('SELECT id FROM agent_runs WHERE id = ?').get(rid)
+    if (!run) throw new AppError(CODES.NOT_FOUND, `agent 任务 ${runId} 不存在`, { id: runId })
+    const t = String(type || '').trim()
+    if (!t) throw new AppError(CODES.VALIDATION_FAILED, '消息 type 不能为空', { field: 'type' })
+    const ts = now()
+    const inputVal = input == null ? null : (typeof input === 'string' ? input : JSON.stringify(input))
+    const insertStmt = db.prepare(
+      'INSERT INTO agent_run_messages (run_id,seq,type,tool,content,input,output,created_at) VALUES (?,?,?,?,?,?,?,?)'
+    )
+    const maxStmt = db.prepare('SELECT COALESCE(MAX(seq), 0) s FROM agent_run_messages WHERE run_id = ?')
+    const insertNext = () => {
+      const seq = (maxStmt.get(rid).s || 0) + 1
+      const info = insertStmt.run(rid, seq, t, tool, content, inputVal, output, ts)
+      return { seq, id: Number(info.lastInsertRowid) }
+    }
+
+    let inserted
+    if (db.isTransaction) {
+      // 调用方已经开了事务，直接复用（此时写锁已在调用方事务里）
+      inserted = insertNext()
+    } else {
+      let lastErr
+      for (let i = 0; i <= SQLITE_BUSY_RETRIES; i++) {
+        try {
+          db.exec('BEGIN IMMEDIATE')
+        } catch (e) {
+          if (isSqliteBusy(e) && i < SQLITE_BUSY_RETRIES) {
+            sleepSync(SQLITE_BUSY_RETRY_MS)
+            continue
+          }
+          throw e
+        }
+        try {
+          inserted = insertNext()
+          db.exec('COMMIT')
+          lastErr = null
+          break
+        } catch (e) {
+          try {
+            db.exec('ROLLBACK')
+          } catch {
+            /* 事务已结束则忽略 */
+          }
+          lastErr = e
+          if (isSqliteBusy(e) && i < SQLITE_BUSY_RETRIES) {
+            sleepSync(SQLITE_BUSY_RETRY_MS)
+            continue
+          }
+          throw e
+        }
+      }
+      if (lastErr) throw lastErr
+      if (!inserted) throw new AppError(CODES.VALIDATION_FAILED, '消息写入失败', { id: runId })
+    }
+
+    const { seq, id } = inserted
+    return {
+      id,
+      runId: rid,
+      seq,
+      type: t,
+      tool,
+      content,
+      input: inputVal == null ? null : (typeof input === 'string' ? safeParse(inputVal) : input),
+      output,
+      createdAt: ts
+    }
+  }
+
+  function listAgentRunMessages(runId, { sinceSeq = 0 } = {}) {
+    const run = db.prepare('SELECT id FROM agent_runs WHERE id = ?').get(Number(runId))
+    if (!run) throw new AppError(CODES.NOT_FOUND, `agent 任务 ${runId} 不存在`, { id: runId })
+    return db
+      .prepare('SELECT * FROM agent_run_messages WHERE run_id = ? AND seq > ? ORDER BY seq ASC')
+      .all(Number(runId), Number(sinceSeq) || 0)
+      .map((m) => ({
+        id: m.id,
+        runId: m.run_id,
+        seq: m.seq,
+        type: m.type,
+        tool: m.tool,
+        content: m.content,
+        input: m.input == null ? null : safeParse(m.input),
+        output: m.output,
+        createdAt: m.created_at
+      }))
+  }
+
+  /**
+   * 收尾任务。cliSessionId/workDir 会沉淀到所属会话，供下次 --resume 续跑。
+   * failureReason 用 multica 的分类口径（runtime_recovery / timeout / agent_error…）。
+   */
+  function finishAgentRun(id, { status, exitCode = null, failureReason = null, cliSessionId = null, workDir = null } = {}) {
+    if (!TERMINAL_RUN_STATUSES.has(status)) {
       throw new AppError(CODES.VALIDATION_FAILED, `status 非法：${status}`, { status })
     }
-    db.prepare('UPDATE agent_runs SET status=?, exit_code=?, finished_at=? WHERE id=?')
-      .run(status, exitCode, now(), Number(id))
+    const cur = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `agent 任务 ${id} 不存在`, { id })
+    const ts = now()
+    db.prepare(
+      'UPDATE agent_runs SET status=?, exit_code=?, failure_reason=?, cli_session_id=?, work_dir=?, finished_at=? WHERE id=?'
+    ).run(
+      status, exitCode, failureReason,
+      cliSessionId !== null ? cliSessionId : cur.cli_session_id,
+      workDir !== null ? workDir : cur.work_dir,
+      ts, Number(id)
+    )
+    // 会话级的「记忆」：把 CLI 会话号与工作目录沉淀到 session，供 --resume 续跑
+    if (cur.session_id) {
+      const s = db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(cur.session_id)
+      if (s) {
+        db.prepare('UPDATE agent_sessions SET cli_session_id=?, work_dir=?, last_activity_at=? WHERE id=?').run(
+          cliSessionId !== null ? cliSessionId : s.cli_session_id,
+          workDir !== null ? workDir : s.work_dir,
+          ts,
+          cur.session_id
+        )
+      }
+    }
     bumpRevision()
     return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id)))
+  }
+
+  /** 取消任务（把未结束任务置 cancelled；参考 multica 的 cancelled 语义） */
+  function cancelAgentRun(id, { reason = 'manual' } = {}) {
+    const cur = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `agent 任务 ${id} 不存在`, { id })
+    if (TERMINAL_RUN_STATUSES.has(cur.status)) return agentRunVO(cur)
+    db.prepare("UPDATE agent_runs SET status='cancelled', failure_reason=?, finished_at=? WHERE id=?").run(reason, now(), Number(id))
+    bumpRevision()
+    return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id)))
+  }
+
+  /** 重试：新建一条 attempt+1 的子任务，回头指向原任务（参考 multica 的 parent_task_id） */
+  function retryAgentRun(id, { by = 'user' } = {}) {
+    const cur = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id))
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `agent 任务 ${id} 不存在`, { id })
+    if (!TERMINAL_RUN_STATUSES.has(cur.status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `任务 ${id} 尚未结束（${cur.status}），不能重试`, { status: cur.status })
+    }
+    return createAgentRun(
+      cur.node_id,
+      {
+        agent: cur.agent,
+        model: cur.model,
+        prompt: cur.prompt,
+        cwd: cur.cwd,
+        sessionId: cur.session_id,
+        runtimeId: cur.runtime_id,
+        attempt: (cur.attempt || 1) + 1,
+        maxAttempts: cur.max_attempts || 1,
+        parentRunId: cur.id,
+        priority: cur.priority || 0,
+        // 会话已有 CLI 会话号时，重试即续跑同一段对话
+        resumed: !!cur.cli_session_id
+      },
+      by
+    )
   }
 
   function getAgentRun(id) {
@@ -839,19 +1279,44 @@ export function createStore(db, options = {}) {
     return agentRunVO(r)
   }
 
-  function listAgentRuns(nodeId, { limit = 20 } = {}) {
+  function listAgentRuns(nodeId, { limit = 20, sessionId = null } = {}) {
     rawNode(nodeId)
-    return db
-      .prepare('SELECT * FROM agent_runs WHERE node_id = ? ORDER BY id DESC LIMIT ?')
-      .all(Number(nodeId), Number(limit))
-      .map(agentRunVO)
+    const rows = sessionId
+      ? db.prepare('SELECT * FROM agent_runs WHERE node_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?').all(Number(nodeId), Number(sessionId), Number(limit))
+      : db.prepare('SELECT * FROM agent_runs WHERE node_id = ? ORDER BY id DESC LIMIT ?').all(Number(nodeId), Number(limit))
+    return rows.map(agentRunVO)
+  }
+
+  /** 最近一次任务（用于「继续上次会话」） */
+  function latestAgentRun(nodeId, { agent = null } = {}) {
+    rawNode(nodeId)
+    const row = agent
+      ? db.prepare('SELECT * FROM agent_runs WHERE node_id = ? AND agent = ? ORDER BY id DESC LIMIT 1').get(Number(nodeId), agent)
+      : db.prepare('SELECT * FROM agent_runs WHERE node_id = ? ORDER BY id DESC LIMIT 1').get(Number(nodeId))
+    return row ? agentRunVO(row) : null
+  }
+
+  /** 运行时总览统计（运行时页卡片用） */
+  function agentRuntimeSummary() {
+    const runtimes = listRuntimes()
+    const active = db.prepare('SELECT COUNT(*) c FROM agent_runs WHERE finished_at IS NULL').get().c
+    const sessions = db.prepare("SELECT COUNT(*) c FROM agent_sessions WHERE status = 'active'").get().c
+    return {
+      runtimes: runtimes.length,
+      online: runtimes.filter((r) => r.status === 'online').length,
+      activeRuns: active,
+      activeSessions: sessions
+    }
   }
 
   /** 服务启动时调用：把残留的 running 标记为 failed（子进程已随服务退出） */
   function failStaleAgentRuns() {
+    const ts = now()
     const info = db
-      .prepare("UPDATE agent_runs SET status='failed', output=COALESCE(output,'') || ?, finished_at=? WHERE status='running'")
-      .run('\n[task-board] 服务重启，本次运行已中断\n', now())
+      .prepare("UPDATE agent_runs SET status='failed', failure_reason='runtime_recovery', output=COALESCE(output,'') || ?, finished_at=? WHERE status='running'")
+      .run('\n[task-board] 服务重启，本次运行已中断\n', ts)
+    // 重启后没有任何 daemon 在线：把在线行收敛为离线，等下次心跳恢复
+    db.prepare("UPDATE agent_runtimes SET status='offline', updated_at=? WHERE status='online'").run(ts)
     if (info.changes > 0) bumpRevision()
     return { cleared: info.changes }
   }
@@ -1090,12 +1555,32 @@ export function createStore(db, options = {}) {
     listCommentsByFile,
     updateComment,
     deleteComment,
-    // agent runs（测试节点）
+    // agent 运行时管理
+    upsertRuntime,
+    heartbeatRuntime,
+    setRuntimeStatus,
+    getRuntime,
+    listRuntimes,
+    deleteRuntime,
+    agentRuntimeSummary,
+    // agent 会话
+    ensureAgentSession,
+    createAgentSession,
+    getAgentSession,
+    listAgentSessions,
+    updateAgentSession,
+    archiveAgentSession,
+    // agent 任务（runs）+ 消息流
     createAgentRun,
     appendAgentRunOutput,
+    appendAgentRunMessage,
+    listAgentRunMessages,
     finishAgentRun,
+    cancelAgentRun,
+    retryAgentRun,
     getAgentRun,
     listAgentRuns,
+    latestAgentRun,
     failStaleAgentRuns,
     // IDE 桥（网页 → IDEA 打开 diff）
     createIdeRequest,

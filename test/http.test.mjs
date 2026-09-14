@@ -229,6 +229,154 @@ test('GET /api/config', async () => {
 
 // ---------- 404 ----------
 
+// ---------- agent 运行时 / 会话 / 任务 ----------
+
+function makeTree(store) {
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  const s = store.createNode({ parentId: r.id, type: 'subreq', name: 'S' })
+  const t = store.createNode({ parentId: s.id, type: 'task', name: 'T' })
+  return t
+}
+
+test('运行时：注册 / 列表 / 心跳 / 状态 / 删除', async () => {
+  const { tmp, store, get, post, patch, del, close } = await setup()
+  const rt = await post('/api/runtimes', { name: 'Host A', daemonId: 'host-a', provider: 'qodercli' })
+  assert.equal(rt.status, 'online')
+
+  const list = await get('/api/runtimes')
+  assert.equal(list.items.length, 1)
+  assert.equal(list.summary.online, 1)
+
+  const beat = await post(`/api/runtimes/${rt.id}/heartbeat`, {})
+  assert.equal(beat.status, 'online')
+
+  const off = await patch(`/api/runtimes/${rt.id}`, { status: 'offline' })
+  assert.equal(off.status, 'offline')
+
+  const removed = await del(`/api/runtimes/${rt.id}`, {})
+  assert.equal(removed.ok, true)
+  assert.equal((await get('/api/runtimes')).items.length, 0)
+
+  await close()
+  tmp.cleanup()
+})
+
+test('会话：新建 / 列表 / 归档', async () => {
+  const { tmp, store, post, get, del, close } = await setup()
+  const task = makeTree(store)
+  const s = await post(`/api/nodes/${task.id}/agent-sessions`, { agent: 'qodercli', title: '第一次评审' })
+  assert.equal(s.status, 'active')
+  assert.equal(s.runCount, 0)
+
+  const list = await get(`/api/nodes/${task.id}/agent-sessions`)
+  assert.equal(list.length, 1)
+  assert.equal(list[0].title, '第一次评审')
+
+  const archived = await del(`/api/agent-sessions/${s.id}`, {})
+  assert.equal(archived.status, 'archived')
+
+  await close()
+  tmp.cleanup()
+})
+
+test('任务：派单 echo → 消息流 → 终态；列表与详情一致', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const { tmp, store, base, get, close } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-http-agent-'))
+  const task = makeTree(store)
+  store.addRepo({ name: 'demo', localPath: dir })
+  store.addCommit(task.id, { repo: 'demo', sha: 'abcdef1' })
+
+  const run = await fetch(`${base}/api/nodes/${task.id}/agent-runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: '验证 HTTP 链路', agent: 'echo', cwd: dir })
+  }).then((r) => r.json())
+  assert.ok(run.id > 0)
+  assert.ok(run.sessionId > 0)
+  assert.ok(run.runtimeId > 0) // 自动注册本机运行时
+
+  // 等任务结束
+  let done = run
+  for (let i = 0; i < 60 && done.status === 'running'; i++) {
+    await new Promise((res) => setTimeout(res, 100))
+    done = await get(`/api/agent-runs/${run.id}`)
+  }
+  assert.equal(done.status, 'success')
+
+  const messages = await get(`/api/agent-runs/${run.id}/messages`)
+  assert.ok(messages.length > 0)
+  assert.deepEqual(messages.map((m) => m.seq).sort((a, b) => a - b), messages.map((m) => m.seq))
+  assert.ok(messages.some((m) => (m.content || '').includes('验证 HTTP 链路')))
+
+  const runs = await get(`/api/nodes/${task.id}/agent-runs`)
+  assert.equal(runs.length, 1)
+  assert.equal(runs[0].status, 'success')
+
+  // 会话沉淀：runCount 与消息流
+  const sessions = await get(`/api/nodes/${task.id}/agent-sessions`)
+  assert.equal(sessions[0].runCount, 1)
+
+  await close()
+  tmp.cleanup()
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('任务：取消未结束任务 / 重试已结束任务（attempt+1 指向原任务）', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const { tmp, store, get, post, close } = await setup()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-http-retry-'))
+  const task = makeTree(store)
+  // agent=echo：重试会真的重新执行，可以验证 dispatch 生效（本机未必装了 qodercli）
+  const run = store.createAgentRun(task.id, { prompt: 'p', agent: 'echo', cwd: dir })
+
+  const cancelled = await post(`/api/agent-runs/${run.id}/cancel`, { reason: 'user_cancelled' })
+  assert.equal(cancelled.status, 'cancelled')
+
+  const retried = await post(`/api/agent-runs/${run.id}/retry`, {})
+  assert.equal(retried.attempt, 2)
+  assert.equal(retried.parentRunId, run.id)
+  assert.equal(retried.sessionId, run.sessionId)
+
+  // 重试会立刻拉起子进程：等它跑完，确认不是卡在 running
+  let done = retried
+  for (let i = 0; i < 60 && done.status === 'running'; i++) {
+    await new Promise((res) => setTimeout(res, 100))
+    done = await get(`/api/agent-runs/${retried.id}`)
+  }
+  assert.equal(done.status, 'success')
+  const msgs = await get(`/api/agent-runs/${retried.id}/messages`)
+  assert.ok(msgs.length > 0)
+
+  await close()
+  tmp.cleanup()
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('任务：回写（PATCH）置终态并沉淀 cliSessionId', async () => {
+  const { tmp, store, get, patch, close } = await setup()
+  const task = makeTree(store)
+  const run = store.createAgentRun(task.id, { prompt: 'p', cwd: '/tmp' })
+
+  const updated = await patch(`/api/agent-runs/${run.id}`, {
+    status: 'success',
+    output: '结论',
+    cliSessionId: 'cli-xyz'
+  })
+  assert.equal(updated.status, 'success')
+
+  const session = await get(`/api/agent-sessions/${run.sessionId}`)
+  assert.equal(session.cliSessionId, 'cli-xyz')
+
+  await close()
+  tmp.cleanup()
+})
+
 test('未知路由返回 404', async () => {
   const { tmp, get, close } = await setup()
   const r = await get('/api/unknown')

@@ -27,6 +27,7 @@
 | commit 审查（审查状态 / 意见，三入口 1:1） | `commit-registry/` | 计划 4 增强 | server/store.mjs（commits review）+ NodeDrawer |
 | 多 commit 合并 diff（MR 式净变更 + commit 明细） | `commit-registry/` | 计划 4 增强 | server/ops.mjs（getCombinedDiff）|
 | agent 测试运行（qodercli 后台 / Qoder IDE 前台 ideMode） | `agent-run/` | — | server/agent.mjs |
+| **agent 运行时管理**（运行时/会话/任务三层 + 消息流 + 续跑/重试/取消，对齐 multica） | `agent-runtime/` | — | server/{db,store,agent}.mjs、server/{http,cli,mcp}.mjs、idea-plugin AgentConsoleDialog |
 | **Qoder 联动**（hook 注入 / MCP 读写 / 前台派单 / 选区自动捕获） | `qoder-integration/` | — | hooks/qoder-bridge.mjs、QoderOpener + 选区监听（插件）、MCP agent_run_* |
 | **对照布局与面板显隐**（三栏铺排/☑开关/比例设置/节点树按钮行 + 三连踩坑） | `layout-panes/` | — | idea-plugin（TaskBoardPanel/LayoutPrefs/PrdOpener/DiffOpener） |
 | **审批合并**（同意→开发分支合入子需求需求分支；已合入跳过/冲突拒绝；组级合入状态） | `merge-flow/` | — | server（git/ops/http merge）+ 插件「标记通过/合入状态」 |

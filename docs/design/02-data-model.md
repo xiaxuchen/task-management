@@ -229,3 +229,87 @@ v1 中所有属性值均由用户编辑；系统自动写入的数据只有 MR �
 
 约束：`UNIQUE(node_id, repo_id)`。一个工作单元可覆盖多个仓库（同一条分支名），`worktree_path` 是「工作区状态」的唯一来源。
 
+### 4.13 agent_runtimes / agent_sessions / agent_runs / agent_run_messages（agent 运行时与任务）
+
+对齐 multica 的三层模型：**运行时（机器级执行环境）→ 会话（可续跑的连续对话）→ 任务（一次执行）**，
+任务之上再挂一层**消息流**（事件流，按 seq 增量拉取）。旧版只有一张扁平的 `agent_runs` 表，
+无法回答「这次跑的是哪台机器 / 哪个 CLI 实例」「上次的 CLI 会话能不能续跑」「同一个节点的多次派单是不是同一段对话」。
+
+**agent_runtimes（运行时）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| name | TEXT NOT NULL | 显示名，如 `MacBook-Pro · qodercli` |
+| daemon_id | TEXT | daemon 标识（本机服务用主机名） |
+| runtime_mode | TEXT NOT NULL | `local` / `cloud` |
+| provider | TEXT NOT NULL | 具体 CLI：`qodercli` / `echo` / … |
+| status | TEXT NOT NULL | `online` / `offline`（心跳驱动） |
+| device_info | TEXT | 设备信息，如 `MacBook-Pro · darwin-arm64` |
+| visibility | TEXT NOT NULL | `private`（仅 owner 可用）/ `public`（工作区共享） |
+| metadata | TEXT | JSON，登记时的附加信息（pid / node 版本等） |
+| last_seen_at | TEXT | 最近心跳时间；超阈值读时降级为 offline |
+| created_at / updated_at / created_by | TEXT | |
+
+约束：`UNIQUE(daemon_id, provider)` —— 一台机器上一个 CLI 实例只有一行（upsert 幂等）。
+index：`idx_agent_runtimes_status(status)`。
+
+**agent_sessions（会话）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE |
+| agent | TEXT NOT NULL | 该会话绑定的 CLI |
+| runtime_id | INTEGER NULL | FK → agent_runtimes(id) ON DELETE SET NULL |
+| title | TEXT | 会话标题（可空） |
+| cli_session_id | TEXT | CLI 自己的会话号（qodercli 的 `--resume <id>`），任务结束后沉淀 |
+| work_dir | TEXT | 会话工作目录（任务结束后沉淀） |
+| status | TEXT NOT NULL | `active` / `archived` |
+| run_count | INTEGER NOT NULL | 会话内任务数 |
+| last_activity_at | TEXT | 最近活动时间（列表排序用） |
+| created_at / created_by | TEXT | |
+
+index：`idx_agent_sessions_node(node_id)`、`idx_agent_sessions_activity(status, last_activity_at)`。
+取/建活动会话是幂等的：`ensureAgentSession` 复用该 `(node, agent)` 最新的 active 会话。
+
+**agent_runs（任务 / 队列条目）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE |
+| session_id | INTEGER NULL | FK → agent_sessions(id) ON DELETE SET NULL |
+| runtime_id | INTEGER NULL | FK → agent_runtimes(id) ON DELETE SET NULL |
+| agent / model | TEXT | 执行者与模型 |
+| prompt | TEXT NOT NULL | 提示词 |
+| cwd | TEXT | 执行目录（缺省从节点子树内已登记仓库推导） |
+| status | TEXT | `running` / `success` / `failed` / `timeout` / `cancelled` |
+| output | TEXT | 合并输出（限 200KB，兼容旧读取方式） |
+| exit_code | INTEGER | 子进程退出码 |
+| attempt / max_attempts | INTEGER | 第几次尝试 / 上限（重试用） |
+| parent_run_id | INTEGER NULL | FK → agent_runs(id) ON DELETE SET NULL，重试链回指 |
+| failure_reason | TEXT | 失败分类（`timeout` / `runtime_recovery` / `agent_error.*` …） |
+| cli_session_id / work_dir | TEXT | 本次任务落定的 CLI 会话号 / 工作目录（回填到 session） |
+| priority | INTEGER | 队列优先级 |
+| resumed | INTEGER | 是否续跑（`--resume`） |
+| wait_reason | TEXT | 等待原因（预留：如工作目录被占用） |
+| started_at / finished_at / created_by | TEXT | |
+
+index：`idx_agent_runs_node(node_id)`、`idx_agent_runs_session(session_id, id)`。
+
+**agent_run_messages（任务消息流）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| run_id | INTEGER NOT NULL | FK → agent_runs(id) ON DELETE CASCADE |
+| seq | INTEGER NOT NULL | 任务内自增序号（服务端生成，保证顺序稳定） |
+| type | TEXT NOT NULL | `text` / `tool_use` / `tool_result` / `thinking` / `error` |
+| tool | TEXT | `type=tool_use` 时的工具名 |
+| content / output | TEXT | 消息正文 / 工具输出 |
+| input | TEXT | 工具入参（JSON 字符串） |
+| created_at | TEXT | |
+
+约束：`UNIQUE(run_id, seq)`；index：`idx_agent_run_messages_run(run_id, seq)`。
+有了 seq，UI 只需按 `sinceSeq` 增量拉取，而不是每次把整块 output 重读一遍。

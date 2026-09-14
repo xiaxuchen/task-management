@@ -1,7 +1,7 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream } from './ops.mjs'
-import { startAgentRun } from './agent.mjs'
+import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 
@@ -393,23 +393,135 @@ export function createApp({ store }) {
     })
   )
 
-  // ---------- agent 运行（测试节点：写提示词触发 agent） ----------
+  // ---------- agent 运行时 / 会话 / 任务 ----------
 
+  // 运行时
+  app.get(
+    '/api/runtimes',
+    wrap((req, res) => res.json({ summary: store.agentRuntimeSummary(), items: store.listRuntimes({ status: req.query.status || null }) }))
+  )
+  app.post(
+    '/api/runtimes',
+    wrap((req, res) => res.status(201).json(store.upsertRuntime(req.body || {}, actorOf(req))))
+  )
+  app.get(
+    '/api/runtimes/:id',
+    wrap((req, res) => res.json(store.getRuntime(Number(req.params.id))))
+  )
+  app.post(
+    '/api/runtimes/:id/heartbeat',
+    wrap((req, res) => res.json(store.heartbeatRuntime(Number(req.params.id))))
+  )
+  app.patch(
+    '/api/runtimes/:id',
+    wrap((req, res) => {
+      const b = req.body || {}
+      if (b.status) return res.json(store.setRuntimeStatus(Number(req.params.id), b.status))
+      return res.json(store.getRuntime(Number(req.params.id)))
+    })
+  )
+  app.delete(
+    '/api/runtimes/:id',
+    wrap((req, res) => res.json(store.deleteRuntime(Number(req.params.id))))
+  )
+
+  // 任务（runs）：派单 / 列表 / 详情 / 消息流 / 取消 / 重试 / 回写
   app.post(
     '/api/nodes/:id/agent-runs',
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
       const b = req.body || {}
-      res.status(201).json(startAgentRun(store, node.id, { prompt: b.prompt, agent: b.agent, model: b.model, cwd: b.cwd, ideMode: !!b.ideMode }, actorOf(req)))
+      res.status(201).json(
+        startAgentRun(
+          store,
+          node.id,
+          {
+            prompt: b.prompt,
+            agent: b.agent,
+            model: b.model,
+            cwd: b.cwd,
+            ideMode: !!b.ideMode,
+            sessionId: b.sessionId,
+            resume: !!b.resume,
+            runtimeId: b.runtimeId
+          },
+          actorOf(req)
+        )
+      )
     })
   )
   app.get(
     '/api/nodes/:id/agent-runs',
-    wrap((req, res) => res.json(store.listAgentRuns(store.resolveRef(refOf(req)).id, { limit: Number(req.query.limit) || 20 })))
+    wrap((req, res) =>
+      res.json(
+        store.listAgentRuns(store.resolveRef(refOf(req)).id, {
+          limit: Number(req.query.limit) || 20,
+          sessionId: req.query.sessionId || null
+        })
+      )
+    )
+  )
+  app.get(
+    '/api/nodes/:id/agent-sessions',
+    wrap((req, res) => res.json(store.listAgentSessions(store.resolveRef(refOf(req)).id, { status: req.query.status || null })))
+  )
+  app.post(
+    '/api/nodes/:id/agent-sessions',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(store.createAgentSession(node.id, { agent: b.agent, workDir: b.workDir, title: b.title }, actorOf(req)))
+    })
+  )
+  app.get(
+    '/api/agent-sessions/:sid',
+    wrap((req, res) => res.json(store.getAgentSession(Number(req.params.sid))))
+  )
+  app.patch(
+    '/api/agent-sessions/:sid',
+    wrap((req, res) => res.json(store.updateAgentSession(Number(req.params.sid), req.body || {})))
+  )
+  app.delete(
+    '/api/agent-sessions/:sid',
+    wrap((req, res) => res.json(store.archiveAgentSession(Number(req.params.sid))))
   )
   app.get(
     '/api/agent-runs/:rid',
     wrap((req, res) => res.json(store.getAgentRun(Number(req.params.rid))))
+  )
+  app.get(
+    '/api/agent-runs/:rid/messages',
+    wrap((req, res) => res.json(store.listAgentRunMessages(Number(req.params.rid), { sinceSeq: Number(req.query.sinceSeq) || 0 })))
+  )
+  app.post(
+    '/api/agent-runs/:rid/messages',
+    wrap((req, res) => res.status(201).json(store.appendAgentRunMessage(Number(req.params.rid), req.body || {})))
+  )
+  app.post(
+    '/api/agent-runs/:rid/cancel',
+    wrap((req, res) => res.json(store.cancelAgentRun(Number(req.params.rid), { reason: (req.body || {}).reason || 'manual' })))
+  )
+  app.post(
+    '/api/agent-runs/:rid/retry',
+    wrap((req, res) => res.status(201).json(retryAndDispatch(store, Number(req.params.rid), actorOf(req))))
+  )
+  app.patch(
+    '/api/agent-runs/:rid',
+    wrap((req, res) => {
+      const b = req.body || {}
+      if (b.status) {
+        return res.json(
+          store.finishAgentRun(Number(req.params.rid), {
+            status: b.status,
+            exitCode: b.exitCode ?? null,
+            failureReason: b.failureReason ?? null,
+            cliSessionId: b.cliSessionId ?? null,
+            workDir: b.workDir ?? null
+          })
+        )
+      }
+      return res.json(store.getAgentRun(Number(req.params.rid)))
+    })
   )
 
   // ---------- 网页 → IDEA 打开请求（IDE 桥；插件轮询领取） ----------

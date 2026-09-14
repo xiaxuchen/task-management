@@ -6,6 +6,7 @@ import express from 'express'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { createApp } from './http.mjs'
+import { ensureLocalRuntime } from './agent.mjs'
 import { loadConfig, DB_PATH } from './config.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
@@ -25,6 +26,12 @@ export async function startServer({ port, open = true, host = '127.0.0.1' } = {}
   const db = openDb()
   const store = createStore(db, { docPresets: cfg.docPresets })
   store.failStaleAgentRuns()
+  // 本机服务自身就是一个 daemon：启动时把本机默认 CLI 运行时注册为在线
+  try {
+    ensureLocalRuntime(store, 'qodercli', 'system')
+  } catch {
+    /* 运行时注册失败不阻断服务启动 */
+  }
   const app = createApp({ store })
   // 前端构建产物静态托管
   if (fs.existsSync(DIST)) {
