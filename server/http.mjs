@@ -287,7 +287,7 @@ export function createApp({ store }) {
   )
   app.get(
     '/api/nodes/:id/duplicates',
-    wrap(async (req, res) => res.json(await getNodeDuplicates(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })))
+    wrap(async (req, res) => res.json(await getNodeDuplicates(store, refOf(req), { scope: req.query.scope })))
   )
   app.post(
     '/api/commits/dedupe',
@@ -305,7 +305,7 @@ export function createApp({ store }) {
   )
   app.get(
     '/api/nodes/:id/diffs',
-    wrap(async (req, res) => res.json(await getNodeDiffs(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })))
+    wrap(async (req, res) => res.json(await getNodeDiffs(store, refOf(req), { scope: req.query.scope })))
   )
 
   // ---------- 分支合并状态（测试 / 预发 / 上线） ----------
@@ -316,7 +316,7 @@ export function createApp({ store }) {
   )
   app.get(
     '/api/nodes/:id/tracks',
-    wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope === 'subtree' ? 'subtree' : 'self', branches: req.query.branches === 'true', light: req.query.light === 'true' })))
+    wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope, branches: req.query.branches === 'true', light: req.query.light === 'true' })))
   )
   // ---------- 审批合并（同意 → 开发分支合入所属子需求的「需求分支」；主仓库执行） ----------
   app.post(
@@ -525,7 +525,8 @@ export function createApp({ store }) {
     '/api/nodes/:id/acceptance-report',
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
-      const report = store.buildAcceptanceReport(node.id, { scope: req.query.scope === 'subtree' ? 'subtree' : 'self' })
+      // scope 原样透传，由 store.normalizeScope 统一做值域校验（非法值报错，不静默降级 self）
+      const report = store.buildAcceptanceReport(node.id, { scope: req.query.scope })
       if (req.query.format === 'md') {
         res.type('text/markdown').send(renderAcceptanceMd(report))
         return
@@ -540,7 +541,7 @@ export function createApp({ store }) {
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
       const readiness = store.buildRequirementReadiness(node.id, {
-        scope: req.query.scope === 'subtree' ? 'subtree' : 'self'
+        scope: req.query.scope
       })
       if (req.query.format === 'md') {
         res.type('text/markdown').send(renderReadinessMd(readiness))
@@ -556,7 +557,7 @@ export function createApp({ store }) {
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
       const gate = store.buildDeliveryGate(node.id, {
-        scope: req.query.scope === 'subtree' ? 'subtree' : 'self'
+        scope: req.query.scope
       })
       if (req.query.format === 'md') {
         res.type('text/markdown').send(renderDeliveryGateMd(gate))
@@ -658,7 +659,7 @@ export function createApp({ store }) {
     wrap((req, res) => {
       const node = store.resolveRef(refOf(req))
       const checklist = store.buildReleaseChecklist(node.id, {
-        scope: req.query.scope === 'subtree' ? 'subtree' : 'self'
+        scope: req.query.scope
       })
       if (req.query.format === 'md') {
         res.type('text/markdown').send(renderReleaseChecklistMd(checklist))
@@ -678,7 +679,7 @@ export function createApp({ store }) {
           node.id,
           {
             caseIds: b.caseIds,
-            scope: b.scope === 'subtree' ? 'subtree' : 'self',
+            scope: b.scope,
             prompt: b.prompt,
             agent: b.agent,
             model: b.model,

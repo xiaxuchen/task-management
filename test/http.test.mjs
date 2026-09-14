@@ -752,6 +752,56 @@ test('就绪门禁：scope=subtree 汇总 + md 输出', async () => {
   tmp.cleanup()
 })
 
+// ---------- D2 回归：非法 scope 必须 400，不得静默降级 self ----------
+
+test('D2回归：非法 scope 返回 400 VALIDATION_FAILED（三入口契约一致，不再静默降级）', async () => {
+  const { tmp, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+  // 让 R 自身就绪：旧实现下 scope=Subtree 会降级 self → ready=true（假绿）
+  await post(`/api/nodes/${r.id}/documents/upsert`, { name: '需求内容', content: '正文' })
+  await post(`/api/nodes/${r.id}/documents/upsert`, { name: '概要设计', content: '设计' })
+  await post(`/api/nodes/${r.id}/test-cases/upsert`, { name: '回归用例', prompt: '跑单测' })
+
+  const paths = ['readiness', 'acceptance-report', 'release-checklist', 'delivery-gate']
+  for (const bad of ['Subtree', 'xyz', 'subtre']) {
+    for (const path of paths) {
+      const res = await raw('GET', `/api/nodes/${r.id}/${path}?scope=${encodeURIComponent(bad)}`)
+      assert.equal(res.status, 400, `${path}?scope=${bad} 应当 400`)
+      assert.equal(res.body.error.code, 'VALIDATION_FAILED')
+      assert.deepEqual(res.body.error.details.allowed, ['self', 'subtree'])
+    }
+  }
+  // 空串同样属于显式非法值
+  const emptyScope = await raw('GET', `/api/nodes/${r.id}/readiness?scope=`)
+  assert.equal(emptyScope.status, 400)
+  assert.equal(emptyScope.body.error.code, 'VALIDATION_FAILED')
+
+  // 合法值不受影响
+  const okSelf = await raw('GET', `/api/nodes/${r.id}/readiness?scope=self`)
+  assert.equal(okSelf.status, 200)
+  const okSubtree = await raw('GET', `/api/nodes/${r.id}/readiness?scope=subtree`)
+  assert.equal(okSubtree.status, 200)
+
+  await close()
+  tmp.cleanup()
+})
+
+test('D1回归：子树无需求时 readiness 返回 ready=null 空态（HTTP 200，不是 400）', async () => {
+  const { tmp, post, raw, close } = await setup()
+  const p = await post('/api/nodes', { type: 'project', name: 'P' })
+  const r = await post('/api/nodes', { parentId: p.id, type: 'requirement', name: 'R' })
+  await raw('DELETE', `/api/nodes/${r.id}`, { confirm: true })
+
+  const res = await raw('GET', `/api/nodes/${p.id}/readiness?scope=subtree`)
+  assert.equal(res.status, 200)
+  assert.equal(res.body.ready, null)
+  assert.equal(res.body.totals.units, 0)
+
+  await close()
+  tmp.cleanup()
+})
+
 // ---------- 交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总） ----------
 
 test('交付门禁：全链路（需求就绪 → 测试未跑不可交付 → 通过后可交付）', async () => {

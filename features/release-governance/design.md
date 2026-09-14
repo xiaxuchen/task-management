@@ -53,6 +53,8 @@ agent 任务结束后由前台执行者（或收尾钩子）用 `test_report_fin
 **R5.2 scope 口径**：`release_checklist` 与 `release check` 共用 `scope=self|subtree`——
 `subtree` 会把子树的上线项与检查用例一起纳入。`self` 下若本节点为空但子树有上线项，
 报错信息会明确提示改用 `scope=subtree`，避免「子树有上线项却没进检查」的误解。
+值域由 `store.normalizeScope` 单点校验：缺省取 `self`，非法值（含 `Subtree` / 空串）返回
+`VALIDATION_FAILED`；**不做静默降级**，否则「子树仍有未完成必做上线项」会被判成就绪。
 
 ## 3. 踩坑 / 约束
 

@@ -250,7 +250,7 @@ export function createMcpServer({ store }) {
     '节点（含子树）聚合 diff：按 (repo, sha) 去重、回填来源节点；单条失败带 error 字段',
     { ref: z.string(), scope: z.enum(['self', 'subtree']).optional() },
     async ({ ref, scope }) => {
-      const data = await getNodeDiffs(store, ref, { scope: scope || 'self' })
+      const data = await getNodeDiffs(store, ref, { scope })
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
     }
   )
@@ -270,7 +270,7 @@ export function createMcpServer({ store }) {
     '节点（含子树）合并状态聚合：按 (repo, sha) 去重；contained=null 表示未配置或本地无该 ref；branches=true 附分支标注与需求分支合入状态',
     { ref: z.string(), scope: z.enum(['self', 'subtree']).optional(), branches: z.boolean().optional() },
     async ({ ref, scope, branches }) => {
-      const data = await getNodeTracks(store, ref, { scope: scope || 'self', branches: !!branches })
+      const data = await getNodeTracks(store, ref, { scope, branches: !!branches })
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
     }
   )
@@ -301,7 +301,7 @@ export function createMcpServer({ store }) {
     '重复提交检测：same-sha（同 sha 重复登记）/ patch-id（同内容不同 sha）/ merge 覆盖（worktree 提交被合入需求分支）',
     { ref: z.string(), scope: z.enum(['self', 'subtree']).optional() },
     async ({ ref, scope }) => {
-      return { content: [{ type: 'text', text: JSON.stringify(await getNodeDuplicates(store, ref, { scope: scope || 'self' }), null, 2) }] }
+      return { content: [{ type: 'text', text: JSON.stringify(await getNodeDuplicates(store, ref, { scope }), null, 2) }] }
     }
   )
 
@@ -726,7 +726,7 @@ export function createMcpServer({ store }) {
     { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
     async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
-      const report = store.buildAcceptanceReport(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const report = store.buildAcceptanceReport(n.id, { scope })
       const text = format === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
       return { content: [{ type: 'text', text }] }
     }
@@ -738,7 +738,7 @@ export function createMcpServer({ store }) {
     { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
     async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
-      const readiness = store.buildRequirementReadiness(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const readiness = store.buildRequirementReadiness(n.id, { scope })
       const text = format === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
       return { content: [{ type: 'text', text }] }
     }
@@ -750,7 +750,7 @@ export function createMcpServer({ store }) {
     { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
     async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
-      const gate = store.buildDeliveryGate(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const gate = store.buildDeliveryGate(n.id, { scope })
       const text = format === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
       return { content: [{ type: 'text', text }] }
     }
@@ -850,7 +850,7 @@ export function createMcpServer({ store }) {
     { node: z.union([z.number(), z.string()]), scope: z.enum(['self', 'subtree']).optional(), format: z.enum(['json', 'md']).optional() },
     async ({ node, scope, format }) => {
       const n = store.resolveRef(String(node))
-      const checklist = store.buildReleaseChecklist(n.id, { scope: scope === 'subtree' ? 'subtree' : 'self' })
+      const checklist = store.buildReleaseChecklist(n.id, { scope })
       const text = format === 'md' ? renderReleaseChecklistMd(checklist) : JSON.stringify(checklist, null, 2)
       return { content: [{ type: 'text', text }] }
     }
@@ -874,7 +874,7 @@ export function createMcpServer({ store }) {
       const out = runReleaseChecks(
         store,
         n.id,
-        { caseIds: caseIds || null, scope: scope === 'subtree' ? 'subtree' : 'self', prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun },
+        { caseIds: caseIds || null, scope, prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun },
         'mcp'
       )
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }

@@ -341,7 +341,7 @@ export async function run(argv) {
       json(await getCombinedDiff(store, String(values.ids || '').split(',').map((s) => Number(s.trim()))))
       break
     case 'commit duplicates':
-      json(await getNodeDuplicates(store, ref, { scope: values.scope === 'subtree' ? 'subtree' : 'self' }))
+      json(await getNodeDuplicates(store, ref, { scope: values.scope }))
       break
     case 'commit dedupe':
       json(store.dedupeCommits({
@@ -428,7 +428,7 @@ export async function run(argv) {
     }
     case 'test acceptance': {
       const node = store.resolveRef(ref)
-      const report = store.buildAcceptanceReport(node.id, { scope: values.scope === 'subtree' ? 'subtree' : 'self' })
+      const report = store.buildAcceptanceReport(node.id, { scope: values.scope })
       if (values.format === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
       else json(report)
       break
@@ -437,7 +437,7 @@ export async function run(argv) {
     case 'readiness check': {
       const node = store.resolveRef(ref)
       const readiness = store.buildRequirementReadiness(node.id, {
-        scope: values.scope === 'subtree' ? 'subtree' : 'self'
+        scope: values.scope
       })
       if (values.format === 'md') process.stdout.write(renderReadinessMd(readiness) + '\n')
       else json(readiness)
@@ -447,7 +447,7 @@ export async function run(argv) {
     case 'delivery gate': {
       const node = store.resolveRef(ref)
       const gate = store.buildDeliveryGate(node.id, {
-        scope: values.scope === 'subtree' ? 'subtree' : 'self'
+        scope: values.scope
       })
       if (values.format === 'md') process.stdout.write(renderDeliveryGateMd(gate) + '\n')
       else json(gate)
@@ -508,7 +508,7 @@ export async function run(argv) {
     }
     case 'release checklist': {
       const node = store.resolveRef(ref)
-      const checklist = store.buildReleaseChecklist(node.id, { scope: values.scope === 'subtree' ? 'subtree' : 'self' })
+      const checklist = store.buildReleaseChecklist(node.id, { scope: values.scope })
       if (values.format === 'md') process.stdout.write(renderReleaseChecklistMd(checklist) + '\n')
       else json(checklist)
       break
@@ -517,7 +517,7 @@ export async function run(argv) {
       const node = store.resolveRef(ref)
       const out = runReleaseChecks(store, node.id, {
         caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
-        scope: values.scope === 'subtree' ? 'subtree' : 'self',
+        scope: values.scope,
         prompt: values.prompt || null,
         agent: values.agent,
         model: values.model,
@@ -627,13 +627,13 @@ export async function run(argv) {
       json(await getCommitDiff(store, Number(ref)))
       break
     case 'node diffs':
-      json(await getNodeDiffs(store, ref, { scope: values.scope || 'self' }))
+      json(await getNodeDiffs(store, ref, { scope: values.scope }))
       break
     case 'commit track':
       json(await getCommitTrack(store, Number(ref)))
       break
     case 'node tracks':
-      json(await getNodeTracks(store, ref, { scope: values.scope || 'self', branches: !!values.branches }))
+      json(await getNodeTracks(store, ref, { scope: values.scope, branches: !!values.branches }))
       break
     case 'repo list':
       json(store.listRepos())

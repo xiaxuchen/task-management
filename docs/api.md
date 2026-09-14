@@ -378,6 +378,11 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 # MCP: requirement_readiness { node, scope?, format? }
 ```
 
+> `scope` 只接受 `self` / `subtree`（缺省 = `self`）；其它取值（含 `Subtree` / 空串）返回
+> `400 VALIDATION_FAILED`，**不会静默降级成 `self`**。同一规则适用于 `acceptance-report` /
+> `release-checklist` / `delivery-gate` / `diffs` / `tracks` / `duplicates`。
+> 空态：子树内没有需求时返回 `ready=null`（`totals.units=0`），不是 400。
+
 ## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 ```bash

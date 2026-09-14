@@ -43,6 +43,9 @@ UI 只做标签映射，不复制判定逻辑。
 - `readiness` 在非需求节点 `self` 下会抛 `VALIDATION_FAILED`。汇总层必须先判断 `applicable`，不能直接调用。
 - `scope=subtree` 下，节点本身可能不是需求，但子树有需求；此时应纳入 readiness，而不是把来源标为不适用。
 - `not_applicable` 不是「可选功能不存在」的同义词：它只表示当前范围没有该类证据。
+- `scope` 由 `store.normalizeScope` 单点校验（`self|subtree`，缺省 `self`，其余 `VALIDATION_FAILED`）；
+  **不得**在入口先做 `scope === 'subtree' ? 'subtree' : 'self'`——那会把非法值吞成 `self`，
+  让「子树未就绪」被判成可交付。
 - 状态三态命名固定为 `pass / fail / not_applicable`；最终 decision 固定为 `ready / not_ready / unknown`，
   避免 UI 与 AI 各自猜「空态」的语义。
 

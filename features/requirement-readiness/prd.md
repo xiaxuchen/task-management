@@ -1,7 +1,7 @@
 # 功能：需求就绪门禁（需求管理闭环的前置判定）
 
 - 代码：`server/store.mjs`（就绪聚合 `buildRequirementReadiness`）、`server/ops.mjs`（`renderReadinessMd`）、`server/config.mjs`（门禁口径配置）
-- 入口：HTTP（`/api/nodes/:id/readiness`）· CLI（`readiness check <ref>`）· MCP（`readiness_check`）
+- 入口：HTTP（`/api/nodes/:id/readiness`）· CLI（`readiness check <ref>`）· MCP（`requirement_readiness`）
 - 主设计文档：`../../docs/design.md` §4.2（documents 预置）/ §4.14（test_cases）；`../../docs/design/04-api.md`（接口表）
 
 ## 1. 目标
@@ -29,6 +29,9 @@
   返回逐需求的 `units` 与顶层汇总结论。
 - R5 结果口径与既有报告一致：顶层 `ready` 在所有单元就绪时为 `true`，任一未就绪为 `false`，
   **无待判定需求时为 `null`**（不用 `false` 冒充未就绪）。
+- R5a `scope` 值域校验：只接受 `self` / `subtree`（缺省 = `self`），其余（含大小写错 / 空串）
+  一律 `VALIDATION_FAILED`，**不得静默降级为 `self`**——否则「本节点就绪、子树未就绪」会被翻成
+  `ready=true`，放行门禁失去可信度。同一份校验在验收报告 / 上线清单 / 交付门禁 / 分支聚合上共用。
 - R6 输出 `items`（逐条门禁 + 依据）/ `blockers`（未通过项）/ `totals`（单元与门禁计数），
   并支持 `format=md` 直接贴进 issue / 评审记录。
 - R7 只读聚合：**不写库、不动 revision**——门禁是「读出来的结论」，不是「流水线上的一步」。
@@ -45,6 +48,9 @@
 - `test/readiness.test.mjs`：三条门禁各自独立判定；文档「存在但正文空白」不算通过；
   停用用例不算通过；`kind=code_check` 不算「可回归」；`scope=subtree` 汇总与逐单元结论；
   `ready=null` 空态；非需求类型 `scope=self` 拒绝并提示 `subtree`；聚合只读（revision 不变）。
+- `test/scope-validation.test.mjs`：`normalizeScope` 值域（缺省 / 合法 / 非法）；
+  四个聚合构建器拒绝非法 `scope`；非法 `scope` 不再把未就绪子树翻成 `ready=true`（D2 核心回归）；
+  MCP 聚合工具对非法 `scope` 返回 `isError`（三入口契约一致）。
 - `test/http.test.mjs`：全链路（建需求 → 未就绪 → 补文档 + 用例 → 就绪）、`format=md`、`scope=subtree`。
 - `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/02-data-model.md` + `docs/design/04-api.md`
   + `docs/api.md` + `docs/design/08-testing.md` + `features/README.md`）。

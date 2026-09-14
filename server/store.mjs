@@ -5,6 +5,28 @@ const ACTORS = new Set(['user', 'ai', 'cli', 'import'])
 const now = () => new Date().toISOString()
 const REVIEW_STATUSES = ['pending', 'approved', 'issue']
 
+/**
+ * scope 枚举值域。所有聚合类接口（需求就绪 / 验收报告 / 上线清单 / 交付门禁 / 上线检查派单）
+ * 共用这一份值域与校验——**非法值必须报错，不能静默降级成 self**。
+ *
+ * 静默降级是放行门禁类接口最危险的失败模式：`scope=Subtree`（大小写错）会被吞成 `self`，
+ * 让「子树未就绪」被汇报成 `ready=true`，调用方带着未就绪需求进入回归/上线。
+ */
+const SCOPE_VALUES = ['self', 'subtree']
+
+/**
+ * scope 解析：缺省（undefined / null）→ fallback；其余必须在值域内，否则 VALIDATION_FAILED。
+ * 注意 `''`（如 HTTP `?scope=`）属于「显式给了非法值」，按要求拒绝，不当作缺省。
+ */
+function normalizeScope(scope, fallback = 'self') {
+  if (scope === undefined || scope === null) return fallback
+  const v = String(scope)
+  if (!SCOPE_VALUES.includes(v)) {
+    throw new AppError(CODES.VALIDATION_FAILED, `未知 scope ${scope}`, { scope, allowed: SCOPE_VALUES })
+  }
+  return v
+}
+
 /** 写事务抢锁失败时的兜底重试（busy_timeout 之外的保险） */
 const SQLITE_BUSY_RETRIES = 5
 const SQLITE_BUSY_RETRY_MS = 40
@@ -1155,7 +1177,8 @@ export function createStore(db, options = {}) {
    */
   function buildAcceptanceReport(nodeId, { scope = 'self' } = {}) {
     const root = rawNode(nodeId)
-    const ids = scope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const effectiveScope = normalizeScope(scope)
+    const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
     const ph = ids.map(() => '?').join(',')
     const cases = db.prepare(`SELECT * FROM test_cases WHERE node_id IN (${ph}) ORDER BY node_id, sort, id`).all(...ids).map(testCaseVO)
     const reports = db.prepare(`SELECT * FROM test_reports WHERE node_id IN (${ph}) ORDER BY id DESC`).all(...ids).map(testReportVO)
@@ -1189,7 +1212,7 @@ export function createStore(db, options = {}) {
     const settled = pass + fail + blocked + error + cancelled
     return {
       node: { id: root.id, name: root.name, type: root.type },
-      scope,
+      scope: effectiveScope,
       totals: {
         cases: items.length,
         settled,
@@ -1217,14 +1240,17 @@ export function createStore(db, options = {}) {
 
   function buildRequirementReadiness(nodeId, { scope = 'self' } = {}) {
     const root = rawNode(nodeId)
-    const ids = scope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const effectiveScope = normalizeScope(scope)
+    const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
     const unitRows = ids
       .map((id) => rawNode(id))
       .filter((r) => READINESS_UNIT_TYPES.has(r.type))
     if (unitRows.length === 0) {
       // 挂在项目 / 任务组上时 self 没有可判定单元；若子树里有，明确提示改用 subtree，
       // 否则调用方会误以为「这个节点压根没有需求」（与 runReleaseChecks 的 hintSubtree 同款）。
-      if (scope === 'self') {
+      // 只有「节点本身不是需求类型」才拒绝；子树里没有需求属于**空态**，
+      // 按文档承诺返回 ready=null（不用 400 冒充空态，也不让 null 分支成为死代码）。
+      if (effectiveScope === 'self' && !READINESS_UNIT_TYPES.has(root.type)) {
         const subtreeUnits = subtreeIds(nodeId)
           .map((id) => db.prepare('SELECT id,type FROM nodes WHERE id = ?').get(id))
           .filter((r) => r && READINESS_UNIT_TYPES.has(r.type))
@@ -1236,11 +1262,6 @@ export function createStore(db, options = {}) {
           { nodeId: root.id, nodeType: root.type, subtreeUnits: subtreeUnits.length }
         )
       }
-      throw new AppError(
-        CODES.VALIDATION_FAILED,
-        `${root.type} 子树内没有可判定的需求（requirement / subreq）`,
-        { nodeId: root.id, nodeType: root.type }
-      )
     }
 
     const requirementDocName = readiness.requirementDoc || DEFAULT_READINESS.requirementDoc
@@ -1314,7 +1335,7 @@ export function createStore(db, options = {}) {
     const readyUnits = units.filter((u) => u.ready).length
     return {
       node: { id: root.id, name: root.name, type: root.type },
-      scope,
+      scope: effectiveScope,
       ready: units.length === 0 ? null : units.every((u) => u.ready),
       totals: {
         units: units.length,
@@ -1527,7 +1548,8 @@ export function createStore(db, options = {}) {
    */
   function buildReleaseChecklist(nodeId, { scope = 'self' } = {}) {
     const root = rawNode(nodeId)
-    const ids = scope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const effectiveScope = normalizeScope(scope)
+    const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
     const ph = ids.map(() => '?').join(',')
     const items = db
       .prepare(`SELECT * FROM release_items WHERE node_id IN (${ph}) ORDER BY node_id, sort, id`)
@@ -1542,7 +1564,7 @@ export function createStore(db, options = {}) {
     for (const i of items) byKind[i.kind] = (byKind[i.kind] || 0) + 1
     return {
       node: { id: root.id, name: root.name, type: root.type },
-      scope,
+      scope: effectiveScope,
       totals: {
         items: items.length,
         required: requiredItems.length,
@@ -1588,7 +1610,7 @@ export function createStore(db, options = {}) {
 
   function buildDeliveryGate(nodeId, { scope = 'self' } = {}) {
     const root = rawNode(nodeId)
-    const effectiveScope = scope === 'subtree' ? 'subtree' : 'self'
+    const effectiveScope = normalizeScope(scope)
     const sources = []
 
     // 1. 需求就绪：self 只在需求两层上判定；子树模式只要子树中有需求两层就纳入。
@@ -2510,6 +2532,8 @@ export function createStore(db, options = {}) {
     finalizeReportsForRun,
     buildAcceptanceReport,
     // 需求就绪门禁（需求管理闭环的前置判定）
+    SCOPE_VALUES,
+    normalizeScope,
     buildRequirementReadiness,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,

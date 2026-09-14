@@ -136,13 +136,18 @@ test('readiness：scope=self 在非需求节点上拒绝，并提示改用 subtr
   assert.throws(() => store.buildRequirementReadiness(p.id), /scope=subtree/)
 })
 
-test('readiness：子树无需求时 rejected（不返回空结论）', async (t) => {
+test('readiness：子树无需求时返回空态 ready=null（不伪造成 true/false，也不抛错）', async (t) => {
   const { tmp, store, p } = await setup()
   t.after(() => tmp.cleanup())
   // 把唯一需求删掉，项目子树里就没有需求了
   const r = store.listChildren(p.id)[0]
   store.deleteNode(r.id)
-  assert.throws(() => store.buildRequirementReadiness(p.id, { scope: 'subtree' }), /没有可判定的需求/)
+  const out = store.buildRequirementReadiness(p.id, { scope: 'subtree' })
+  assert.equal(out.ready, null)
+  assert.equal(out.totals.units, 0)
+  assert.equal(out.totals.checks, 0)
+  assert.deepEqual(out.units, [])
+  assert.deepEqual(out.blockers, [])
 })
 
 test('readiness：纯读聚合，不产生 revision', async (t) => {

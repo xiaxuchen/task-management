@@ -133,6 +133,29 @@ test('需求就绪门禁：CLI readiness check 全链路（未就绪 → 补齐 
   }
 })
 
+// ---------- D2 回归：CLI 非法 --scope 必须报错，不得静默降级 self ----------
+
+test('D2回归：CLI 非法 --scope 报 VALIDATION_FAILED（不再静默降级 self）', async () => {
+  const { tmp, home } = await setup()
+  try {
+    // P/R 自身补齐就绪；旧实现下 --scope Subtree 会降级 self → ready=true（假绿）
+    await cli(home, ['doc', 'upsert', 'P/R', '--name', '需求内容', '--content', '正文'])
+    await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', '设计'])
+    await cli(home, ['test', 'case', 'upsert', 'P/R', '--name', '回归用例', '--prompt', '跑单测'])
+
+    for (const bad of ['Subtree', 'subtre', 'xyz']) {
+      const r = await cliFail(home, ['readiness', 'check', 'P/R', '--scope', bad])
+      assert.ok(r, `--scope ${bad} 应当失败`)
+      assert.match(r.stderr, /VALIDATION_FAILED/)
+    }
+    // 合法值仍工作
+    assert.equal((await cli(home, ['readiness', 'check', 'P/R', '--scope', 'self'])).ready, true)
+    assert.equal((await cli(home, ['readiness', 'check', 'P/R', '--scope', 'subtree'])).scope, 'subtree')
+  } finally {
+    tmp.cleanup()
+  }
+})
+
 test('交付门禁：CLI delivery gate 全链路（unknown → not_ready → ready）', async () => {
   const { tmp, home } = await setup()
   try {

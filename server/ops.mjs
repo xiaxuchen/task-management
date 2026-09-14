@@ -374,6 +374,7 @@ export async function getCombinedDiff(store, cids) {
  */
 export async function getNodeDiffs(store, nodeRef, { scope = 'self' } = {}) {
   const node = store.resolveRef(nodeRef)
+  scope = store.normalizeScope(scope)
   const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
   const repos = new Map(store.listRepos().map((r) => [r.name, r]))
   const items = []
@@ -431,6 +432,7 @@ export async function getCommitTrack(store, cid) {
  */
 export async function getNodeTracks(store, nodeRef, { scope = 'self', branches = false, light = false } = {}) {
   const node = store.resolveRef(nodeRef)
+  scope = store.normalizeScope(scope)
   const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
   const repos = new Map(store.listRepos().map((r) => [r.name, r]))
   const items = []
@@ -555,6 +557,7 @@ async function ensurePatchIds(store, commits, repos) {
  */
 export async function getNodeDuplicates(store, nodeRef, { scope = 'self' } = {}) {
   const node = store.resolveRef(nodeRef)
+  scope = store.normalizeScope(scope)
   const commits = store.listCommits(node.id, { subtree: scope === 'subtree' })
   const repos = new Map(store.listRepos().map((r) => [r.name, r]))
   if (commits.length === 0) return { scope, groupCount: 0, itemCount: 0, items: [] }
@@ -1023,7 +1026,7 @@ export function runReleaseChecks(
   const node = store.resolveRef(String(nodeRef))
   // scope=self 只看本节点，scope=subtree 连子树的上线项与检查用例一起纳入——
   // 与 release_checklist 的 scope 口径对齐，避免「子树有上线项却没进检查」的误解。
-  const effectiveScope = scope === 'subtree' ? 'subtree' : 'self'
+  const effectiveScope = store.normalizeScope(scope)
   const checkNodeIds = effectiveScope === 'subtree' ? store.subtreeIds(node.id) : [node.id]
   const checks = checkNodeIds
     .flatMap((nid) => store.listTestCases(nid, {}))

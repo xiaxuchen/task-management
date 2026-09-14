@@ -122,3 +122,10 @@
 | PATCH | `/api/agent-runs/:rid` | 回写终态 `{status, output?, exitCode?, failureReason?, cliSessionId?, workDir?}` |
 
 状态码：参数/父子类型/必填校验失败 → `400`；资源不存在 → `404`；唯一约束冲突 / 路径歧义 → `409`；GitLab 侧错误 → `502`（`details` 带原始信息）。破坏性操作未显式确认 → `400`，`code = CONFIRM_REQUIRED`。合并预检发现冲突不改工作区，返回 `200` + 冲突清单（`state = precheck_conflict`）；本机 git 不可用 / 失败 → `500`（`GIT_UNAVAILABLE` / `GIT_FAILED`）。
+
+**`scope` 参数值域（所有聚合类接口统一）**：只接受 `self` / `subtree`，缺省（不传）等价于 `self`；
+其余取值（含大小写错如 `Subtree`、拼错、多值、空串）一律 `400 VALIDATION_FAILED`，
+`details.allowed = ["self","subtree"]`。**不做静默降级**——早期实现把非 `subtree` 的值吞成 `self`，
+会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
+适用接口：`/readiness`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
+`/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
