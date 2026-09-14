@@ -57,3 +57,11 @@
   并对 SQLite busy 做有限重试：多进程（如 CLI / MCP 同时回写同一条任务）并发追加也不会撞号，
   由 `test/agent.test.mjs` 的「多进程并发追加消息」用例覆盖（4 进程 × 25 条 → seq 连续无重复）。
 - qodercli 的 `--resume` 语义依赖 CLI 自身实现；拿不到会话号时（如 `echo` 之类）续跑退化为普通派单。
+- **CLI 派单的进程等待边界**：`bin/taskboard.js` 在 `run()` resolve 后直接 `process.exit()`，
+  而子进程收尾（`child.on('close')` → `finishAgentRun`）跑在本进程事件循环里——
+  进程一退出，任务就会永远停在 `running` 且 output 为空（独立测试发现的缺陷）。
+  因此 CLI 的 `agent run` / `agent run retry` 在非前台模式下用 `waitForAgentRun` 有界等待终态
+  （`--no-wait` 退回只派单、`--wait-timeout 秒` 调上限，缺省 30 分钟；超时**不算失败**，
+  返回当前状态并置 `waitTimedOut:true`）。
+  前台 `qoder-ide` 任务**不等待**——它设计上就停在 `running` 等 IDE 回写，等待只会白等到超时。
+  MCP / HTTP 由长驻服务持有子进程，不受此边界影响。

@@ -66,10 +66,10 @@
 | POST | `/api/nodes/:id/test-cases/reorder` | `{orderedIds[]}` 重排用例 |
 | PATCH | `/api/test-cases/:cid` | 更新用例 `{name?, kind?, prompt?, expectation?, enabled?}` |
 | DELETE | `/api/test-cases/:cid` | 删除用例（历史报告保留，`case_id` 置空） |
-| POST | `/api/nodes/:id/test-runs` | 派单执行：`{caseIds?, kind?, prompt?, agent?, model?, cwd?, dryRun?}`；为每条用例开 `running` 报告，返回 `{node, kind, run, reports}`（dryRun 只回用例与提示词） |
+| POST | `/api/nodes/:id/test-runs` | 派单执行：`{caseIds?, kind?, prompt?, agent?, model?, cwd?, dryRun?}`；为每条用例开 `running` 报告，返回 `{node, kind, run, reports}`（dryRun 只回用例与提示词）；任务落终态时自动收尾关联报告（见下） |
 | GET | `/api/nodes/:id/test-reports` | 报告列表（倒序）；`?caseId=&kind=&limit=` |
 | GET | `/api/test-reports/:rid` | 单条报告详情 |
-| PATCH | `/api/test-reports/:rid` | 回写报告 `{status, summary?, detail?, runId?, overwrite?}`；`running → 终态` 单向，终态同状态幂等；终态互转默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），`overwrite:true` 才覆盖；非法 `status` → 400 `VALIDATION_FAILED` |
+| PATCH | `/api/test-reports/:rid` | 回写报告 `{status, summary?, detail?, runId?, overwrite?}`；`running → 终态` 单向，终态同状态幂等；终态互转默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），`overwrite:true` 才覆盖；**自动收尾（`autoFinalized=true`）的终态可无需 `overwrite` 直接改正**；非法 `status` → 400 `VALIDATION_FAILED` |
 | GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR）。分桶总数守恒（`pass+fail+blocked+error+cancelled+running+notRun=cases`）；`running`/`notRun` 不计入通过率分母 |
 
 ### 上线治理（上线配置 / 上线 SQL / 上线检查清单）
@@ -83,7 +83,7 @@
 | PATCH | `/api/release-items/:rid` | 更新上线项 `{name?, kind?, content?, rollback?, status?, required?}` |
 | DELETE | `/api/release-items/:rid` | 删除上线项 |
 | GET | `/api/nodes/:id/release-checklist` | 上线检查清单：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴上线单）|
-| POST | `/api/nodes/:id/release-checks` | 派单上线前置检查：`{caseIds?, prompt?, agent?, model?, cwd?, dryRun?}`；挑 `code_check`/`biz_check`/`release_check` 用例，为每条开 `running` 报告（dryRun 只回清单与提示词） |
+| POST | `/api/nodes/:id/release-checks` | 派单上线前置检查：`{caseIds?, scope?, prompt?, agent?, model?, cwd?, dryRun?}`；按 scope（`self`/`subtree`）挑 `code_check`/`biz_check`/`release_check` 用例，为每条开 `running` 报告（dryRun 只回清单与提示词） |
 
 ### agent 运行时 / 会话 / 任务
 

@@ -349,6 +349,7 @@ index：`idx_agent_runs_node(node_id)`、`idx_agent_runs_session(session_id, id)
 | kind | TEXT NOT NULL | 与用例 kind 对齐（同 CHECK 值域） |
 | status | TEXT NOT NULL | `running` / `pass` / `fail` / `blocked` / `error` / `cancelled` |
 | summary / detail | TEXT | 结论摘要 / 详细依据 |
+| auto_finalized | INTEGER NOT NULL DEFAULT 0 | 1 = 该终态由 agent 任务的终态**自动收尾**得出（机器兜底，人工无需 `overwrite` 即可改正；人工回写后清零） |
 | started_at / finished_at / updated_at | TEXT | |
 | created_by | TEXT | 操作者 |
 
@@ -359,6 +360,11 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 终态重复提交**同状态**幂等（只更新摘要、不改 `finished_at`）；终态互转 / 回退 `running` 默认拒绝
 （`REPORT_STATUS_IMMUTABLE`，409），需显式 `overwrite:true` 才覆盖。非法 `status` 由应用层拦成
 `VALIDATION_FAILED`，不落到 DB CHECK（避免泄漏 `ERR_SQLITE_ERROR`）。
+`auto_finalized=1` 的终态是例外：它只是派单后的机器兜底，人工可以直接改正而无需 `overwrite`。
+
+**派单自动收尾**：任务落终态时 `finalizeReportsForRun` 扫该 run 下仍 `running` 的报告并收尾，
+优先解析 agent 输出里的 `用例名: PASS|FAIL|BLOCKED - 依据`；解析不到时按 run 终态回落
+（`success → blocked`，**不**伪造成 `pass`）。收尾不覆盖人工结论，并与任务收尾合并为一次 revision 递增。
 
 **验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果。
 分桶总数守恒：`pass + fail + blocked + error + cancelled + running + notRun = cases`；

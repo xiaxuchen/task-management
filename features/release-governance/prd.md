@@ -35,5 +35,7 @@
   排序、随节点级联删除、revision 语义；清单聚合（就绪结论、阻塞项、无必做项 `ready=null`、`scope=subtree`、`blocked` 计数）；
   编排层 `dryRun`（拼清单 + 只挑 code/biz/release_check 用例、caseIds 过滤）与 markdown 渲染。
 - `test/http.test.mjs`：全链路（upsert → 清单 → 回写 done → 就绪）、重名 409 `RELEASE_ITEM_NAME_EXISTS`、dryRun、清单 md。
+- `test/run-finalize.test.mjs`：`release check` 非 dry-run 的**进程级**收尾（真实 CLI 子进程 → run 终态 + 检查报告回写）；
+  清单 `done` / `skipped` 分列口径；upsert 部分字段不清空其余；名称 trim 唯一性与大小写口径；`scope=subtree` 联动。
 - `test/db.test.mjs`：新库建表 + 老库迁移补表补索引。
 - `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/02-data-model.md` + `docs/design/04-api.md` + `docs/api.md` + `features/README.md`）。

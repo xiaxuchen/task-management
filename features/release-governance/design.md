@@ -29,8 +29,23 @@
 可选未完成不影响 `ready`。无必做项时 `ready=null`（与验收报告 `passRate=null` 同口径，避免「没有项 = 未就绪」误判）。
 `blocked` 单列在 `totals.blocked` 且必然出现在 `blockers` 里。
 
+**R4.1 `done` 与 `skipped` 分开计数**：两者对就绪的效力相同（都算不必再处理），但含义不同。
+`totals` 同时给 `done` 与 `skipped`，Markdown 摘要写「完成：N · 跳过：M」——
+只报 `done` 会让「必做项全是 skipped」显示成「已完成：0」，看起来像没做完（独立测试发现的展示误读）。
+
+**R4.2 `upsert` 的覆盖 vs 保留**：**新建**时未提供的字段取默认值（config / '' / null / pending / 必做）；
+**已存在**时只更新显式传入的字段，其余保持原样。否则「只想改 content」会把 `rollback` / `status` 静默清掉。
+需要显式清空就传空值（`rollback: null` / `content: ''`）。
+
 **R5 执行与清单解耦**：`runReleaseChecks` 只负责「派单 + 开报告」，不阻塞等待 agent 结果；
 agent 任务结束后由前台执行者（或收尾钩子）用 `test_report_finish` 逐条回写 pass/fail，与回归测试闭环完全一致。
+
+**R5.1 自动收尾**：任务落终态时由 `finalizeReportsForRun` 自动收尾关联 `running` 报告（详见
+`../regression-loop/design.md` R5.1）；CLI 非 dry-run 会等到终态再退出（`--no-wait` 可退回只派单）。
+
+**R5.2 scope 口径**：`release_checklist` 与 `release check` 共用 `scope=self|subtree`——
+`subtree` 会把子树的上线项与检查用例一起纳入。`self` 下若本节点为空但子树有上线项，
+报错信息会明确提示改用 `scope=subtree`，避免「子树有上线项却没进检查」的误解。
 
 ## 3. 踩坑 / 约束
 

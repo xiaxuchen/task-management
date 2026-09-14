@@ -99,6 +99,9 @@ test('旧库迁移：旧 schema 直接打开，补出新列与索引且保留历
     db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_release_items_node'").get().name,
     'idx_release_items_node'
   )
+  // v5 迁移：老库的 test_reports 缺 auto_finalized 列（派单自动收尾标记）
+  const reportCols = db.prepare('PRAGMA table_info(test_reports)').all().map((c) => c.name)
+  assert.ok(reportCols.includes('auto_finalized'), 'test_reports 缺迁移列 auto_finalized')
 
   // 历史数据保留，并且新旧列可一起读取
   const row = db.prepare('SELECT * FROM agent_runs WHERE id = 7').get()
@@ -122,5 +125,52 @@ test('旧库迁移：旧 schema 直接打开，补出新列与索引且保留历
   const db3 = tmp.openDb(file)
   assert.equal(db3.prepare('SELECT max_attempts FROM agent_runs WHERE id = 7').get().max_attempts, 1)
   db3.close()
+  tmp.cleanup()
+})
+
+test('v5 迁移：已存在 test_reports（无 auto_finalized）的老库补列且保留历史报告', async () => {
+  const tmp = await tempHome()
+  const file = path.join(tmp.dir, 'v4.db')
+  const now = new Date().toISOString()
+
+  // 造一个 v4 形态的库：test_reports 存在但没有 auto_finalized 列
+  const legacy = new DatabaseSync(file)
+  legacy.exec(`
+    CREATE TABLE nodes (
+      id INTEGER PRIMARY KEY, type TEXT NOT NULL, parent_id INTEGER, name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'todo', sort INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user', updated_by TEXT NOT NULL DEFAULT 'user'
+    );
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE test_reports (
+      id INTEGER PRIMARY KEY,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      case_id INTEGER,
+      run_id INTEGER,
+      kind TEXT NOT NULL DEFAULT 'regression',
+      status TEXT NOT NULL DEFAULT 'running',
+      summary TEXT, detail TEXT,
+      started_at TEXT NOT NULL, finished_at TEXT, updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user'
+    );
+  `)
+  legacy
+    .prepare('INSERT INTO nodes (id,type,parent_id,name,status,sort,created_at,updated_at) VALUES (1,?,NULL,?,?,0,?,?)')
+    .run('project', '历史项目', 'todo', now, now)
+  legacy
+    .prepare('INSERT INTO test_reports (id,node_id,kind,status,summary,started_at,updated_at) VALUES (5,1,?,?,?,?,?)')
+    .run('regression', 'pass', '历史报告', now, now)
+  legacy.close()
+
+  const db = tmp.openDb(file)
+  const cols = db.prepare('PRAGMA table_info(test_reports)').all().map((c) => c.name)
+  assert.ok(cols.includes('auto_finalized'))
+  const row = db.prepare('SELECT * FROM test_reports WHERE id = 5').get()
+  assert.equal(row.summary, '历史报告')
+  assert.equal(row.status, 'pass')
+  // 历史行回填为「非自动收尾」，避免误判成机器兜底结论
+  assert.equal(row.auto_finalized, 0)
+  db.close()
   tmp.cleanup()
 })

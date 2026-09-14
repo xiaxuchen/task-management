@@ -267,7 +267,9 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/agent-sessions'
 curl -s -X POST http://127.0.0.1:3210/api/nodes/1/agent-sessions \
   -H 'content-type: application/json' -d '{"agent":"qodercli","title":"第一次评审"}'
 
-# 派单（异步；缺省自动挂该节点活动会话并注册本机运行时）
+# 派单（服务端异步执行，立即返回 run；缺省自动挂该节点活动会话并注册本机运行时）
+# 注：CLI 的 `agent run` 默认在前台进程内有界等到终态（--no-wait 退回只派单），
+#     因为 CLI 进程退出后子进程收尾监听器不再触发，任务会永远停在 running。
 curl -s -X POST http://127.0.0.1:3210/api/nodes/1/agent-runs \
   -H 'content-type: application/json' \
   -d '{"prompt":"跑一遍单测","agent":"qodercli","resume":true}'
@@ -347,7 +349,16 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/release-checklist?format=md'
 # 上线前置检查：挑 code_check / biz_check / release_check 用例派单；dryRun 只回提示词
 curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-checks \
   -H 'content-type: application/json' -d '{"dryRun":true}'
+
+# 连子树的上线项与检查用例一起纳入
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/release-checks \
+  -H 'content-type: application/json' -d '{"scope":"subtree","dryRun":true}'
 ```
+
+> **派单自动收尾**：`test-runs` / `release-checks` 开出的 `running` 报告，会在 agent 任务落终态时由
+> `finalizeReportsForRun` 自动收尾。结论优先从 agent 输出解析 `用例名: PASS|FAIL|BLOCKED - 依据`；
+> 解析不到该用例结论时按 run 终态回落：成功 → `blocked`（不伪造成 `pass`）、超时/取消 → `cancelled`、
+> 失败 → `error`。自动结论打 `autoFinalized:true`，人工可直接改正（无需 `overwrite`）。
 
 ## 错误码速查
 

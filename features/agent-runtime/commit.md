@@ -1,2 +1,3 @@
 - feat(agent-runtime): agent 运行时三层模型（运行时/会话/任务 + 消息流）对齐 multica——心跳、续跑（--resume）、重试链（attempt/parentRunId）、取消、失败分类；三入口 1:1；IDEA 插件 AgentConsoleDialog（运行时状态条 + 会话选择 + 任务状态胶囊 + 消息流增量拉取）
 - fix(agent-runtime): max_attempts 改为重试硬上限（缺省 3，含首次执行）——retryAgentRun 在 attempt>=max_attempts 时抛 VALIDATION_FAILED（details 带 attempt/maxAttempts），上限沿重试链继承；三入口补 maxAttempts 入参；老库一次性回填旧默认 1 → 3（meta.agent_max_attempts_v2 标记）；补 UT
+- fix(agent-runtime): 修复 CLI 非前台派单不自动收尾——`agent run` / `agent run retry` 此前立即返回 running 就进程退出，子进程 close 收尾监听器永不触发，任务永久 running 且 output 为空；新增 agent.waitForAgentRun 有界等待 + CLI --no-wait / --wait-timeout（超时不算失败，如实标注 waitTimedOut）；前台 qoder-ide 任务保持不等待；补进程级 UT 覆盖终态/只派单/超时三条边界

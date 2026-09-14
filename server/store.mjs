@@ -23,6 +23,44 @@ const DEFAULT_DOC_PRESETS = {
   defect: ['描述', '复现步骤']
 }
 
+/**
+ * 解析 agent 输出里的逐条测试结论。
+ * 契约来自 ops.composeTestPrompt / composeReleaseCheckPrompt：
+ *   `<用例名>: PASS|FAIL|BLOCKED - <依据>`
+ * 刻意宽容：允许行首的 markdown 列表符号 / 序号 / 引号，结论大小写不敏感，
+ * 也接受全角冒号与中文结论词（通过 / 失败 / 阻塞）。同一用例重复出现时取最后一条。
+ */
+const VERDICT_PATTERN = /^[\s>*\-•\d.、)"'`]*([^:：\n]+?)\s*[:：]\s*(PASS|FAIL|BLOCKED|通过|失败|阻塞)(?![A-Za-z])\s*(?:[-—–:：]\s*(.*))?$/i
+const VERDICT_BY_WORD = {
+  pass: 'pass',
+  通过: 'pass',
+  fail: 'fail',
+  失败: 'fail',
+  blocked: 'blocked',
+  阻塞: 'blocked'
+}
+
+function normalizeVerdictKey(name) {
+  return String(name == null ? '' : name)
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+function parseRunVerdicts(text) {
+  const out = new Map()
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const m = line.match(VERDICT_PATTERN)
+    if (!m) continue
+    const key = normalizeVerdictKey(m[1])
+    if (!key) continue
+    const status = VERDICT_BY_WORD[String(m[2]).toLowerCase()]
+    if (!status) continue
+    out.set(key, { status, note: (m[3] || '').trim() || null, raw: line.trim() })
+  }
+  return out
+}
+
 export function createStore(db, options = {}) {
   const docPresets = options.docPresets || DEFAULT_DOC_PRESETS
   const stmt = (sql) => db.prepare(sql)
@@ -961,6 +999,7 @@ export function createStore(db, options = {}) {
       startedAt: r.started_at,
       finishedAt: r.finished_at,
       updatedAt: r.updated_at,
+      autoFinalized: !!r.auto_finalized,
       createdBy: r.created_by
     }
   }
@@ -1016,7 +1055,10 @@ export function createStore(db, options = {}) {
     }
     const nextStatus = status || cur.status
     const curTerminal = TERMINAL_REPORT_STATUSES.has(cur.status)
-    if (curTerminal && nextStatus !== cur.status && !overwrite) {
+    // 人工可以自由改正「自动收尾」得出的结论（它只是机器兜底，不是人的判定）；
+    // 只有人工/前台已确认过的终态才需要显式 overwrite 才能互转。
+    const allowRefineAuto = !!cur.auto_finalized && !overwrite
+    if (curTerminal && nextStatus !== cur.status && !overwrite && !allowRefineAuto) {
       throw new AppError(
         CODES.REPORT_STATUS_IMMUTABLE,
         `报告已处于终态 ${cur.status}，不能改为 ${nextStatus}（如需强制覆盖请显式 overwrite:true）`,
@@ -1024,13 +1066,16 @@ export function createStore(db, options = {}) {
       )
     }
     const ts = now()
+    // 人工/前台一旦回写，这份结论就归人所有：清掉「自动收尾」标记，
+    // 之后再改状态就回到常规的终态不可变规则（需显式 overwrite）。
     db.prepare(
-      'UPDATE test_reports SET status = ?, summary = ?, detail = ?, run_id = ?, finished_at = ?, updated_at = ?, created_by = ? WHERE id = ?'
+      'UPDATE test_reports SET status = ?, summary = ?, detail = ?, run_id = ?, auto_finalized = ?, finished_at = ?, updated_at = ?, created_by = ? WHERE id = ?'
     ).run(
       nextStatus,
       summary !== undefined ? summary : cur.summary,
       detail !== undefined ? detail : cur.detail,
       runId !== undefined ? runId : cur.run_id,
+      by === 'system' ? cur.auto_finalized : 0,
       // 终态重复提交同状态时保留原 finished_at（幂等）；首次进入终态才写入
       nextStatus === 'running' ? null : curTerminal ? cur.finished_at || ts : ts,
       ts,
@@ -1039,6 +1084,53 @@ export function createStore(db, options = {}) {
     )
     bumpRevision()
     return testReportVO(db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(id)))
+  }
+
+  /**
+   * 由 agent 任务的终态自动收尾它关联的 running 报告。
+   *
+   * 背景：runTestCases / runReleaseChecks 派单后只负责开 running 报告；
+   * 若派单方（尤其是 CLI 临时进程）在子进程结束前退出，报告会永远停在 running。
+   * 这里在 run 落终态后立刻扫该 run 下仍 running 的报告并收尾，保证「派单即自动收尾」。
+   *
+   * 结论口径：优先从 agent 输出里解析 `用例名: PASS|FAIL|BLOCKED - 依据`（composeTestPrompt 的契约）；
+   * 解析不到该用例的结论时，回落到 run 的整体终态（success→blocked，timeout/cancelled→cancelled，
+   * failed→error）——宁可 blocked 也不报 pass，避免把「跑成功但没给结论」误判成通过。
+   * 只收尾仍处于 running 的报告，不覆盖人工已回写的终态。
+   */
+  function finalizeReportsForRun(runId, { output = null, runStatus = null, by = 'system' } = {}) {
+    const rid = Number(runId)
+    if (!rid) return []
+    const reports = db.prepare("SELECT * FROM test_reports WHERE run_id = ? AND status = 'running' ORDER BY id").all(rid)
+    if (reports.length === 0) return []
+    const run = db.prepare('SELECT status, output FROM agent_runs WHERE id = ?').get(rid)
+    const status = runStatus || (run && run.status) || 'error'
+    const text = output != null ? String(output) : (run && run.output) || ''
+    const verdicts = parseRunVerdicts(text)
+    // 结论回落：解析不到该用例的显式结论时，宁可 blocked 也不报 pass——否则会把「agent 成功但没给结论」伪造成绿灯。
+    const fallback = status === 'cancelled' || status === 'timeout' ? 'cancelled' : status === 'success' ? 'blocked' : 'error'
+    const fallbackNote = {
+      blocked: 'agent 任务成功，但未在输出中解析到该用例的显式结论（未取得结论，不计入通过）',
+      cancelled: `agent 任务${status === 'timeout' ? '超时' : '被取消'}，该用例未取得结论`,
+      error: 'agent 任务失败，该用例未取得结论'
+    }[fallback]
+    const out = []
+    withoutBump(() => {
+      for (const r of reports) {
+        const caseRow = r.case_id ? db.prepare('SELECT name FROM test_cases WHERE id = ?').get(r.case_id) : null
+        const hit = caseRow ? verdicts.get(normalizeVerdictKey(caseRow.name)) : null
+        const nextStatus = hit ? hit.status : fallback
+        const summary = hit ? (hit.note || `${caseRow.name}: ${hit.status.toUpperCase()}`) : fallbackNote
+        const detail = hit ? `由 agent run #${rid} 输出自动解析（${hit.raw}）` : `由 agent run #${rid} 终态（${status}）自动回写`
+        const ts = now()
+        db.prepare(
+          'UPDATE test_reports SET status = ?, summary = ?, detail = ?, auto_finalized = 1, finished_at = ?, updated_at = ?, created_by = ? WHERE id = ?'
+        ).run(nextStatus, summary, detail, ts, ts, actor(by), r.id)
+        out.push(testReportVO(db.prepare('SELECT * FROM test_reports WHERE id = ?').get(r.id)))
+      }
+    })
+    if (out.length > 0) bumpRevision()
+    return out
   }
 
   /**
@@ -1189,19 +1281,47 @@ export function createStore(db, options = {}) {
   }
 
   /** 按名称 get-or-create（幂等）：已存在则更新字段并返回 {created:false}，与文档 / 用例 upsert 语义一致 */
-  function upsertReleaseItem(
-    nodeId,
-    { name, kind = 'config', content = '', rollback = null, status = 'pending', required = 1 },
-    by = 'user'
-  ) {
+  /**
+   * 按名 get-or-create（幂等）。
+   *
+   * 覆盖 vs 保留：**新建**时未提供的字段用默认值（config / '' / null / pending / 必做）；
+   * **已存在**时只更新显式传入的字段，其余保持原样——
+   * 否则「只想改一句 content」的调用会把 rollback / status 静默清掉（独立测试第 6 节第 3 点）。
+   * 需要显式清空某字段就传空值（如 `rollback: null` / `content: ''`）。
+   */
+  function upsertReleaseItem(nodeId, { name, kind, content, rollback, status, required } = {}, by = 'user') {
     rawNode(nodeId)
     const trimmed = name == null ? '' : String(name).trim()
     if (!trimmed) throw new AppError(CODES.VALIDATION_FAILED, '上线项名称必填', { field: 'name' })
     const cur = db.prepare('SELECT * FROM release_items WHERE node_id = ? AND name = ?').get(nodeId, trimmed)
     if (!cur) {
-      return { ...createReleaseItem(nodeId, { name: trimmed, kind, content, rollback, status, required }, by), created: true }
+      return {
+        ...createReleaseItem(
+          nodeId,
+          {
+            name: trimmed,
+            kind: kind ?? 'config',
+            content: content ?? '',
+            rollback: rollback ?? null,
+            status: status ?? 'pending',
+            required: required ?? 1
+          },
+          by
+        ),
+        created: true
+      }
     }
-    const updated = updateReleaseItem(cur.id, { kind, content, rollback, status, required }, by)
+    const updated = updateReleaseItem(
+      cur.id,
+      {
+        kind: kind ?? null,
+        content: content !== undefined ? content : undefined,
+        rollback: rollback !== undefined ? rollback : undefined,
+        status: status ?? null,
+        required: required !== undefined ? required : null
+      },
+      by
+    )
     return { ...updated, created: false }
   }
 
@@ -1287,6 +1407,9 @@ export function createStore(db, options = {}) {
         required: requiredItems.length,
         optional: optionalItems.length,
         done: items.filter((i) => i.status === 'done').length,
+        // done 与 skipped 分开计数：两者都算「必做项不必再处理」，但含义不同——
+        // 只报 done 会让「必做项都是 skipped」显示成「已完成：0」，看起来像没做完。
+        skipped: items.filter((i) => i.status === 'skipped').length,
         blocked: blocked.length,
         pending: pending.length
       },
@@ -1756,6 +1879,10 @@ export function createStore(db, options = {}) {
         )
       }
     }
+    // 任务落终态后自动收尾它关联的 running 报告，保证「派单即自动收尾」
+    // （CLI 临时进程退出后没人回写时，这是唯一的兜底）；
+    // 用 withoutBump 包住，让「收尾任务 + 收尾报告」仍只算一次 revision 递增。
+    withoutBump(() => finalizeReportsForRun(Number(id), { runStatus: status }))
     bumpRevision()
     return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id)))
   }
@@ -1766,6 +1893,7 @@ export function createStore(db, options = {}) {
     if (!cur) throw new AppError(CODES.NOT_FOUND, `agent 任务 ${id} 不存在`, { id })
     if (TERMINAL_RUN_STATUSES.has(cur.status)) return agentRunVO(cur)
     db.prepare("UPDATE agent_runs SET status='cancelled', failure_reason=?, finished_at=? WHERE id=?").run(reason, now(), Number(id))
+    withoutBump(() => finalizeReportsForRun(Number(id), { runStatus: 'cancelled' }))
     bumpRevision()
     return agentRunVO(db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(Number(id)))
   }
@@ -1846,12 +1974,19 @@ export function createStore(db, options = {}) {
   /** 服务启动时调用：把残留的 running 标记为 failed（子进程已随服务退出） */
   function failStaleAgentRuns() {
     const ts = now()
+    // 先记下将被中断的任务：它们关联的 running 报告也要一并收尾，否则重启后会永远停在 running
+    const stalled = db.prepare("SELECT id FROM agent_runs WHERE status='running'").all().map((r) => r.id)
     const info = db
       .prepare("UPDATE agent_runs SET status='failed', failure_reason='runtime_recovery', output=COALESCE(output,'') || ?, finished_at=? WHERE status='running'")
       .run('\n[task-board] 服务重启，本次运行已中断\n', ts)
     // 重启后没有任何 daemon 在线：把在线行收敛为离线，等下次心跳恢复
     db.prepare("UPDATE agent_runtimes SET status='offline', updated_at=? WHERE status='online'").run(ts)
-    if (info.changes > 0) bumpRevision()
+    if (info.changes > 0) {
+      withoutBump(() => {
+        for (const id of stalled) finalizeReportsForRun(id, { runStatus: 'failed' })
+      })
+      bumpRevision()
+    }
     return { cleared: info.changes }
   }
 
@@ -2102,6 +2237,7 @@ export function createStore(db, options = {}) {
     listTestReports,
     getTestReport,
     finishTestReport,
+    finalizeReportsForRun,
     buildAcceptanceReport,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,

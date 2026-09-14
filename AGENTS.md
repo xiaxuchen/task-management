@@ -147,8 +147,12 @@ release item upsert "项目A/需求1" --name "执行上线 SQL" --kind sql --con
 release item list "项目A/需求1" [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
 release item update <rid> --status done              # 必做项 done/skipped 才算完成
 release checklist "项目A/需求1" [--scope subtree] [--format md]   # 上线检查清单（就绪结论 + 阻塞项）
-release check "项目A/需求1" [--dry-run]              # 派单上线前置检查（code/biz/release_check 用例）
+release check "项目A/需求1" [--scope subtree] [--dry-run] [--no-wait]   # 派单上线前置检查（code/biz/release_check 用例）
 ```
+
+> **CLI 派单默认等收尾**：`test run` / `release check` 非 dry-run 时会等到 agent 任务落终态、
+> 并把关联报告自动收尾后才返回（上限 `--wait-timeout 秒`，缺省 30 分钟）；`--no-wait` 退回只派单语义。
+> 与 HTTP / MCP 一样能在同一次调用里拿到终态，避免留下一堆永远 `running` 的报告与任务。
 
 **推荐工作流**
 

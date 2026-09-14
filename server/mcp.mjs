@@ -836,18 +836,19 @@ export function createMcpServer({ store }) {
     {
       node: z.union([z.number(), z.string()]),
       caseIds: z.array(z.number()).optional(),
+      scope: z.enum(['self', 'subtree']).optional(),
       prompt: z.string().optional(),
       agent: z.string().optional(),
       model: z.string().optional(),
       cwd: z.string().optional(),
       dryRun: z.boolean().optional()
     },
-    async ({ node, caseIds, prompt, agent, model, cwd, dryRun }) => {
+    async ({ node, caseIds, scope, prompt, agent, model, cwd, dryRun }) => {
       const n = store.resolveRef(String(node))
       const out = runReleaseChecks(
         store,
         n.id,
-        { caseIds: caseIds || null, prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun },
+        { caseIds: caseIds || null, scope: scope === 'subtree' ? 'subtree' : 'self', prompt: prompt || null, agent, model, cwd, dryRun: !!dryRun },
         'mcp'
       )
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }

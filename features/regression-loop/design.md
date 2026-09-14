@@ -37,9 +37,17 @@ agent 任务结束后由前台执行者（或后续收尾钩子）用 `test_repo
 | 任一终态 | **同**一状态（重复提交） | 幂等：只更新 `summary` / `detail` / `run_id`，**不改** `finished_at` |
 | 任一终态 | 其它状态（含回退 `running`） | 默认**拒绝**：400/409 `REPORT_STATUS_IMMUTABLE`（`details` 带 current / next） |
 | 任一终态 | 其它状态 + 显式 `overwrite:true` | 允许显式覆盖（纠正误判用） |
+| 自动收尾的终态（`auto_finalized=1`） | 其它状态 | **允许**：自动结论只是机器兜底，人工确认无需 `overwrite`；改完清除 `auto_finalized`，之后归人所有 |
 | `running` | `running` | 允许（刷新摘要，仍在执行） |
 
 非法 `status` 一律在应用层拦截为 `VALIDATION_FAILED`，**不**落到 DB CHECK 约束（避免泄漏 `ERR_SQLITE_ERROR`）。
+
+**R5.1 派单自动收尾**：`runTestCases` / `runReleaseChecks` 派单后只开 `running` 报告；
+任务落终态时 `finishAgentRun` / `cancelAgentRun` 会调用 `finalizeReportsForRun` 扫该 run 下仍 `running` 的报告并收尾，
+结论优先从 agent 输出解析 `用例名: PASS|FAIL|BLOCKED - 依据`（`composeTestPrompt` 的契约，兼容 `通过/失败/阻塞` 与全角冒号）。
+解析不到该用例结论时按 run 终态回落：`success → blocked`（**不报 pass**，避免把「跑成功但没给结论」伪造成绿灯）、
+`timeout`/`cancelled → cancelled`、`failed → error`。收尾打 `auto_finalized=1` 标记，且只碰仍 `running` 的报告，
+不覆盖人工已回写的终态；「收尾任务 + 收尾报告」用 `withoutBump` 合并为**一次** revision 递增。
 
 **R6 验收分桶（总数守恒）**：
 
@@ -69,6 +77,12 @@ CLI `test case upsert|update --enabled true|false`、`test report finish --run-i
   `finishTestReport` 允许改回 running（极少用），以保证前台回写幂等。
 - `runTestCases` 需要节点子树内有带本地路径的登记仓库才能真派单；
   纯用例管理（upsert / dryRun / acceptance）不依赖仓库，可在任意节点使用。
+- **CLI 非 dry-run 必须等收尾**：`bin/taskboard.js` 在 `run()` resolve 后直接 `process.exit()`，
+  而子进程收尾（`child.on('close')` → `finishAgentRun` → 报告自动收尾）跑在本进程事件循环里——
+  进程一退出监听器再也不会被调用，任务与报告会永久停在 `running`（独立测试发现的缺陷）。
+  因此 CLI 的 `test run` / `release check` 在非 dry-run 时用 `waitForAgentRun` 有界等待终态
+  （缺省上限 30 分钟，`--wait-timeout 秒` 可调，`--no-wait` 显式退回只派单语义）；
+  等待超时**不**算失败，返回当前状态并置 `waitTimedOut:true`，因为派单本身已成功。
 
 ## 4. 关联章节
 

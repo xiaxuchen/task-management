@@ -271,6 +271,29 @@ function safeFinish(store, runId, patch) {
 }
 
 /**
+ * 同步等待一条任务跑到终态（CLI 专用）。
+ *
+ * 为什么需要它：`bin/taskboard.js` 在 `run()` resolve 后会直接 `process.exit()`。
+ * 而子进程的收尾（`child.on('close')` → `finishAgentRun` → 报告自动收尾）
+ * 发生在本进程的事件循环里；进程一退出，监听器再也不会被调用，
+ * 任务与它开的报告就永久停在 running（独立测试发现的 CLI 缺陷）。
+ * 所以 CLI 在非 dry-run 派单后必须有界地等收尾，再退出。
+ *
+ * 轮询而不是挂事件：agent.mjs 与 store 之间没有事件总线，
+ * 轮询 store 状态最简单可靠，且天然兼容「任务已被别的入口收尾」。
+ * 超时返回当前状态而不抛错——派单已经成功，不该把 CLI 弄成失败退出。
+ */
+export async function waitForAgentRun(store, runId, { timeoutMs = 30 * 60 * 1000, intervalMs = 200 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const run = store.getAgentRun(runId)
+    if (!['running', 'queued'].includes(run.status)) return run
+    if (Date.now() >= deadline) return store.getAgentRun(runId)
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
+/**
  * 把一段子进程输出落进任务消息流。
  * 按换行切段，每段一条 text 消息——UI 因此能按 seq 增量拉取、逐条渲染，
  * 而不是每次把整个 output 字段重读一遍（对标 multica 的 task_message 流）。

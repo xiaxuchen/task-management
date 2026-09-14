@@ -301,6 +301,7 @@ CREATE TABLE IF NOT EXISTS test_reports (
     CHECK (status IN ('running','pass','fail','blocked','error','cancelled')),
   summary TEXT,
   detail TEXT,
+  auto_finalized INTEGER NOT NULL DEFAULT 0,
   started_at TEXT NOT NULL,
   finished_at TEXT,
   updated_at TEXT NOT NULL,
@@ -492,6 +493,7 @@ function migrate(db) {
         CHECK (status IN ('running','pass','fail','blocked','error','cancelled')),
       summary TEXT,
       detail TEXT,
+      auto_finalized INTEGER NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
       finished_at TEXT,
       updated_at TEXT NOT NULL,
@@ -500,6 +502,8 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_test_reports_node ON test_reports(node_id, id);
     CREATE INDEX IF NOT EXISTS idx_test_reports_case ON test_reports(case_id, id);
   `)
+  // v5：报告标记「已由 run 终态自动收尾」，与人工回写区分（老库补列，SCHEMA 只对新库生效）
+  addColumns(db, 'test_reports', [['auto_finalized', 'INTEGER NOT NULL DEFAULT 0']])
 
   // 上线清单（v4）：老库补表；SCHEMA 只对新库生效
   db.exec(`

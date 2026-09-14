@@ -4,7 +4,7 @@ import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd } from './ops.mjs'
-import { startAgentRun, retryAndDispatch } from './agent.mjs'
+import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -65,6 +65,8 @@ const OPTIONS = {
   remove: { type: 'string' },
   confirm: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
+  'no-wait': { type: 'boolean' },
+  'wait-timeout': { type: 'string' },
   actor: { type: 'string' },
   key: { type: 'string' },
   label: { type: 'string' },
@@ -119,7 +121,8 @@ const HELP = `task-board <命令>
   test case update <cid> [--name n] [--kind k] [--prompt p] [--expectation e] [--enabled true|false]
   test case remove <cid>
   test case reorder <ref> --ids "1,2,3"
-  test run <ref> [--kind k] [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run]   派单执行用例（自动开报告）
+  test run <ref> [--kind k] [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run] [--no-wait] [--wait-timeout 秒]
+                                    派单执行用例（自动开报告）；默认等到 run 终态并自动收尾报告，--no-wait 只派单
   test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
   test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
@@ -129,7 +132,8 @@ const HELP = `task-board <命令>
   release item remove <rid>
   release item reorder <ref> --ids "1,2,3"
   release checklist <ref> [--scope self|subtree] [--format json|md]   上线检查清单（完成度 + 阻塞项 + 就绪结论）
-  release check <ref> [--case-ids "1,2"] [--prompt "额外要求"] [--dry-run]   派单执行上线前置检查（含 code/biz/release_check 用例）
+  release check <ref> [--case-ids "1,2"] [--scope self|subtree] [--prompt "额外要求"] [--dry-run] [--no-wait] [--wait-timeout 秒]
+                                    派单执行上线前置检查（含 code/biz/release_check 用例）；默认等终态并自动收尾
   runtime list [--status online|offline]        运行时列表（含本机 CLI 实例状态）
   runtime register [--daemon <主机名>] [--provider qodercli] [--name <名>] [--visibility private|public]
   runtime heartbeat <id>                        运行时心跳（刷新 last_seen_at + 置 online）
@@ -139,7 +143,8 @@ const HELP = `task-board <命令>
   agent session new <ref> [--agent qodercli] [--title <标题>]   新建会话（不复用旧的）
   agent session get <sid> / agent session archive <sid>
   agent run <ref> --prompt "..." [--model DeepSeek-Flash] [--cwd <dir>] [--agent qodercli]
-                                    [--session <sid>] [--resume] [--runtime <id>] [--max-attempts N]   触发任务（异步；--resume 续跑会话）
+                                    [--session <sid>] [--resume] [--runtime <id>] [--max-attempts N] [--no-wait] [--wait-timeout 秒]
+                                    触发任务（默认等到终态；--no-wait 只派单；前台 Qoder IDE 任务不等待）
   agent runs <ref> [--session <sid>]              任务历史（含输出与状态）
   agent run get <rid> / agent run messages <rid> [--since-seq N]
   agent run cancel <rid> [--reason <原因>] / agent run retry <rid>
@@ -177,6 +182,36 @@ function parseEnabled(v) {
   if (['true', '1', 'yes', 'on'].includes(s)) return 1
   if (['false', '0', 'no', 'off'].includes(s)) return 0
   throw Object.assign(new Error(`--enabled 需要 true|false，收到：${v}`), { code: 'VALIDATION_FAILED' })
+}
+
+/**
+ * CLI 派单收尾：非 dry-run 时把派单结果等成「任务终态 + 报告终态」再返回。
+ *
+ * 边界（本函数就是这轮修复的核心约定）：
+ * - 等待发生在**同一次前台进程内**（这是唯一能保证收尾的地方）；
+ * - 默认等待到任务终态为止（上限 `--wait-timeout` 秒，缺省 30 分钟，
+ *   与 agent 执行超时 10 分钟留足余量）；
+ * - `--no-wait` 显式退回旧的「只派单」语义，立即返回 running（供脚本自行轮询）；
+ * - 等待超时不算失败：返回当前状态并在 `waitTimedOut` 上如实标注，
+ *   因为派单本身已经成功，把它做成非零退出会误导调用方。
+ * 返回值会把 run / reports 刷新成收尾后的最新状态。
+ */
+async function settleCliDispatch(store, out, values) {
+  if (!out || out.dryRun || !out.run) return out
+  // 前台（Qoder IDE）任务设计上就停在 running，等 IDE 回写；在这里等待只会白等到超时。
+  if (out.run.agent === 'qoder-ide') return { ...out, waited: false, foreground: true }
+  if (values['no-wait']) return { ...out, waited: false }
+  const timeoutSec = values['wait-timeout'] != null ? Number(values['wait-timeout']) : 30 * 60
+  const timeoutMs = Number.isFinite(timeoutSec) && timeoutSec > 0 ? timeoutSec * 1000 : 30 * 60 * 1000
+  const run = await waitForAgentRun(store, out.run.id, { timeoutMs })
+  const reports = (out.reports || []).map((r) => store.getTestReport(r.id))
+  return {
+    ...out,
+    run,
+    reports,
+    waited: true,
+    waitTimedOut: ['running', 'queued'].includes(run.status)
+  }
 }
 
 export async function run(argv) {
@@ -352,17 +387,16 @@ export async function run(argv) {
     }
     case 'test run': {
       const node = store.resolveRef(ref)
-      json(
-        runTestCases(store, node.id, {
-          caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
-          kind: values.kind || null,
-          prompt: values.prompt || null,
-          agent: values.agent,
-          model: values.model,
-          cwd: values.cwd,
-          dryRun: !!values['dry-run']
-        }, by)
-      )
+      const out = runTestCases(store, node.id, {
+        caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
+        kind: values.kind || null,
+        prompt: values.prompt || null,
+        agent: values.agent,
+        model: values.model,
+        cwd: values.cwd,
+        dryRun: !!values['dry-run']
+      }, by)
+      json(await settleCliDispatch(store, out, values))
       break
     }
     case 'test report': {
@@ -454,16 +488,16 @@ export async function run(argv) {
     }
     case 'release check': {
       const node = store.resolveRef(ref)
-      json(
-        runReleaseChecks(store, node.id, {
-          caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
-          prompt: values.prompt || null,
-          agent: values.agent,
-          model: values.model,
-          cwd: values.cwd,
-          dryRun: !!values['dry-run']
-        }, by)
-      )
+      const out = runReleaseChecks(store, node.id, {
+        caseIds: values['case-ids'] ? String(values['case-ids']).split(',').map((s) => Number(s.trim())) : null,
+        scope: values.scope === 'subtree' ? 'subtree' : 'self',
+        prompt: values.prompt || null,
+        agent: values.agent,
+        model: values.model,
+        cwd: values.cwd,
+        dryRun: !!values['dry-run']
+      }, by)
+      json(await settleCliDispatch(store, out, values))
       break
     }
     // ---------- 运行时 ----------
@@ -521,7 +555,8 @@ export async function run(argv) {
         const rid = Number(positionals[3] || values.id)
         if (sub === 'get') json(store.getAgentRun(rid))
         else if (sub === 'cancel') json(store.cancelAgentRun(rid, { reason: values.reason || 'manual' }))
-        else if (sub === 'retry') json(retryAndDispatch(store, rid, by))
+        // retry 同样拉起子进程：非前台任务要等终态，理由同下面的派单分支
+        else if (sub === 'retry') json(await settleCliDispatch(store, { run: retryAndDispatch(store, rid, by) }, values))
         else if (sub === 'messages') json(store.listAgentRunMessages(rid, { sinceSeq: Number(values['since-seq']) || 0 }))
         else {
           if (!values.status) throw new Error('agent run update 需要 --status')
@@ -538,23 +573,24 @@ export async function run(argv) {
         break
       }
       const node = store.resolveRef(sub)
-      json(
-        startAgentRun(
-          store,
-          node.id,
-          {
-            prompt: values.prompt,
-            agent: values.agent,
-            model: values.model,
-            cwd: values.cwd,
-            sessionId: values.session ? Number(values.session) : null,
-            resume: !!values.resume,
-            runtimeId: values.runtime ? Number(values.runtime) : null,
-            maxAttempts: values['max-attempts'] != null ? Number(values['max-attempts']) : null
-          },
-          by
-        )
+      const run = startAgentRun(
+        store,
+        node.id,
+        {
+          prompt: values.prompt,
+          agent: values.agent,
+          model: values.model,
+          cwd: values.cwd,
+          sessionId: values.session ? Number(values.session) : null,
+          resume: !!values.resume,
+          runtimeId: values.runtime ? Number(values.runtime) : null,
+          maxAttempts: values['max-attempts'] != null ? Number(values['max-attempts']) : null
+        },
+        by
       )
+      // 与 test run / release check 同样的收尾边界：本进程一退出，子进程 close 监听器就再也不触发，
+      // 所以非前台（ideMode）派单必须在这里等到终态，否则任务会永远停在 running。
+      json(await settleCliDispatch(store, { run }, values))
       break
     }
     case 'agent runs':

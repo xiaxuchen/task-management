@@ -927,7 +927,7 @@ export function renderReleaseChecklistMd(checklist) {
     `# 上线检查：${checklist.node.name}`,
     '',
     `- 范围：${checklist.scope === 'subtree' ? '含子树' : '仅本节点'}`,
-    `- 上线项：${t.items} · 必做：${t.required} · 可选：${t.optional} · 已完成：${t.done} · 阻塞：${t.blocked} · 待处理：${t.pending}`,
+    `- 上线项：${t.items} · 必做：${t.required} · 可选：${t.optional} · 完成：${t.done} · 跳过：${t.skipped} · 阻塞：${t.blocked} · 待处理：${t.pending}`,
     `- 上线就绪：${checklist.ready == null ? '—（无必做项）' : checklist.ready ? '是' : '否'}`,
     ''
   ]
@@ -953,25 +953,37 @@ export function renderReleaseChecklistMd(checklist) {
 export function runReleaseChecks(
   store,
   nodeRef,
-  { caseIds = null, prompt = null, agent = undefined, model = undefined, cwd = null, dryRun = false } = {},
+  { caseIds = null, scope = 'self', prompt = null, agent = undefined, model = undefined, cwd = null, dryRun = false } = {},
   by = 'user'
 ) {
   const node = store.resolveRef(String(nodeRef))
-  const checks = store
-    .listTestCases(node.id, {})
+  // scope=self 只看本节点，scope=subtree 连子树的上线项与检查用例一起纳入——
+  // 与 release_checklist 的 scope 口径对齐，避免「子树有上线项却没进检查」的误解。
+  const effectiveScope = scope === 'subtree' ? 'subtree' : 'self'
+  const checkNodeIds = effectiveScope === 'subtree' ? store.subtreeIds(node.id) : [node.id]
+  const checks = checkNodeIds
+    .flatMap((nid) => store.listTestCases(nid, {}))
     .filter((c) => c.kind === 'code_check' || c.kind === 'biz_check' || c.kind === 'release_check')
     .filter((c) => (caseIds && caseIds.length ? caseIds.map(Number).includes(c.id) : true))
-  const checklist = store.buildReleaseChecklist(node.id, { scope: 'self' })
+  const checklist = store.buildReleaseChecklist(node.id, { scope: effectiveScope })
   if (checks.length === 0 && checklist.items.length === 0) {
-    throw new AppError(CODES.VALIDATION_FAILED, '没有可执行的上线检查（先登记上线项或 code_check/biz_check/release_check 用例）', {
-      nodeId: node.id
-    })
+    // 若本节点没东西、但子树有，明确提示用 scope=subtree：避免「子树有上线项却没进检查」的误解
+    const subtreeChecklist = effectiveScope === 'self' ? store.buildReleaseChecklist(node.id, { scope: 'subtree' }) : null
+    const hintSubtree = subtreeChecklist && subtreeChecklist.items.length > 0
+    throw new AppError(
+      CODES.VALIDATION_FAILED,
+      hintSubtree
+        ? `本节点没有可执行的上线检查，但子树有 ${subtreeChecklist.items.length} 个上线项——如需纳入请用 scope=subtree`
+        : '没有可执行的上线检查（先登记上线项或 code_check/biz_check/release_check 用例）',
+      { nodeId: node.id, scope: effectiveScope, subtreeItems: hintSubtree ? subtreeChecklist.items.length : 0 }
+    )
   }
   const composed = composeReleaseCheckPrompt(node, checks, checklist, prompt)
   if (dryRun) {
     return {
       dryRun: true,
       node: { id: node.id, name: node.name },
+      scope: effectiveScope,
       cases: checks.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       items: checklist.items.map((i) => ({ id: i.id, name: i.name, kind: i.kind, status: i.status })),
       ready: checklist.ready,
@@ -979,10 +991,11 @@ export function runReleaseChecks(
     }
   }
   const run = startAgentRun(store, node.id, { prompt: composed, agent, model, cwd }, by)
+  // 报告挂回各自用例所属节点，保证 acceptance / checklist 聚合能按节点正确归位
   const reports = checks.map((c) =>
-    store.createTestReport(node.id, { caseId: c.id, runId: run.id, kind: c.kind, status: 'running', summary: `已派单检查：${c.name}` }, by)
+    store.createTestReport(c.nodeId, { caseId: c.id, runId: run.id, kind: c.kind, status: 'running', summary: `已派单检查：${c.name}` }, by)
   )
-  return { node: { id: node.id, name: node.name }, run, reports, checklist }
+  return { node: { id: node.id, name: node.name }, scope: effectiveScope, run, reports, checklist }
 }
 
 /** 把上线清单与检查用例拼成给 agent 的上线前置检查指令 */

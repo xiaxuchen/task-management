@@ -10,7 +10,7 @@
 | 路径同名歧义 | 409，提示改用 `id` 引用 |
 | 同节点内文档重名 | 409 `DOC_NAME_EXISTS`；UI 新增时自动加序号规避 |
 | 同节点内测试用例重名 | 409 `TEST_CASE_NAME_EXISTS`（upsert 走幂等覆盖，不报错） |
-| 报告终态互转 / 终态回退 running | 409 `REPORT_STATUS_IMMUTABLE`（`details` 带 current / next；`overwrite:true` 可显式覆盖） |
+| 报告终态互转 / 终态回退 running | 409 `REPORT_STATUS_IMMUTABLE`（`details` 带 current / next；`overwrite:true` 可显式覆盖；**自动收尾（`autoFinalized=true`）的终态可直接改正**） |
 | 报告状态非法 / 报告用例跨节点 | 400 `VALIDATION_FAILED`，指出非法取值或归属节点 |
 | 报告的 `runId` 指向不存在的 agent 任务 | 404 `NOT_FOUND` |
 | 同节点内上线项重名 | 409 `RELEASE_ITEM_NAME_EXISTS`（upsert 走幂等覆盖，不报错） |

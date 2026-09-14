@@ -646,6 +646,7 @@ export function createApp({ store }) {
           node.id,
           {
             caseIds: b.caseIds,
+            scope: b.scope === 'subtree' ? 'subtree' : 'self',
             prompt: b.prompt,
             agent: b.agent,
             model: b.model,
