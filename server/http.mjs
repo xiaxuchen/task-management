@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderWorkflowMapMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -564,6 +564,22 @@ export function createApp({ store }) {
         return
       }
       res.json(gate)
+    })
+  )
+
+  // ---------- 研发主线思维导图（只读投影） ----------
+  app.get(
+    '/api/nodes/:id/workflow-map',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const map = store.buildWorkflowMap(node.id, {
+        scope: req.query.scope
+      })
+      if (req.query.format === 'md') {
+        res.type('text/markdown').send(renderWorkflowMapMd(map))
+        return
+      }
+      res.json(map)
     })
   )
 

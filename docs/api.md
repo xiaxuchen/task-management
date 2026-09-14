@@ -404,6 +404,27 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/delivery-gate?format=md'
 > 三段均不适用（没有需求 / 用例 / 必做上线项）时为 `unknown`，`ready=null`。
 > `not_applicable` 既不阻塞也不算通过。
 
+## 研发主线思维导图（需求 → 设计 / 文档 → 回归 → 报告 → 验收 → 上线治理）
+
+```bash
+# JSON：查看某条需求在需求/设计/文档/回归/报告/验收/上线各阶段的分支状态
+curl -s 'http://127.0.0.1:3210/api/nodes/12/workflow-map?scope=self'
+
+# 含子树：把项目下所有需求两层投影到同一张图
+curl -s 'http://127.0.0.1:3210/api/nodes/1/workflow-map?scope=subtree'
+
+# Markdown：可直接贴进 issue / 评审记录
+curl -s 'http://127.0.0.1:3210/api/nodes/12/workflow-map?format=md'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js workflow map "项目A/需求1" [--scope self|subtree] [--format json|md]
+# MCP: workflow_map { node, scope?, format? }
+```
+
+> 分支状态：`pass` 已有证据且通过；`fail` 有数据但未通过 / 必做项未完成；
+> `pending` 执行中或等待结论；`empty` 尚未登记，**不等于通过**。
+> 纯读投影，不写库、不动 revision。
+
 ## 错误码速查
 
 | HTTP | code | 场景 |

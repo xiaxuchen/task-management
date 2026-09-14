@@ -78,6 +78,10 @@
         </template>
       </el-tab-pane>
 
+      <el-tab-pane label="主线" name="workflow">
+        <WorkflowMapPane :node-id="node.id" @open-node="onOpenNode" />
+      </el-tab-pane>
+
       <el-tab-pane label="子节点" name="children">
         <el-empty v-if="!children.length" description="无子节点" />
         <el-table v-else :data="children" size="small" @row-click="onChildClick">
@@ -184,9 +188,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
 import DiffPane from './DiffPane.vue'
+import WorkflowMapPane from './WorkflowMapPane.vue'
 
 const props = defineProps({ node: Object, visible: Boolean, initialTab: { type: String, default: 'info' } })
-const emit = defineEmits(['close', 'updated'])
+const emit = defineEmits(['close', 'updated', 'select'])
 
 const internalVisible = ref(props.visible)
 watch(() => props.visible, (v) => { internalVisible.value = v })
@@ -447,6 +452,12 @@ function onChildClick(child) {
   emit('close')
   // 由父组件在下一个 tick 中打开该子节点
   // 简单方案：重新 emit select 但保持 drawer 关闭
+}
+
+async function onOpenNode(nodeId) {
+  const detail = await api.nodeGet(nodeId)
+  emit('close')
+  emit('select', detail)
 }
 
 // 切换节点时重新加载（组件实例会被复用，onMounted 不会再次触发）
