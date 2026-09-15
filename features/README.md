@@ -49,6 +49,8 @@
 | **代码检查**（已登记提交新增行的只读静态审查：冲突标记 / 私钥 / 硬编码凭据 / eval / 聚焦测试 / 调试遗留，danger 阻塞 + warn 提示） | `code-audit/` | — | server/{git,code-audit,ops}.mjs（commitAddedLines / getNodeCodeAudit）+ 三入口 code_audit + NodeDrawer「代码检查」页签 |
 | **业务检查门禁**（未关闭缺陷 + 启用中 biz_check 用例最近结论，纯读聚合不落表） | `business-gate/` | — | server/{store,ops}.mjs（buildBusinessGate）+ 三入口 business_gate + NodeDrawer「业务检查」页签 |
 | **文档敏感信息扫描**（节点/子树文档只读凭据扫描；高危阻塞、证据强制脱敏、空态 ready=null） | `secret-scan/` | — | server/store.mjs（buildSecretScan）+ server/ops.mjs（renderSecretScanMd）+ 三入口 secret_scan |
+| **交付门禁**（需求就绪 / 测试验收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
+| **交付证据快照**（冻结交付门禁完整依据 + 指纹，读取时核对 current / drifted，供验收与上线审计） | `delivery-snapshot/` | — | server/{db,store,http,cli,mcp,ops}.mjs（delivery_snapshots）+ NodeDrawer「交付」页 |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 

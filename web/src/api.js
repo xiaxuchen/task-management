@@ -81,6 +81,11 @@ export default {
   // 业务检查门禁
   businessGate: (nodeId, scope) => api(`/nodes/${nodeId}/business-gate?scope=${scope || 'self'}`),
 
+  deliverySnapshotCapture: (nodeId, data) =>
+    api(`/nodes/${nodeId}/delivery-snapshots`, { method: 'POST', body: JSON.stringify(data) }),
+  deliverySnapshots: (nodeId, scope) =>
+    api(`/nodes/${nodeId}/delivery-snapshots${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`),
+
   // commit
   commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),
   commitAdd: (nodeId, data) => api(`/nodes/${nodeId}/commits`, { method: 'POST', body: JSON.stringify(data) }),

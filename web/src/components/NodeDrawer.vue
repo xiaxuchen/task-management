@@ -120,6 +120,34 @@
             <el-table-column prop="detail" label="说明" min-width="200" />
           </el-table>
         </template>
+        <el-divider content-position="left">证据快照</el-divider>
+        <div class="snapshot-actions">
+          <el-button size="small" type="primary" :disabled="gate.decision === 'unknown'" @click="captureSnapshot">
+            冻结当前证据
+          </el-button>
+          <span class="snapshot-hint">冻结后源数据变化会标记「已偏离」，不会改写历史结论。</span>
+        </div>
+        <el-empty v-if="!snapshots.length" description="暂无交付快照" />
+        <el-table v-else :data="snapshots" size="small" max-height="260">
+          <el-table-column prop="id" label="#" width="56" />
+          <el-table-column label="冻结结论" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="deliveryTagType(row.decision)" effect="plain">
+                {{ deliveryDecisionLabel(row.decision) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="当前核对" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="driftTagType(row.drift && row.drift.status)" effect="plain">
+                {{ driftStatusLabel(row.drift && row.drift.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="createdAt" label="冻结时间" min-width="180" />
+          <el-table-column prop="createdBy" label="操作者" width="80" />
+          <el-table-column prop="note" label="备注" min-width="120" />
+        </el-table>
       </el-tab-pane>
 
       <el-tab-pane label="代码检查" name="code-audit">
@@ -350,6 +378,7 @@ const audit = ref({ ready: null, totals: {}, findings: [] })
 
 const bizScope = ref('self')
 const bizGate = ref({ ready: null, defects: [], cases: [], blockers: [] })
+const snapshots = ref([])
 const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' }
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
 const deliveryDecisionLabel = (d) => ({ ready: '可交付', not_ready: '不可交付', unknown: '待判定' }[d] || d)
@@ -369,6 +398,8 @@ const auditTagType = (r) => (r === true ? 'success' : r === false ? 'danger' : '
 
 const bizDecisionLabel = (v) => (v == null ? '待判定' : v ? '业务可验收' : '尚不可验收')
 const bizTagType = (v) => (v == null ? 'info' : v ? 'success' : 'danger')
+const driftStatusLabel = (s) => ({ current: '一致', drifted: '已偏离', unknown: '未知' }[s] || s)
+const driftTagType = (s) => ({ current: 'success', drifted: 'warning', unknown: 'info' }[s] || 'info')
 
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
@@ -573,6 +604,7 @@ async function loadDetail() {
 
   bizScope.value = 'self'
   loadBusinessGate()
+  loadDeliverySnapshots()
   loadTracks()
   loadDuplicates()
 }
@@ -677,6 +709,24 @@ async function loadBusinessGate() {
   }
 }
 
+async function loadDeliverySnapshots() {
+  try {
+    snapshots.value = await api.deliverySnapshots(props.node.id, deliveryScope.value)
+  } catch {
+    snapshots.value = []
+  }
+}
+
+async function captureSnapshot() {
+  try {
+    await api.deliverySnapshotCapture(props.node.id, { scope: deliveryScope.value })
+    ElMessage.success('已冻结当前交付证据')
+    await loadDeliverySnapshots()
+  } catch (e) {
+    ElMessage.error('冻结失败：' + (e.message || e))
+  }
+}
+
 async function saveName() {
   if (editName.value !== props.node.name) {
     await api.nodeUpdate(props.node.id, { name: editName.value })
@@ -765,6 +815,12 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
   gap: 10px;
   margin-bottom: 10px;
 }
+.snapshot-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
 .design-count {
   color: #909399;
   font-size: 12px;
@@ -782,6 +838,10 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
   margin: 0 0 8px;
   font-size: 12px;
   color: #606266;
+}
+.snapshot-hint {
+  color: #909399;
+  font-size: 12px;
 }
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {
