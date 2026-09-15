@@ -11,6 +11,7 @@
     "test": "node --test",
     "test:watch": "node --test --watch",
     "smoke": "node --test --test-name-pattern='smoke'",
+    "e2e:mainline": "node scripts/e2e-mainline.mjs",
     "snapshot:export": "node scripts/export-snapshot.mjs",
     "snapshot:import": "node scripts/import-snapshot.mjs",
     "postinstall": "node scripts/copy-vditor.mjs",

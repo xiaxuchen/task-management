@@ -39,6 +39,7 @@
 | **需求就绪门禁**（需求内容 / 概要设计 / 可回归用例三条门禁 + 子树汇总，纯读聚合不落表） | `requirement-readiness/` | — | server/{config,store,ops}.mjs（buildRequirementReadiness）+ 三入口 readiness |
 | **概要设计大纲 / 思维导图**（从需求树推导 mermaid 脑图 + 逐层小节，一键写入「概要设计」文档） | `design-outline/` | — | server/{store,ops}.mjs（buildDesignOutline / applyDesignOutline）+ 三入口 design outline/apply + NodeDrawer「概要设计」页签 |
 | **需求思维导图**（树 → mermaid mindmap 只读投影 + 深度截断 + 三入口 1:1 + 抽屉「导图」页签） | `requirement-mindmap/` | — | server/{store,ops}.mjs（buildMindmap）+ 三入口 mindmap + web/src/components/MindmapPane.vue |
+| **主链路集成收口**（5 条分支按依赖合入 + 需求→交付门禁端到端回归脚本 + 冲突修复） | `mainline-integration/` | — | scripts/e2e-mainline.mjs + test/e2e-mainline.test.mjs（npm run e2e:mainline） |
 | **交付门禁**（需求就绪 / 测试验收+签收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
 | **验收签收**（测试证据 + 业务结论 + 证据指纹失效） | `acceptance-signoff/` | — | server/{db,store,ops}.mjs（acceptance_signoffs）+ 三入口 acceptance_status/sign |
 | **需求管理**（需求条目 / 受控状态流转 / 核心文档关联 + Web 需求管理页） | `requirement-management/` | — | server/{store,http,cli,mcp}.mjs（requirement_*）+ web/src/views/RequirementsView.vue |
