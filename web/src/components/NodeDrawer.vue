@@ -64,6 +64,10 @@
         <div ref="designHostRef" v-show="designMd" class="design-host" />
       </el-tab-pane>
 
+      <el-tab-pane label="导图" name="mindmap">
+        <MindmapPane :node-id="node.id" />
+      </el-tab-pane>
+
       <el-tab-pane label="交付" name="delivery">
         <div class="delivery-head">
           <el-tag :type="deliveryTagType(gate.decision)" effect="dark" size="large">{{ deliveryDecisionLabel(gate.decision) }}</el-tag>
@@ -235,6 +239,7 @@ const PREVIEW_OPTIONS = {
   hljs: { style: 'github', lineNumber: true },
   markdown: { toc: true, mark: true, mermaid: true, math: { engine: 'KaTeX' } }
 }
+import MindmapPane from './MindmapPane.vue'
 
 const props = defineProps({ node: Object, visible: Boolean, initialTab: { type: String, default: 'info' } })
 const emit = defineEmits(['close', 'updated'])

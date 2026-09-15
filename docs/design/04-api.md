@@ -91,6 +91,11 @@
 |---|---|---|
 | GET | `/api/nodes/:id/design-outline` | 概要设计大纲：`?scope=self\|subtree`，`?format=json\|md`。从需求树的子需求 / 任务组 / 子任务结构推导骨架；`md` 含 mermaid mindmap + 逐层小节（按节点类型给出「目标与范围 / 子需求设计 / 任务组拆分 / 实现要点 / 缺陷处理」），可直接写入「概要设计」文档；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；**纯读聚合，不写库、不动 revision** |
 | POST | `/api/nodes/:id/design-outline/apply` | 把推导出的骨架写入各需求的「概要设计」文档（文档名取 `config.readiness.designDoc`，与需求就绪门禁同一份）：`{scope?, overwrite?, dryRun?}`。默认 `overwrite:false`——已有非空文档原样保留并回报 `written:false / reason=already_filled`；`overwrite:true` 才覆盖。`dryRun:true` 只回报将写哪些、**不落库不动 revision**（与 `overwrite:true` 组合时也只预演，不覆盖）。返回逐单元 `results[]` 与 `written` / `skipped` 计数 |
+### 思维导图（树 → mermaid mindmap 的只读投影）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/mindmap` | 思维导图：`?scope=self\|subtree`（缺省 `self`；Web 页签默认 `subtree`）、`?maxDepth=0..50`（缺省不截断）、`?format=json\|md`。返回 mermaid `mindmap` 文本 + 结构化 `nodes`/`edges`/`totals`；`totals.truncated` 记超过 `maxDepth` 被截断的子节点数；标签转义 `"`/`&`，空名用占位符；**纯读投影，不写库、不动 revision** |
 
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
@@ -145,12 +150,12 @@
 其余取值（含大小写错如 `Subtree`、拼错、多值、空串）一律 `400 VALIDATION_FAILED`，
 `details.allowed = ["self","subtree"]`。**不做静默降级**——早期实现把非 `subtree` 的值吞成 `self`，
 会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
-适用接口：`/readiness`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
+适用接口：`/readiness`、`/mindmap`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
 `/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
 
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
-这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `acceptance_report` / `delivery_gate` /
+这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `mindmap` / `acceptance_report` / `delivery_gate` /
 `release_checklist` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
 概要设计大纲（`design_outline` / `design_outline_apply`）同样吃这套 `scope` / `format` 校验。

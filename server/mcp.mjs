@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -845,6 +845,23 @@ export function createMcpServer({ store }) {
       const n = store.resolveRef(String(node))
       const readiness = store.buildRequirementReadiness(n.id, { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'mindmap',
+    '思维导图：把节点（含可选子树）投影成 mermaid mindmap，供人俯瞰需求拆解；format=md 返回可贴进 issue / 设计文档的 markdown，json 返回 mermaid 文本 + 结构化 nodes/edges/totals',
+    {
+      node: z.union([z.number(), z.string()]),
+      scope: z.string().optional(),
+      maxDepth: z.union([z.number(), z.string()]).optional(),
+      format: z.string().optional()
+    },
+    mcpValidate(async ({ node, scope, maxDepth, format }) => {
+      const n = store.resolveRef(String(node))
+      const mindmap = store.buildMindmap(n.id, { scope, maxDepth: maxDepth === undefined ? null : maxDepth })
+      const text = store.normalizeFormat(format) === 'md' ? renderMindmapMd(mindmap) : JSON.stringify(mindmap, null, 2)
       return { content: [{ type: 'text', text }] }
     })
   )

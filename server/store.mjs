@@ -1748,6 +1748,131 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 思维导图（树 → mermaid mindmap 的只读投影） ----------
+  //
+  // 任务树本身是层级结构，天然适合用导图俯瞰「需求拆成了哪些子需求 / 任务组 / 子任务」。
+  // 这里只把既有节点投影成 mermaid `mindmap` 文本，交给前端（Vditor 内置 mermaid 11.x）渲染，
+  // 或由 AI 直接贴进 issue / 设计文档。**纯读**：不落表、不动 revision
+  // （与 readiness / acceptance_report / delivery_gate 同一条「结论不落库」原则）。
+
+  const MINDMAP_MAX_DEPTH_LIMIT = 50
+
+  /**
+   * mermaid mindmap 的节点标签用 `["文本"]` 承载。
+   * 文本里出现双引号会提前闭合节点串（实测 `["a "b" c"]` 直接解析失败），
+   * 因此统一走 HTML 实体转义：`"` → `&quot;`，`&` → `&amp;`（先做 & 避免二次转义）。
+   * 其余字符（括号 / 方括号 / 花括号 / 竖线 / `#` / 冒号 / 中文 / 反斜杠 / 换行）在引号内实测 mermaid 均接受。
+   */
+  function escapeMindmapLabel(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+  }
+
+  /**
+   * 节点 → mermaid mindmap 行。
+   * 缩进 = 深度 × 2 空格（mermaid 用缩进表达父子关系；顶层节点必须唯一）。
+   * 标签为空时用占位符，避免 `[""]` 解析失败（实测空串会报错）。
+   */
+  function mindmapLine(name, depth) {
+    const label = escapeMindmapLabel(name) || '（未命名）'
+    return `${'  '.repeat(depth)}["${label}"]`
+  }
+
+  /**
+   * 把节点树投影成 mermaid mindmap。
+   *
+   * - R1 挂任意节点；`scope=self` 只画本节点，`scope=subtree` 画本节点及其子树
+   *   （与代码库其它聚合接口同一份 scope 口径；导图通常要 `subtree`，Web 页签默认即 subtree）。
+   * - R2 节点用矩形 `["名"]`；层级由缩进表达（顶层唯一，mermaid 硬约束）。
+   * - R3 标签做实体转义；空名用占位符；深度截断保护（`maxDepth`）。
+   * - R4 只读：不写库、不动 revision。
+   * - R5 输出含 `mermaid` 文本 + 结构化 `nodes`/`edges`/`totals`，前端/测试可分别校验。
+   */
+  function buildMindmap(nodeId, { scope = 'self', maxDepth = null } = {}) {
+    const root = rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    // `''`（如 HTTP `?maxDepth=`）算「显式给了非法值」：Number('') 会得 0，
+    // 静默把导图截成只剩根节点比报错更难排查，与 scope 的「不静默降级」同一条纪律。
+    const depthLimit =
+      maxDepth === null || maxDepth === undefined
+        ? Infinity
+        : maxDepth === '' || Array.isArray(maxDepth)
+          ? NaN
+          : Number(maxDepth)
+    if (depthLimit !== Infinity && (!Number.isInteger(depthLimit) || depthLimit < 0 || depthLimit > MINDMAP_MAX_DEPTH_LIMIT)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `maxDepth 需要是 0..${MINDMAP_MAX_DEPTH_LIMIT} 的整数`, {
+        maxDepth,
+        allowed: `0..${MINDMAP_MAX_DEPTH_LIMIT}`
+      })
+    }
+
+    const rows = db.prepare('SELECT * FROM nodes ORDER BY sort, id').all()
+    const byParent = new Map()
+    for (const r of rows) {
+      const key = r.parent_id == null ? null : r.parent_id
+      if (!byParent.has(key)) byParent.set(key, [])
+      byParent.get(key).push(r)
+    }
+
+    const mapNodes = []
+    const edges = []
+    // 子节点关系只用于渲染与遍历，不进入对外契约（对外用 edges 表达父子）
+    const emittedChildren = new Map()
+    const byId = new Map()
+    let truncated = 0
+
+    const build = (row, depth) => {
+      const node = nodeVO(row)
+      const entry = { id: node.id, name: node.name, type: node.type, status: node.status, depth }
+      mapNodes.push(entry)
+      byId.set(node.id, entry)
+      const children = effectiveScope === 'subtree' ? byParent.get(row.id) || [] : []
+      const childIds = []
+      emittedChildren.set(node.id, childIds)
+      if (depth >= depthLimit && children.length > 0) {
+        truncated += children.length
+        return entry
+      }
+      for (const child of children) {
+        const childEntry = build(child, depth + 1)
+        childIds.push(childEntry.id)
+        edges.push({ from: node.id, to: childEntry.id })
+      }
+      return entry
+    }
+
+    build(root, 0)
+
+    const lines = ['mindmap', mindmapLine(root.name, 0)]
+    const walkLines = (id) => {
+      for (const childId of emittedChildren.get(id) || []) {
+        const child = byId.get(childId)
+        lines.push(mindmapLine(child.name, child.depth))
+        walkLines(childId)
+      }
+    }
+    walkLines(root.id)
+
+    const byType = {}
+    for (const n of mapNodes) byType[n.type] = (byType[n.type] || 0) + 1
+
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope: effectiveScope,
+      mermaid: lines.join('\n') + '\n',
+      nodes: mapNodes,
+      edges,
+      totals: {
+        nodes: mapNodes.length,
+        edges: edges.length,
+        depth: mapNodes.reduce((m, n) => Math.max(m, n.depth), 0),
+        byType,
+        truncated
+      }
+    }
+  }
+
   // ---------- 概要设计大纲 / 思维导图（需求管理 → 概要设计 → 文档 的生成侧） ----------
   //
   // 需求就绪门禁把「概要设计」文档作为进入回归测试的硬门禁之一，但此前只能靠人手工写。
@@ -3040,6 +3165,8 @@ export function createStore(db, options = {}) {
     buildDesignOutline,
     // 门禁口径（文档名 / 用例类型）——配置驱动，供概要设计骨架复用同一份「概要设计」文档名
     getReadinessConfig: () => ({ ...readiness }),
+    // 思维导图（树 → mermaid mindmap 的只读投影）
+    buildMindmap,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,
     createReleaseItem,

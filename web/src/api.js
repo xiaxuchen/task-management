@@ -66,6 +66,11 @@ export default {
   // 概要设计大纲 / 思维导图
   designOutline: (nodeId, scope) => api(`/nodes/${nodeId}/design-outline?scope=${scope || 'self'}`),
   designOutlineApply: (nodeId, data) => api(`/nodes/${nodeId}/design-outline/apply`, { method: 'POST', body: JSON.stringify(data || {}) }),
+  // 思维导图（树 → mermaid mindmap 只读投影）
+  mindmap: (nodeId, scope, maxDepth) =>
+    api(
+      `/nodes/${nodeId}/mindmap?scope=${scope || 'self'}${maxDepth ? `&maxDepth=${maxDepth}` : ''}`
+    ),
 
   // commit
   commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),

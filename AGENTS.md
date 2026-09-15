@@ -103,7 +103,7 @@ docs/design.md    ← 主设计文档权威副本
       doc_upsert · doc_create · doc_update · doc_remove · doc_reorder · doc_version_list · doc_version_restore
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
 批量  batch · import_outline
-门禁  requirement_readiness · delivery_gate
+门禁  requirement_readiness · mindmap · delivery_gate
 设计  design_outline · design_outline_apply
 回归  test_case_list · test_case_upsert · test_case_update · test_case_remove · test_case_reorder
       test_run · test_report_list · test_report_get · test_report_finish · acceptance_report
@@ -149,6 +149,7 @@ test acceptance "项目A/需求1" [--scope subtree] [--format md]  # 验收报�
 test acceptance-status "项目A/需求1" [--scope subtree] [--format md]  # 验收签收状态（测试证据 + 业务签收）
 test acceptance-sign "项目A/需求1" --decision accepted|rejected [--comment "验收意见"]  # 签收 / 驳回
 readiness check "项目A/需求1" [--scope subtree] [--format md]  # 需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
+mindmap "项目A/需求1" [--scope subtree] [--max-depth N] [--format md]  # 思维导图（mermaid mindmap 只读投影）
 design outline "项目A/需求1" [--scope subtree] [--format md]   # 概要设计大纲 / 思维导图（从需求树推导骨架）
 design apply "项目A/需求1" [--scope subtree] [--overwrite]     # 写入「概要设计」文档（默认不覆盖已填写内容）
 delivery gate "项目A/需求1" [--scope subtree] [--format md]    # 交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
