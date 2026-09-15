@@ -37,7 +37,7 @@
 | **回归测试闭环**（AI 可回归测试用例 + 测试/验收报告 + 提示词派单） | `regression-loop/` | — | server/{db,store,ops}.mjs（test_cases/test_reports）+ 三入口 test_* |
 | **上线治理**（上线配置 / 上线 SQL / 上线检查清单 + agent 前置检查派单） | `release-governance/` | — | server/{db,store,ops}.mjs（release_items）+ 三入口 release_* |
 | **需求就绪门禁**（需求内容 / 概要设计 / 可回归用例三条门禁 + 子树汇总，纯读聚合不落表） | `requirement-readiness/` | — | server/{config,store,ops}.mjs（buildRequirementReadiness）+ 三入口 readiness |
-| **交付门禁**（需求就绪 / 测试验收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
+| **交付门禁**（需求就绪 / 测试验收 / 上线治理 / 代码推送的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate / buildDeliveryGateFull）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
 | **代码推送门禁**（已登记提交是否真的到了远程：`pushed`/`not_pushed`/`unknown` 三态 + 子树聚合，纯读不 fetch） | `commit-push-gate/` | — | server/git.mjs（commitPushState）+ server/ops.mjs（getNodePushGate/renderPushGateMd）+ 三入口 commit_push_gate |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）

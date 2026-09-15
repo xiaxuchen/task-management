@@ -1122,7 +1122,7 @@ export function renderPushGateMd(gate) {
 }
 
 /**
- * 交付门禁导出：把三段既有结论收敛成一张可贴进 issue / 上线单的最终判定。
+ * 交付门禁导出：把四段既有结论收敛成一张可贴进 issue / 上线单的最终判定。
  * 与 renderReadinessMd / renderAcceptanceMd / renderReleaseChecklistMd 同风格。
  */
 export function renderDeliveryGateMd(gate) {
@@ -1160,6 +1160,22 @@ export function renderDeliveryGateMd(gate) {
     for (const b of gate.blockers) lines.push(`| ${cell(b.label)} | ${cell(b.name)} | ${cell(b.detail)} |`)
   }
   return lines.join('\n')
+}
+
+/**
+ * 交付门禁（含代码推送证据）：四段结论的完整汇总。
+ *
+ * `store.buildDeliveryGate` 是同步纯读聚合，但代码推送要读本机 git ref（异步）。
+ * 因此由本函数先算出 pushGate，再把它注入同步聚合——保证「能不能交付」这个唯一结论
+ * 覆盖「登记提交是否真的到了远程」，不再默认把未推送的代码当成可交付。
+ *
+ * 入口只有这一个 async 版本；三入口（HTTP / CLI / MCP）都调它，避免同步版被误用成放行路径。
+ */
+export async function buildDeliveryGateFull(store, nodeRef, { scope = 'self' } = {}) {
+  const node = store.resolveRef(nodeRef)
+  const effectiveScope = store.normalizeScope(scope)
+  const pushGate = await getNodePushGate(store, node.id, { scope: effectiveScope })
+  return store.buildDeliveryGate(node.id, { scope: effectiveScope, pushGate })
 }
 
 /**

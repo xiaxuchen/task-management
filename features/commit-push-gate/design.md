@@ -106,6 +106,6 @@ MCP 用 `mcpValidate` 把业务错误转成 `isError` 文本，不泄漏 SDK `-3
 - 接口表：`docs/design/04-api.md`「代码推送门禁」段
 - 接口示例：`docs/api.md`
 - 测试策略：`docs/design/08-testing.md`（单测分组：`test/push-gate.test.mjs`）
-- 决策：`docs/design/09-decisions.md` 决策 38
+- 决策：`docs/design/09-decisions.md` 决策 36（推送门禁纯读）/ 37（reason 契约）
 - 相邻功能：`../commit-registry/`（提交登记与去重）、`../branch-track/`（合并追踪）、
   `../delivery-gate/`（交付门禁）
