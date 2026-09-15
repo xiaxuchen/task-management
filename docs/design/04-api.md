@@ -78,6 +78,12 @@
 |---|---|---|
 | GET | `/api/nodes/:id/readiness` | 需求就绪门禁：`?scope=self\|subtree`，`?format=json\|md`。判定需求内容 / 概要设计 / 可回归用例三条门禁；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；无待判定需求时 `ready=null`；**纯读聚合，不写库、不动 revision** |
 
+### 文档敏感信息扫描（只读安全前置判定）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/secret-scan` | 文档敏感信息扫描：`?scope=self\|subtree`，`?format=json\|md`。只读扫描节点（含子树）的非空文档，命中 PEM 私钥 / AWS / GitHub / Slack / JWT / 显式密钥赋值等模式时给稳定规则名、脱敏证据与处置建议；高危命中 `ready=false`，仅提示或未命中 `ready=true`，没有非空文档 `ready=null`；**命中原值绝不回显，只读不写库、不动 revision** |
+
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 | Method | Path | 说明 |
@@ -137,5 +143,5 @@
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
-这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `acceptance_report` / `delivery_gate` /
+这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `secret_scan` / `acceptance_report` / `delivery_gate` /
 `release_checklist` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。

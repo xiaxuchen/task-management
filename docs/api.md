@@ -383,6 +383,29 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 > `release-checklist` / `delivery-gate` / `diffs` / `tracks` / `duplicates`。
 > 空态：子树内没有需求时返回 `ready=null`（`totals.units=0`），不是 400。
 
+## 文档敏感信息扫描（只读安全前置判定）
+
+```bash
+# 扫描本节点非空文档里的凭据模式（命中值默认脱敏，不会回显原文）
+curl -s http://127.0.0.1:3210/api/nodes/1/secret-scan
+
+# 连子树一起扫描（挂在项目 / 需求上）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/secret-scan?scope=subtree'
+
+# markdown 可直接贴进 issue / 评审记录
+curl -s 'http://127.0.0.1:3210/api/nodes/1/secret-scan?format=md'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js secret scan "项目A/需求1" [--scope self|subtree] [--format json|md]
+# MCP: secret_scan { node, scope?, format? }
+```
+
+> 扫描对象只含**非空文档**；没有可扫描内容时返回 `ready=null`，不是安全通过。
+> 高危命中（PEM 私钥 / AWS / GitHub / Slack / JWT / 显式密钥赋值）阻塞并进入 `blockers`，
+> `Bearer` 提示进入 `warnings` 但不阻塞。
+> 所有证据只返回脱敏值与 `[REDACTED:<rule>]` 上下文；JSON / MCP / markdown 都不会回显凭据原文。
+> 只读接口：不写库、不动 revision。
+
 ## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 ```bash

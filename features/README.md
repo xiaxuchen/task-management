@@ -38,6 +38,7 @@
 | **上线治理**（上线配置 / 上线 SQL / 上线检查清单 + agent 前置检查派单） | `release-governance/` | — | server/{db,store,ops}.mjs（release_items）+ 三入口 release_* |
 | **需求就绪门禁**（需求内容 / 概要设计 / 可回归用例三条门禁 + 子树汇总，纯读聚合不落表） | `requirement-readiness/` | — | server/{config,store,ops}.mjs（buildRequirementReadiness）+ 三入口 readiness |
 | **交付门禁**（需求就绪 / 测试验收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
+| **文档敏感信息扫描**（节点/子树文档只读凭据扫描；高危阻塞、证据强制脱敏、空态 ready=null） | `secret-scan/` | — | server/store.mjs（buildSecretScan）+ server/ops.mjs（renderSecretScanMd）+ 三入口 secret_scan |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 

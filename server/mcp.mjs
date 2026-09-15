@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderSecretScanMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -755,6 +755,18 @@ export function createMcpServer({ store }) {
       const n = store.resolveRef(String(node))
       const readiness = store.buildRequirementReadiness(n.id, { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderReadinessMd(readiness) : JSON.stringify(readiness, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'secret_scan',
+    '文档敏感信息扫描：只读扫描节点（含可选子树）的文档正文，命中 API Key / Token / 私钥等模式时给出稳定规则名与脱敏证据；不落表、不动 revision，输出绝不回显凭据原值',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const scan = store.buildSecretScan(n.id, { scope })
+      const text = store.normalizeFormat(format) === 'md' ? renderSecretScanMd(scan) : JSON.stringify(scan, null, 2)
       return { content: [{ type: 'text', text }] }
     })
   )
