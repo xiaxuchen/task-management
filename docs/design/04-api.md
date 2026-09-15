@@ -109,6 +109,12 @@
 |---|---|---|
 | GET | `/api/nodes/:id/business-gate` | 业务检查门禁：`?scope=self\|subtree`，`?format=json\|md`。判定范围内**未关闭缺陷**（`defect` 且 `status` ∉ `done`/`cancelled`）与**启用中的 `biz_check` 用例最近结论**（只认 `pass`，`running` / `not_run` 都阻塞）；只采信 `report.kind === case.kind` 的报告（跨 kind 的报告视同未执行，防假绿）；无缺陷且无启用用例时 `ready=null`；`blockers` 按 `open_defect` / `unpassed_case` 分型；**纯读聚合，不写库、不动 revision** |
 
+### 文档敏感信息扫描（只读安全前置判定）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/secret-scan` | 文档敏感信息扫描：`?scope=self\|subtree`，`?format=json\|md`。只读扫描节点（含子树）的非空文档，命中 PEM 私钥 / AWS / GitHub / Slack / JWT / 显式密钥赋值等模式时给稳定规则名、脱敏证据与处置建议；高危命中 `ready=false`，仅提示或未命中 `ready=true`，没有非空文档 `ready=null`；**命中原值绝不回显，只读不写库、不动 revision** |
+
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 | Method | Path | 说明 |
@@ -169,6 +175,6 @@
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
-这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `mindmap` / `acceptance_report` / `delivery_gate` /
+这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `mindmap` / `code_audit` / `business_gate` / `secret_scan` / `acceptance_report` / `delivery_gate` /
 `release_checklist` / `release_sql_audit` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
 概要设计大纲（`design_outline` / `design_outline_apply`）同样吃这套 `scope` / `format` 校验。

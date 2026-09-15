@@ -2007,6 +2007,225 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 文档敏感信息扫描（只读安全前置判定） ----------
+  //
+  // AI 编码代理会把 curl 示例、环境变量片段、联调凭据写进需求 / 设计 / 验收文档；
+  // 这些文档随后常被贴进 issue / MR / 测试报告，明文凭据一旦进入评审链就会扩散。
+  // 这里对既有 documents 做一次只读扫描：命中即给稳定规则名与脱敏证据，不落表、不动 revision。
+  // 关键约束：扫描结果本身绝不能再回显原值——证据只保留脱敏值与已替换为 `[REDACTED]` 的上下文。
+
+  const SECRET_SCAN_PLACEHOLDER =
+    /(example|sample|placeholder|your[_-]?|changeme|change[_-]?me|redacted|dummy|fake|todo|xxxx|<[^>]+>)/i
+
+  const SECRET_SCAN_RULES = [
+    {
+      key: 'private_key_block',
+      label: '私钥块',
+      severity: 'danger',
+      pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g,
+      advice: '删除私钥正文并改为引用密钥管理系统 / CI Secret'
+    },
+    {
+      key: 'aws_access_key',
+      label: 'AWS Access Key',
+      severity: 'danger',
+      pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
+      advice: '立即轮换该访问密钥，并从文档中移除'
+    },
+    {
+      key: 'github_token',
+      label: 'GitHub Token',
+      severity: 'danger',
+      pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b/g,
+      advice: '立即吊销该 token，改用仓库 Secret / 环境变量'
+    },
+    {
+      key: 'slack_token',
+      label: 'Slack Token',
+      severity: 'danger',
+      pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+      advice: '撤销该 token 并从文档中移除'
+    },
+    {
+      key: 'jwt',
+      label: 'JWT Token',
+      severity: 'danger',
+      pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+      advice: '示例改用占位符；真实 token 需要吊销并轮换'
+    },
+    {
+      key: 'bearer_token',
+      label: 'Bearer Token',
+      severity: 'warn',
+      pattern: /\bBearer\s+([A-Za-z0-9._~+/=-]{16,})\b/gi,
+      advice: '文档里的 Bearer token 改为 `<token>` 占位符'
+    },
+    {
+      key: 'generic_secret_assignment',
+      label: '密钥赋值',
+      severity: 'danger',
+      // 只匹配「键 + 分隔符 + 值」的显式赋值；示例 / 占位值在下面统一过滤。
+      pattern: /["']?\b(api[_-]?key|secret|token|password|passwd|pwd)\b["']?\s*[:=]\s*["']?([A-Za-z0-9_./+=~-]{12,})["']?/gi,
+      advice: '示例统一使用占位符，真实凭据放入本机 config / CI Secret'
+    }
+  ]
+
+  function maskSecretValue(value) {
+    const s = String(value == null ? '' : value)
+    if (s.length <= 8) return '***'
+    return `${s.slice(0, 4)}***${s.slice(-4)}`
+  }
+
+  /**
+   * 同一行可能命中多个凭据。excerpt 不能只替换当前命中片段，
+   * 否则 A 命中的证据会把 B 命中的原文一起带出来，形成二次泄露。
+   *
+   * 这里先把同一行的全部命中区间合并成互不重叠的脱敏区间，
+   * 再为每条 finding 生成完整脱敏后的上下文；主命中保留自己的规则名，其余命中也一并替换。
+   */
+  function mergeHitRanges(hits) {
+    const sorted = [...hits].sort((a, b) => a.start - b.start || b.end - a.end)
+    const merged = []
+    for (const hit of sorted) {
+      const last = merged[merged.length - 1]
+      if (!last || hit.start >= last.end) {
+        merged.push({ start: hit.start, end: hit.end, hits: [hit] })
+      } else {
+        last.end = Math.max(last.end, hit.end)
+        last.hits.push(hit)
+      }
+    }
+    return merged
+  }
+
+  function redactLineWithHits(line, hits, primary) {
+    const raw = String(line == null ? '' : line)
+    let out = ''
+    let cursor = 0
+    for (const range of mergeHitRanges(hits)) {
+      out += raw.slice(cursor, range.start)
+      const marker =
+        range.hits.find((h) => h === primary) ||
+        range.hits.find((h) => h.start <= primary.start && h.end >= primary.end) ||
+        range.hits[0]
+      out += `[REDACTED:${marker.rule}]`
+      cursor = range.end
+    }
+    out += raw.slice(cursor)
+    return out.trim().slice(0, 240)
+  }
+
+  /**
+   * 文档敏感信息扫描：节点（含可选子树）文档正文 → 稳定规则命中 + 脱敏证据。
+   *
+   * ready 三态与其它只读聚合一致：有 danger 命中 → false；扫描过且只有 warn / 无命中 → true；
+   * 范围内没有任何文档 → null（没有可扫描对象，不是「安全通过」）。
+   */
+  function buildSecretScan(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const ph = ids.map(() => '?').join(',')
+    const docs = db
+      .prepare(`SELECT * FROM documents WHERE node_id IN (${ph}) ORDER BY node_id, sort, id`)
+      .all(...ids)
+      .filter((d) => String(d.content || '').trim() !== '')
+    const nodesById = new Map(ids.map((id) => [id, nodeVO(rawNode(id))]))
+    const findings = []
+
+    for (const doc of docs) {
+      const text = String(doc.content || '')
+      if (!text) continue
+      const node = nodesById.get(doc.node_id)
+      const lines = text.split(/\r?\n/)
+      for (const [lineIndex, line] of lines.entries()) {
+        const lineHits = []
+        for (const rule of SECRET_SCAN_RULES) {
+          const re = new RegExp(rule.pattern.source, rule.pattern.flags)
+          let m
+          while ((m = re.exec(line)) !== null) {
+            const rawMatch = m[0]
+            // 公共文档里的 AWS / GitHub 官方示例值必须放过，否则扫描会长期噪声化。
+            if (rule.key !== 'generic_secret_assignment' && SECRET_SCAN_PLACEHOLDER.test(rawMatch)) {
+              if (re.lastIndex === m.index) re.lastIndex += 1
+              continue
+            }
+            let secretValue = rawMatch
+            let redacted = maskSecretValue(rawMatch)
+            let start = m.index
+            let end = m.index + rawMatch.length
+
+            if (rule.key === 'generic_secret_assignment') {
+              secretValue = m[2] || ''
+              if (!secretValue || SECRET_SCAN_PLACEHOLDER.test(secretValue)) continue
+              const valueOffset = rawMatch.lastIndexOf(secretValue)
+              start = m.index + valueOffset
+              end = start + secretValue.length
+              redacted = maskSecretValue(secretValue)
+            } else if (rule.key === 'bearer_token') {
+              secretValue = m[1] || rawMatch
+              const valueOffset = rawMatch.lastIndexOf(secretValue)
+              start = m.index + Math.max(0, valueOffset)
+              end = start + secretValue.length
+              redacted = maskSecretValue(secretValue)
+            }
+
+            lineHits.push({
+              rule: rule.key,
+              label: rule.label,
+              severity: rule.severity,
+              advice: rule.advice,
+              start,
+              end,
+              redacted,
+              secretValue
+            })
+            if (re.lastIndex === m.index) re.lastIndex += 1
+          }
+        }
+        lineHits.sort((a, b) => a.start - b.start || b.end - a.end)
+        for (const hit of lineHits) {
+          findings.push({
+            nodeId: doc.node_id,
+            nodeName: node ? node.name : '',
+            nodePath: node ? node.path : '',
+            docId: doc.id,
+            docName: doc.name,
+            rule: hit.rule,
+            label: hit.label,
+            severity: hit.severity,
+            advice: hit.advice,
+            line: lineIndex + 1,
+            column: hit.start + 1,
+            redacted: hit.redacted,
+            excerpt: redactLineWithHits(line, lineHits, hit)
+          })
+        }
+      }
+    }
+
+    const danger = findings.filter((f) => f.severity === 'danger')
+    const warnings = findings.filter((f) => f.severity === 'warn')
+    const byRule = {}
+    for (const f of findings) byRule[f.rule] = (byRule[f.rule] || 0) + 1
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope: effectiveScope,
+      ready: findings.length === 0 ? (docs.length === 0 ? null : true) : danger.length === 0,
+      totals: {
+        documents: docs.length,
+        scannedCharacters: docs.reduce((n, d) => n + String(d.content || '').length, 0),
+        findings: findings.length,
+        danger: danger.length,
+        warnings: warnings.length
+      },
+      byRule,
+      findings,
+      blockers: danger,
+      warnings
+    }
+  }
+
   // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------
   //
   // 需求 → 概要设计/文档 → 回归测试（test_cases）→ 上线清单（release_items）。
@@ -3649,6 +3868,8 @@ export function createStore(db, options = {}) {
     getReadinessConfig: () => ({ ...readiness }),
     // 思维导图（树 → mermaid mindmap 的只读投影）
     buildMindmap,
+    // 文档敏感信息扫描（只读安全前置判定）
+    buildSecretScan,
     // 上线治理（上线配置 / 上线 SQL / 上线检查清单）
     RELEASE_ITEM_KINDS,
     createReleaseItem,

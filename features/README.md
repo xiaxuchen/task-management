@@ -48,6 +48,7 @@
 | **并行派单**（回归用例 fan-out：每条用例一个独立 agent 任务，`maxParallel` 护栏） | `test-fanout/` | — | server/ops.mjs（runTestCases 的 fanout 分支）+ 三入口 test_run 的 `fanout`/`maxParallel` |
 | **代码检查**（已登记提交新增行的只读静态审查：冲突标记 / 私钥 / 硬编码凭据 / eval / 聚焦测试 / 调试遗留，danger 阻塞 + warn 提示） | `code-audit/` | — | server/{git,code-audit,ops}.mjs（commitAddedLines / getNodeCodeAudit）+ 三入口 code_audit + NodeDrawer「代码检查」页签 |
 | **业务检查门禁**（未关闭缺陷 + 启用中 biz_check 用例最近结论，纯读聚合不落表） | `business-gate/` | — | server/{store,ops}.mjs（buildBusinessGate）+ 三入口 business_gate + NodeDrawer「业务检查」页签 |
+| **文档敏感信息扫描**（节点/子树文档只读凭据扫描；高危阻塞、证据强制脱敏、空态 ready=null） | `secret-scan/` | — | server/store.mjs（buildSecretScan）+ server/ops.mjs（renderSecretScanMd）+ 三入口 secret_scan |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 
