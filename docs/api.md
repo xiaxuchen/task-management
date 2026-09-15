@@ -383,10 +383,10 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 > `release-checklist` / `delivery-gate` / `diffs` / `tracks` / `duplicates`。
 > 空态：子树内没有需求时返回 `ready=null`（`totals.units=0`），不是 400。
 
-## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
+## 交付门禁（需求就绪 / 测试验收 / 上线治理 / 代码推送的最终汇总）
 
 ```bash
-# 单节点最终交付结论：来源为 readiness / acceptance / release 三段既有结论
+# 单节点最终交付结论：来源为 readiness / acceptance / release / push 四段既有结论
 curl -s http://127.0.0.1:3210/api/nodes/1/delivery-gate
 
 # 连子树一起判定（挂在项目 / 需求上）

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd, buildDeliveryGateFull } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -772,11 +772,10 @@ export function createMcpServer({ store }) {
 
   server.tool(
     'delivery_gate',
-    '交付门禁：汇总需求就绪 / 测试验收 / 上线治理三段既有结论，给出唯一“能否交付”判定；format=md 返回可贴进 issue 的 markdown',
+    '交付门禁：汇总需求就绪 / 测试验收 / 上线治理 / 代码推送四段既有结论，给出唯一“能否交付”判定；format=md 返回可贴进 issue 的 markdown',
     { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
     mcpValidate(async ({ node, scope, format }) => {
-      const n = store.resolveRef(String(node))
-      const gate = store.buildDeliveryGate(n.id, { scope })
+      const gate = await buildDeliveryGateFull(store, String(node), { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
       return { content: [{ type: 'text', text }] }
     })
