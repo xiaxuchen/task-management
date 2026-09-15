@@ -287,6 +287,52 @@ curl -s -X POST http://127.0.0.1:3210/api/documents/4/versions/2/restore
 { "error": { "code": "DOC_NAME_EXISTS", "message": "节点下已存在文档「需求内容」" } }
 ```
 
+### 文档图片上传
+
+Vditor 粘贴 / 拖拽 / 选择图片后走这里；落盘到 `~/.taskboard/uploads/`，返回的地址可直接写进 Markdown。
+
+```bash
+# base64（也接受 data:image/png;base64,... 形式）
+curl -s -X POST http://127.0.0.1:3210/api/uploads \
+  -H 'content-type: application/json' \
+  -d "{\"name\":\"shot.png\",\"data\":\"$(base64 -i shot.png)\"}"
+```
+
+```json
+{ "url": "/uploads/1757900000000-a1b2c3d4e5f6.png", "name": "1757900000000-a1b2c3d4e5f6.png", "size": 20481, "mime": "image/png", "alt": "shot.png" }
+```
+
+```bash
+# 静态访问（Markdown 预览即走这里）
+curl -s -o out.png http://127.0.0.1:3210/uploads/1757900000000-a1b2c3d4e5f6.png
+
+# 不存在的图片 → 404（终结性，不会回落 SPA 变成 200 HTML）
+curl -s -o - -w '\n%{http_code}\n' http://127.0.0.1:3210/uploads/nope.png
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js upload ./shot.png [--name x.png] [--data <base64>]
+# MCP: upload_image { name, data }
+```
+
+校验口径：扩展名白名单（`png / jpg / jpeg / gif / webp`）→ 解码后字节数 ≤ 10 MB → **魔数**与声明类型交叉校验
+（改名 / 伪装的类型不符一律拦下，落盘扩展名以真实内容为准）。
+返回体里的 `alt` 是服务端转义好的文件名（`]` `[` `\` 已转义），前端直接拼进 `![alt](url)` 即可，
+避免文件名含 `]` 时截断 Markdown 图片语法。
+
+不合规返回：
+
+```json
+{ "error": { "code": "UPLOAD_INVALID_TYPE", "message": "文件扩展名（.png）与内容不符，实际为 .gif", "details": { "allowed": ["png","jpg","jpeg","gif","webp"], "maxBytes": 10485760 } } }
+```
+
+请求体超过 20 MB JSON 限额 → `413 PAYLOAD_TOO_LARGE`；请求体不是合法 JSON → `400 VALIDATION_FAILED`。
+两者都**不会**再落到 500 `INTERNAL_ERROR`（框架层错误已按下表归一）：
+
+| HTTP | code | 场景 |
+|---|---|---|
+| 413 | `PAYLOAD_TOO_LARGE` | 请求体超过 `express.json` 的 20 MB 限额（图片单张上限 10 MB） |
+| 400 | `VALIDATION_FAILED` | 请求体不是合法 JSON |
+
 ## 提交登记 / 仓库 / 配置
 
 ```bash

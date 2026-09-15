@@ -1,9 +1,11 @@
 import express from 'express'
+import fs from 'node:fs'
 import { AppError, CODES } from './errors.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
-import { loadConfig, saveConfig, maskToken } from './config.mjs'
+import { loadConfig, saveConfig, maskToken, UPLOAD_DIR } from './config.mjs'
+import { saveUpload } from './uploads.mjs'
 
 const STATUS_BY_CODE = {
   [CODES.VALIDATION_FAILED]: 400,
@@ -25,6 +27,7 @@ const STATUS_BY_CODE = {
   [CODES.REPORT_STATUS_IMMUTABLE]: 409,
   [CODES.UPLOAD_INVALID_TYPE]: 400,
   [CODES.UPLOAD_TOO_LARGE]: 400,
+  [CODES.PAYLOAD_TOO_LARGE]: 413,
   [CODES.GITLAB_NOT_CONFIGURED]: 400,
   [CODES.GITLAB_AUTH_FAILED]: 502,
   [CODES.GITLAB_PROJECT_NOT_FOUND]: 502,
@@ -37,6 +40,51 @@ const STATUS_BY_CODE = {
 function errorBody(err) {
   const code = err.code || 'INTERNAL_ERROR'
   return { error: { code, message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) } }
+}
+
+/**
+ * body-parser / express 抛出的框架错误没有稳定业务码（`err.code` 缺失或为框架私有值），
+ * 直接透传会让客户端错误落到 500。这里按 `err.type` / `err.status` 归一到业务码。
+ * 返回 null 表示不是框架错误，交给通用分支处理。
+ */
+function mapFrameworkError(err) {
+  if (!err) return null
+  const type = err.type
+  if (type === 'entity.too.large') {
+    return {
+      status: 413,
+      code: CODES.PAYLOAD_TOO_LARGE,
+      message: '请求体超过上限（express.json 限额 20 MB；图片单张上限 10 MB）',
+      details: { limit: '20mb', maxUploadBytes: 10 * 1024 * 1024 }
+    }
+  }
+  if (type === 'entity.parse.failed') {
+    return {
+      status: 400,
+      code: CODES.VALIDATION_FAILED,
+      message: '请求体不是合法 JSON'
+    }
+  }
+  if (type === 'charset.unsupported' || type === 'entity.verify.failed') {
+    return { status: type === 'charset.unsupported' ? 415 : 403, code: CODES.VALIDATION_FAILED, message: err.message }
+  }
+  // send/sendFile 等静态层错误：保持 HTTP 状态码，但换成稳定业务 code。
+  // 注意 send 的错误带的是**文件系统 errno**（如 `code: 'ENOENT'`），不是业务码——
+  // 只判 `!err.code` 会漏掉它，进而落到通用分支按未知 code 报成 500。
+  // 业务错误（AppError）没有 `err.status`，因此这里用 status 作为「框架/HTTP 层」的判据。
+  if (typeof err.status === 'number' && err.status < 500 && !isBusinessCode(err.code)) {
+    return {
+      status: err.status,
+      code: err.status === 404 ? CODES.NOT_FOUND : CODES.VALIDATION_FAILED,
+      message: err.message || `HTTP ${err.status}`
+    }
+  }
+  return null
+}
+
+/** 是否是本仓库定义的稳定业务码（由 AppError 产生） */
+function isBusinessCode(code) {
+  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(CODES, code)
 }
 
 export function createApp({ store }) {
@@ -57,6 +105,16 @@ export function createApp({ store }) {
   // ---------- 发现与读取 ----------
 
   app.get('/api/health', wrap((req, res) => res.json({ ok: true, revision: store.getRevision() })))
+
+  // 图片上传：Vditor 粘贴 / 选择图片 → base64 JSON → 返回可被 Markdown 引用的 URL。
+  // 静态访问由 index.mjs 的 express.static(UPLOAD_DIR) 提供（/uploads/:name）。
+  app.post(
+    '/api/uploads',
+    wrap((req, res) => {
+      const out = saveUpload({ name: req.body?.name, data: req.body?.data })
+      res.status(201).json(out)
+    })
+  )
 
   app.get(
     '/api/schema',
@@ -1030,12 +1088,33 @@ export function createApp({ store }) {
   )
 
   // ---------- 错误处理 ----------
+  // 文档图片静态访问（Markdown 预览直接引用 /uploads/<name>）。
+  // 挂在 createApp 内，保证测试与真实服务（含 SPA 回退）行为一致。
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+  app.use('/uploads', express.static(UPLOAD_DIR))
+  // 终结性 404：静态未命中时必须在这里结束，不能 next() 交给上层 SPA 回退——
+  // 否则图片被删/改名后前端 <img> 会拿到 200 + index.html，静默裂图且无从感知。
+  app.use('/uploads', (req, res) => {
+    res.status(404).json({
+      // 挂载点下的 req.path 是相对的，拼回 baseUrl 才能报出用户看到的完整地址
+      error: { code: CODES.NOT_FOUND, message: `图片不存在：${req.baseUrl}${req.path}` }
+    })
+  })
   // 只对 /api/* 路由返回 404 JSON，非 API 路由放过（让上层静态托管或 SPA 回退处理）
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api/')) return next()
     res.status(404).json({ error: { code: 'NOT_FOUND', message: `未知 API 路由 ${req.method} ${req.path}` } })
   })
   app.use((err, req, res, _next) => {
+    // 框架层错误（body-parser / send 等）没有稳定 code，必须显式映射成业务码：
+    // 否则「请求体过大」「JSON 格式错」这类纯客户端错误会被报成 500 服务端故障。
+    const framework = mapFrameworkError(err)
+    if (framework) {
+      res.status(framework.status).json({
+        error: { code: framework.code, message: framework.message, ...(framework.details ? { details: framework.details } : {}) }
+      })
+      return
+    }
     const code = err.code || 'INTERNAL_ERROR'
     const status = STATUS_BY_CODE[code] || 500
     if (status >= 500) console.error('[task-board]', err)

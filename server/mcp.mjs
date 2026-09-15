@@ -7,6 +7,7 @@ import { loadConfig, saveConfig, maskToken } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
+import { saveUpload } from './uploads.mjs'
 
 export function createMcpServer({ store }) {
   const cfg = loadConfig()
@@ -1077,6 +1078,19 @@ export function createMcpServer({ store }) {
       }
       return { content: [{ type: 'text', text: JSON.stringify(maskToken(saveConfig(patch)), null, 2) }] }
     }
+  )
+
+  server.tool(
+    'upload_image',
+    '上传文档图片（png / jpg / jpeg / gif / webp，≤10 MB）；data 为 base64 或 data URL，返回可写进 Markdown 的 /uploads/<name> 地址',
+    // `.catch(undefined)`：对外的 JSON schema 仍是 `type: string` + required（AI 看到的契约不变），
+    // 但类型错误 / 缺字段不再被 SDK 拦成 `-32602`，而是下沉到 handler 由 mcpValidate 归一成
+    // `isError + VALIDATION_FAILED`，与 HTTP / CLI 的错误契约一致（D6）。
+    { name: z.string().catch(undefined), data: z.string().catch(undefined) },
+    mcpValidate(async ({ name, data }) => {
+      const out = saveUpload({ name, data })
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+    })
   )
 
   return server

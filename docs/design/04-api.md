@@ -58,7 +58,7 @@
 | GET | `/api/config` | 读取配置（token 打码） |
 | PUT | `/api/config` | 保存配置 |
 | POST | `/api/config/gitlab/test` | GitLab 连通性测试（返回当前用户与项目可达性） |
-| POST | `/api/uploads` | 上传图片：请求体 JSON `{ name, data }`（`data` 为 base64，`express.json` 限额 20 MB），存入 `~/.taskboard/uploads/`，返回 `{ url: "/uploads/<name>" }` |
+| POST | `/api/uploads` | 上传图片：请求体 JSON `{ name, data }`（`data` 为 base64 或 data URL，`express.json` 限额 20 MB），存入 `~/.taskboard/uploads/`，返回 `{ url, name, size, mime }`；扩展名白名单 + ≤10 MB + 魔数交叉校验 |
 | GET | `/uploads/:name` | 图片静态访问（Markdown 预览使用） |
 
 ### 回归测试闭环（AI 可回归测试 → 测试/验收报告）

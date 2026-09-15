@@ -1,10 +1,12 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
+import { saveUpload } from './uploads.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -88,6 +90,7 @@ const OPTIONS = {
   port: { type: 'string' },
   'gitlab-base': { type: 'string' },
   'gitlab-token': { type: 'string' },
+  data: { type: 'string' },
   'include-disabled': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' }
 }
@@ -121,6 +124,7 @@ const HELP = `task-board <命令>
   attr set <ref> k=v [k2=v2 ...]
   attr-def add --type t --key k --label l [--data-type text|textarea|number|date|select|url] [--options '[...]'] [--required]
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
+  upload <图片路径> [--name <文件名>] [--data <base64>]   上传文档图片 → { url: "/uploads/..." }
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>] [--branch <分支>] [--overwrite-branch]
   commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
   commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
@@ -192,6 +196,29 @@ function readMaybeFile({ content, file }) {
   return content
 }
 
+/**
+ * 读取图片文件并转 base64。把 fs 的裸错误（ENOENT / EISDIR / EACCES）归一成
+ * 稳定业务码 `VALIDATION_FAILED`，与其他入口的错误契约保持一致——
+ * 否则 CLI 会打出 `ENOENT: …` 这种没有 code 的裸错误，AI 无法按码自纠。
+ */
+function readFileAsBase64(file) {
+  let buf
+  try {
+    buf = fs.readFileSync(file)
+  } catch (e) {
+    const hint =
+      e.code === 'ENOENT' ? '文件不存在'
+      : e.code === 'EISDIR' ? '这是一个目录，不是图片文件'
+      : e.code === 'EACCES' ? '没有读取权限'
+      : '文件不可读'
+    throw Object.assign(new Error(`${hint}：${file}`), {
+      code: 'VALIDATION_FAILED',
+      details: { path: file, reason: e.code || 'READ_FAILED' }
+    })
+  }
+  return buf.toString('base64')
+}
+
 /** --enabled 取值：true/1/yes → 1，false/0/no → 0，未提供 → undefined；非法值抛错 */
 function parseEnabled(v) {
   if (v === undefined) return undefined
@@ -252,6 +279,19 @@ export async function run(argv) {
     action = ''
   }
   const json = (v) => console.log(JSON.stringify(v, null, 2))
+
+  // `upload <图片路径>`：第二段是路径而不是子命令，必须在拼 `group action` 之前拦下
+  if (group === 'upload') {
+    const imgPath = action || values.file
+    let name = values.name
+    let data = values.data
+    if (imgPath) {
+      name = name || path.basename(imgPath)
+      data = readFileAsBase64(imgPath)
+    }
+    json(saveUpload({ name, data }))
+    return 0
+  }
 
   switch (`${group} ${action || ''}`.trim()) {
     case 'tree': {

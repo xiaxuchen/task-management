@@ -102,6 +102,40 @@ const PREVIEW_OPTIONS = {
   markdown: MD_OPTIONS
 }
 
+/** File → data URL（Vditor 的 upload.handler 拿到的是原始 File[]） */
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+/**
+ * Vditor 自定义上传：逐张转 data URL → POST /api/uploads → 把返回地址写进 Markdown。
+ * handler 的契约：返回 string 表示「校验/上传失败，作为提示文案」；返回 null 表示已自行处理。
+ */
+async function handleUpload(files) {
+  const list = Array.from(files || [])
+  if (!list.length) return null
+  const failed = []
+  for (const file of list) {
+    try {
+      const data = await readAsDataUrl(file)
+      const res = await api.uploadImage({ name: file.name || 'image.png', data })
+      // alt 用服务端返回的转义结果：文件名里的 `]` 会截断 Markdown 图片语法，
+      // 导致「落库看着正常、预览却是裂图」（D2）。服务端单点转义，前端不自行拼接。
+      if (vditor) vditor.insertValue(`![${res.alt || 'image'}](${res.url})`)
+    } catch (e) {
+      failed.push(`${file.name || '图片'}：${e.message}`)
+    }
+  }
+  if (failed.length) return failed.join('；')
+  await saveNow()
+  return null
+}
+
 function destroyEditor() {
   clearTimeout(saveTimer)
   stopPolling()
@@ -139,12 +173,17 @@ async function render() {
     lang: 'zh_CN',
     theme: 'classic',
     icon: 'ant',
+    // 图片：粘贴 / 拖拽 / 选择都走自定义 handler（base64 JSON → /api/uploads）
+    upload: {
+      accept: 'image/png,image/jpeg,image/gif,image/webp',
+      handler: handleUpload
+    },
     placeholder: '支持 Markdown、代码块、表格、任务列表、mermaid、KaTeX',
     toolbar: [
       'headings', 'bold', 'italic', 'strike', '|',
       'list', 'ordered-list', 'check', '|',
       'quote', 'line', 'code', 'inline-code', '|',
-      'link', 'table', '|',
+      'link', 'table', 'upload', '|',
       'undo', 'redo', '|',
       'edit-mode', 'outline', 'fullscreen'
     ],

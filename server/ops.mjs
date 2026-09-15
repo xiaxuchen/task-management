@@ -85,7 +85,8 @@ export const TOOLS = [
   'import_outline',
   'batch',
   'config_get',
-  'config_set'
+  'config_set',
+  'upload_image'
 ]
 
 /** /api/schema：AI 的能力发现入口（节点类型 / 状态值域 / 属性定义 / 工具清单） */

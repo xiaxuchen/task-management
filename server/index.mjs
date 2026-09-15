@@ -1,13 +1,12 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
-import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import express from 'express'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { createApp } from './http.mjs'
 import { ensureLocalRuntime } from './agent.mjs'
 import { loadConfig, DB_PATH } from './config.mjs'
+import { mountSpa } from './static.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(ROOT, '..', 'web', 'dist')
@@ -33,24 +32,8 @@ export async function startServer({ port, open = true, host = '127.0.0.1' } = {}
     /* 运行时注册失败不阻断服务启动 */
   }
   const app = createApp({ store })
-  // 前端构建产物静态托管
-  if (fs.existsSync(DIST)) {
-    app.use(
-      express.static(DIST, {
-        setHeaders: (res, filePath) => {
-          // index.html 必须每次回源校验，否则前端重新构建后浏览器仍用缓存的旧版本；
-          // 带 content-hash 的 assets 不受影响
-          if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache')
-        }
-      })
-    )
-    // SPA 回退：非 API 请求返回 index.html（Express 5 不支持 * 通配符，用中间件兜底）
-    app.use((req, res, next) => {
-      if (req.path.startsWith('/api/')) return next()
-      res.setHeader('Cache-Control', 'no-cache')
-      res.sendFile(path.join(DIST, 'index.html'))
-    })
-  }
+  // 前端构建产物静态托管 + SPA 回退（抽到 static.mjs 以便在生产形态布局下做 UT）
+  mountSpa(app, { dist: DIST })
 
   const basePort = Number(port || cfg.port)
   let server = null
