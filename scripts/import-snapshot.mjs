@@ -92,16 +92,38 @@ try {
   // 会把合法外键静默写成 NULL（行数守恒、孤儿检查都发现不了）。
   // 因此分两阶段：先按计划插入全部行，把这些列留空，全部插完后再统一回填。
   const deferred = []
+  const skippedRequiredFks = []
 
   for (const { name, fks } of PLAN) {
     const selfCols = new Set(fks.filter((f) => f.table === name).map((f) => f.column))
+    const requiredCols = new Set(
+      db
+        .prepare(`PRAGMA table_info(${name})`)
+        .all()
+        .filter((c) => c.notnull)
+        .map((c) => c.name)
+    )
 
     for (const r of [...(snap.tables[name] || [])]) {
       const row = { ...r }
+      let skip = false
       for (const fk of fks) {
         // 自引用列先留空，全部行插入完成后再回填（见下）
-        row[fk.column] = selfCols.has(fk.column) ? null : mapId(fk.table, r[fk.column])
+        if (selfCols.has(fk.column)) {
+          row[fk.column] = null
+          continue
+        }
+        const mapped = mapId(fk.table, r[fk.column])
+        // 引用目标没进快照时：可空列按历史行为置空；必填列必须丢弃整行，
+        // 否则会把「孤儿行」变成 NOT NULL 崩溃（XPX-151 的文档历史回归）。
+        if (r[fk.column] != null && mapped == null && requiredCols.has(fk.column)) {
+          skippedRequiredFks.push(`${name}.${fk.column} 旧 id ${r[fk.column]}`)
+          skip = true
+          break
+        }
+        row[fk.column] = mapped
       }
+      if (skip) continue
       const info = insert(name, row)
       const newId = Number(info.lastInsertRowid)
       idMaps[name].set(r.id, newId)
@@ -134,6 +156,9 @@ try {
     console.warn(
       `[import] 警告：以下自引用关系在快照里找不到目标行，已置空（非静默处理）：${unresolved.join(', ')}。`
     )
+  }
+  if (skippedRequiredFks.length) {
+    console.warn(`[import] 警告：以下必填外键在快照里找不到目标行，已丢弃对应行：${skippedRequiredFks.join(', ')}。`)
   }
 
   // revision 对齐快照（前端轮询据此刷新）
