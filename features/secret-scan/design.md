@@ -22,6 +22,11 @@
 证据里的 `redacted` 只保留前后少量字符，`excerpt` 用 `[REDACTED:<rule>]` 替换命中片段，
 以免扫描报告本身泄露原始 token。
 
+**R4.1 同一行多命中必须整行统一脱敏**：一行出现多个凭据（例如 `token=a password=b`）时，
+若每条 finding 只替换自己的命中片段，A 的 `excerpt` 会把 B 的原文一起带出去。因此先收集整行全部命中区间，
+合并后一次性替换，再为每条 finding 生成完全脱敏的上下文。回归覆盖同一行双 `generic` 与 `AWS + generic`，
+并断言 store / HTTP / CLI / MCP / markdown 均不含任一原值。
+
 **R5 规则按行匹配**：行列号用于定位，位置信息比全文本偏移更便于人修订；
 行内正则扫描也避免跨行误配（例如把两行相邻文本拼成一个 token）。
 
@@ -30,6 +35,10 @@
 
 **R7 `scope` / `format` 单点校验**：入口透传原始值给 `store.normalizeScope` / `normalizeFormat`；
 非法值必须报错，不能先做三元降级。
+
+**R7.1 MCP 非字符串参数也要走业务错误**：`z.string()` 会在 handler 之前抛 SDK `-32602`，
+与 HTTP / CLI 的 `VALIDATION_FAILED` 契约不一致。MCP `secret_scan` 的 `scope` / `format` 放宽接收，
+再在 handler 内显式拒绝非字符串，统一返回 `isError + VALIDATION_FAILED`。
 
 ## 3. 规则集（首版）
 

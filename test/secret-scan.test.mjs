@@ -109,6 +109,36 @@ test('secret_scan：命中证据强制脱敏，接口输出不包含原值', asy
   assert.match(scan.findings[0].excerpt, /\[REDACTED:generic_secret_assignment\]/)
 })
 
+test('D1 回归：同一行两个 generic 凭据时，任一 excerpt 都不泄露另一个原文', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const a = 'abcdefghijklmnop'
+  const b = 'qrstuvwxyzabcdef'
+  store.upsertDocument(r.id, '联调说明', `token=${a} password=${b}`)
+  const scan = store.buildSecretScan(r.id)
+  assert.equal(scan.totals.danger, 2)
+  const json = JSON.stringify(scan)
+  assert.ok(!json.includes(a), '第一个凭据原文不得出现在任何输出中')
+  assert.ok(!json.includes(b), '第二个凭据原文不得出现在任何输出中')
+  for (const f of scan.findings) {
+    assert.equal((f.excerpt.match(/\[REDACTED:generic_secret_assignment\]/g) || []).length, 2)
+  }
+})
+
+test('D1 回归：同一行 AWS + generic 凭据时，两类 excerpt 都完整脱敏', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const aws = ['AKIA', '1234567890ABCDEF'].join('')
+  const token = 'abcdefghijklmnop'
+  store.upsertDocument(r.id, '联调说明', `aws=${aws} token=${token}`)
+  const scan = store.buildSecretScan(r.id)
+  assert.equal(scan.totals.danger, 2)
+  const json = JSON.stringify(scan)
+  assert.ok(!json.includes(aws), 'AWS 原文不得出现在任何输出中')
+  assert.ok(!json.includes(token), 'generic 原文不得出现在任何输出中')
+  assert.ok(scan.findings.every((f) => !f.excerpt.includes('AKIA') && !f.excerpt.includes(token)))
+})
+
 test('secret_scan：scope=self 只看本节点；subtree 纳入子树并回填来源节点', async (t) => {
   const { tmp, store, r, s } = await setup()
   t.after(() => tmp.cleanup())
@@ -191,6 +221,31 @@ test('HTTP secret-scan：JSON / md / scope / 非法参数与 store 一致', asyn
   }
 })
 
+test('D1 回归：同行多凭据在 HTTP / markdown 中不回显任一原值', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const a = 'abcdefghijklmnop'
+  const b = 'qrstuvwxyzabcdef'
+  store.upsertDocument(r.id, '联调说明', `token=${a} password=${b}`)
+  const { createApp } = await import('../server/http.mjs')
+  const app = createApp({ store })
+  const server = await new Promise((resolve, reject) => {
+    const srv = app.listen(0, '127.0.0.1', () => resolve(srv))
+    srv.once('error', reject)
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  t.after(async () => {
+    await new Promise((res) => server.close(res))
+  })
+
+  const jsonText = await fetch(`${base}/api/nodes/${r.id}/secret-scan`).then((x) => x.text())
+  assert.ok(!jsonText.includes(a) && !jsonText.includes(b))
+
+  const mdText = await fetch(`${base}/api/nodes/${r.id}/secret-scan?format=md`).then((x) => x.text())
+  assert.ok(!mdText.includes(a) && !mdText.includes(b))
+  assert.match(mdText, /\[REDACTED:generic_secret_assignment\]/)
+})
+
 async function mcpClient() {
   const tmp = await tempHome()
   const store = tmp.store.createStore(tmp.openDb())
@@ -239,6 +294,46 @@ test('MCP secret_scan：JSON / md / 非法参数 isError 与 store 一致', asyn
   }
 })
 
+test('D2 回归：MCP 非字符串 scope / format 返回 VALIDATION_FAILED，不泄漏 -32602', async (t) => {
+  const { store, call, close } = await mcpClient()
+  t.after(async () => {
+    await close()
+  })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  store.upsertDocument(r.id, '联调说明', 'token=abcdefghijklmnop')
+
+  for (const args of [
+    { node: String(r.id), scope: 1 },
+    { node: String(r.id), scope: true },
+    { node: String(r.id), format: 1 },
+    { node: String(r.id), format: ['md'] }
+  ]) {
+    const out = await call('secret_scan', args)
+    assert.equal(out.isError, true, JSON.stringify(args))
+    assert.match(out.content[0].text, /VALIDATION_FAILED/)
+    assert.ok(!/MCP error -32602/.test(out.content[0].text), JSON.stringify(args))
+  }
+})
+
+test('D1 回归：MCP 与 markdown 输出同行多凭据均不回显原值', async (t) => {
+  const { store, call, close } = await mcpClient()
+  t.after(async () => {
+    await close()
+  })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  const a = 'abcdefghijklmnop'
+  const b = 'qrstuvwxyzabcdef'
+  store.upsertDocument(r.id, '联调说明', `token=${a} password=${b}`)
+
+  const jsonOut = await call('secret_scan', { node: String(r.id) })
+  assert.ok(!jsonOut.content[0].text.includes(a) && !jsonOut.content[0].text.includes(b))
+
+  const mdOut = await call('secret_scan', { node: String(r.id), format: 'md' })
+  assert.ok(!mdOut.content[0].text.includes(a) && !mdOut.content[0].text.includes(b))
+})
+
 test('CLI secret scan：JSON / md / 非法参数与 store 一致', async (t) => {
   const { tmp, store, r } = await setup()
   const home = tmp.dir
@@ -266,4 +361,26 @@ test('CLI secret scan：JSON / md / 非法参数与 store 一致', async (t) => 
     }),
     /VALIDATION_FAILED/
   )
+})
+
+test('D1 回归：同行多凭据在 CLI JSON / markdown 中不回显任一原值', async (t) => {
+  const { tmp, store, r } = await setup()
+  const home = tmp.dir
+  t.after(() => tmp.cleanup())
+  const a = 'abcdefghijklmnop'
+  const b = 'qrstuvwxyzabcdef'
+  store.upsertDocument(r.id, '联调说明', `token=${a} password=${b}`)
+
+  const jsonOut = await execFileP('node', [CLI, 'secret', 'scan', 'P/R'], {
+    env: { ...process.env, TASKBOARD_HOME: home },
+    encoding: 'utf8'
+  })
+  assert.ok(!jsonOut.stdout.includes(a) && !jsonOut.stdout.includes(b))
+
+  const mdOut = await execFileP('node', [CLI, 'secret', 'scan', 'P/R', '--format', 'md'], {
+    env: { ...process.env, TASKBOARD_HOME: home },
+    encoding: 'utf8'
+  })
+  assert.ok(!mdOut.stdout.includes(a) && !mdOut.stdout.includes(b))
+  assert.match(mdOut.stdout, /\[REDACTED:generic_secret_assignment\]/)
 })

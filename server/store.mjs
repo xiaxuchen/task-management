@@ -1446,11 +1446,43 @@ export function createStore(db, options = {}) {
     return `${s.slice(0, 4)}***${s.slice(-4)}`
   }
 
-  function redactLine(line, start, end, replacement) {
+  /**
+   * 同一行可能命中多个凭据。excerpt 不能只替换当前命中片段，
+   * 否则 A 命中的证据会把 B 命中的原文一起带出来，形成二次泄露。
+   *
+   * 这里先把同一行的全部命中区间合并成互不重叠的脱敏区间，
+   * 再为每条 finding 生成完整脱敏后的上下文；主命中保留自己的规则名，其余命中也一并替换。
+   */
+  function mergeHitRanges(hits) {
+    const sorted = [...hits].sort((a, b) => a.start - b.start || b.end - a.end)
+    const merged = []
+    for (const hit of sorted) {
+      const last = merged[merged.length - 1]
+      if (!last || hit.start >= last.end) {
+        merged.push({ start: hit.start, end: hit.end, hits: [hit] })
+      } else {
+        last.end = Math.max(last.end, hit.end)
+        last.hits.push(hit)
+      }
+    }
+    return merged
+  }
+
+  function redactLineWithHits(line, hits, primary) {
     const raw = String(line == null ? '' : line)
-    return `${raw.slice(0, Math.max(0, start))}${replacement}${raw.slice(Math.max(start, end))}`
-      .trim()
-      .slice(0, 240)
+    let out = ''
+    let cursor = 0
+    for (const range of mergeHitRanges(hits)) {
+      out += raw.slice(cursor, range.start)
+      const marker =
+        range.hits.find((h) => h === primary) ||
+        range.hits.find((h) => h.start <= primary.start && h.end >= primary.end) ||
+        range.hits[0]
+      out += `[REDACTED:${marker.rule}]`
+      cursor = range.end
+    }
+    out += raw.slice(cursor)
+    return out.trim().slice(0, 240)
   }
 
   /**
@@ -1477,6 +1509,7 @@ export function createStore(db, options = {}) {
       const node = nodesById.get(doc.node_id)
       const lines = text.split(/\r?\n/)
       for (const [lineIndex, line] of lines.entries()) {
+        const lineHits = []
         for (const rule of SECRET_SCAN_RULES) {
           const re = new RegExp(rule.pattern.source, rule.pattern.flags)
           let m
@@ -1488,7 +1521,6 @@ export function createStore(db, options = {}) {
               continue
             }
             let secretValue = rawMatch
-            let replacement = `[REDACTED:${rule.key}]`
             let redacted = maskSecretValue(rawMatch)
             let start = m.index
             let end = m.index + rawMatch.length
@@ -1508,23 +1540,36 @@ export function createStore(db, options = {}) {
               redacted = maskSecretValue(secretValue)
             }
 
-            findings.push({
-              nodeId: doc.node_id,
-              nodeName: node ? node.name : '',
-              nodePath: node ? node.path : '',
-              docId: doc.id,
-              docName: doc.name,
+            lineHits.push({
               rule: rule.key,
               label: rule.label,
               severity: rule.severity,
               advice: rule.advice,
-              line: lineIndex + 1,
-              column: start + 1,
+              start,
+              end,
               redacted,
-              excerpt: redactLine(line, start, end, replacement)
+              secretValue
             })
             if (re.lastIndex === m.index) re.lastIndex += 1
           }
+        }
+        lineHits.sort((a, b) => a.start - b.start || b.end - a.end)
+        for (const hit of lineHits) {
+          findings.push({
+            nodeId: doc.node_id,
+            nodeName: node ? node.name : '',
+            nodePath: node ? node.path : '',
+            docId: doc.id,
+            docName: doc.name,
+            rule: hit.rule,
+            label: hit.label,
+            severity: hit.severity,
+            advice: hit.advice,
+            line: lineIndex + 1,
+            column: hit.start + 1,
+            redacted: hit.redacted,
+            excerpt: redactLineWithHits(line, lineHits, hit)
+          })
         }
       }
     }
