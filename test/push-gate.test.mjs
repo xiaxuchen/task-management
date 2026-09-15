@@ -176,6 +176,90 @@ test('push gate：未登记仓库 → unknown 且阻塞，reason=repo-not-regist
   assert.ok(p)
 })
 
+test('D2 回归：仓库已登记但没填 localPath → reason=repo-path-unset，指出先补路径', async (t) => {
+  const { tmp, store, ops } = await setup()
+  t.after(() => tmp.cleanup())
+  const { r } = seedNodes(store)
+  // addRepo 不传 localPath：登记存在，但压根没有本地路径
+  store.addRepo({ name: 'no-path' })
+  store.addCommit(r.id, { repo: 'no-path', sha: 'abcdef1' })
+
+  const gate = await ops.getNodePushGate(store, r.id)
+  assert.equal(gate.ready, false)
+  assert.equal(gate.blockers[0].status, 'unknown')
+  // 旧实现会把这种情况也报成 repo-path-missing（「本地路径无效」），指向错误的修复动作
+  assert.equal(gate.blockers[0].reason, 'repo-path-unset')
+  assert.match(gate.blockers[0].detail, /local_path/)
+})
+
+test('D2 回归：已填 localPath 但路径无效 → reason=repo-path-missing，detail 用真实错误信息', async (t) => {
+  const { tmp, store, ops } = await setup()
+  t.after(() => tmp.cleanup())
+  const { r } = seedNodes(store)
+  const missingDir = path.join(os.tmpdir(), `taskboard-not-a-repo-${Date.now()}`)
+  store.addRepo({ name: 'bad-path', localPath: missingDir })
+  store.addCommit(r.id, { repo: 'bad-path', sha: 'abcdef1' })
+
+  const gate = await ops.getNodePushGate(store, r.id)
+  assert.equal(gate.blockers[0].reason, 'repo-path-missing')
+  // detail 不再是一句笼统的固定文案，而是 resolveRepoDir 抛出的真实信息
+  assert.match(gate.blockers[0].detail, /不是 git 仓库|不存在/)
+  assert.match(gate.blockers[0].detail, new RegExp(missingDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+})
+
+test('D1 回归：本机 git 不可用 → reason=git-unavailable（不再误报成路径问题）', async (t) => {
+  const { tmp, store, ops } = await setup()
+  const { root, dir, mainSha } = makeRepo()
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const { r } = seedNodes(store)
+  store.addRepo({ name: 'repo', localPath: dir })
+  store.addCommit(r.id, { repo: 'repo', sha: mainSha })
+
+  // 把 PATH 指到一个没有 git 的目录 → gitTry 抛 GIT_UNAVAILABLE
+  const emptyPathDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-nogit-'))
+  const savedPath = process.env.PATH
+  process.env.PATH = emptyPathDir
+  let gate
+  try {
+    gate = await ops.getNodePushGate(store, r.id)
+  } finally {
+    process.env.PATH = savedPath
+    fs.rmSync(emptyPathDir, { recursive: true, force: true })
+  }
+
+  assert.equal(gate.ready, false)
+  assert.equal(gate.blockers[0].status, 'unknown')
+  // 旧实现：e.code=GIT_UNAVAILABLE 落进 catch 的 else 分支 → 误报 repo-path-missing
+  assert.equal(gate.blockers[0].reason, 'git-unavailable')
+  assert.match(gate.blockers[0].detail, /git 不可用/)
+})
+
+test('reason 契约：四类可行动原因互不串味（unset / missing / unavailable / not-registered）', async (t) => {
+  const { tmp, store, ops } = await setup()
+  const { root, dir } = makeRepo()
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const { r } = seedNodes(store)
+  store.addRepo({ name: 'unset' })
+  store.addRepo({ name: 'missing', localPath: path.join(os.tmpdir(), 'taskboard-nope-xyz') })
+  store.addCommit(r.id, { repo: 'unset', sha: 'aaa1111' })
+  store.addCommit(r.id, { repo: 'missing', sha: 'bbb2222' })
+  store.addCommit(r.id, { sha: 'ccc3333' })
+  store.db.prepare('UPDATE commits SET repo = ? WHERE sha = ?').run('ghostrepo', 'ccc3333')
+
+  const gate = await ops.getNodePushGate(store, r.id)
+  const reasons = gate.blockers.map((b) => b.reason).sort()
+  assert.deepEqual(reasons, ['repo-not-registered', 'repo-path-missing', 'repo-path-unset'])
+  // 每条 reason 都在标签表里有对应说明（契约完备：不会有 reason 无文案）
+  for (const b of gate.blockers) assert.ok(b.detail && b.detail.length > 0, `${b.reason} 应有 detail`)
+  assert.ok(dir)
+})
+
 test('push gate：没有已登记提交 → ready=null（不知道 ≠ 没通过）', async (t) => {
   const { tmp, store, ops } = await setup()
   t.after(() => tmp.cleanup())

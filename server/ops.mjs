@@ -535,8 +535,28 @@ const PUSH_REASON_LABELS = {
   'sha-not-found': '本机解析不出该提交（sha 可能写错，或该提交不在这份工作区）',
   'no-remote': '仓库没有配置远程（先 git remote add）',
   'repo-not-registered': '提交标注的仓库未在 TaskBoard 登记',
-  'repo-path-missing': '仓库已登记但本地路径无效',
+  'repo-path-unset': '仓库已登记但没有填本地路径（先 repo update 补 local_path）',
+  'repo-path-missing': '仓库已登记但本地路径不存在或不是 git 仓库',
+  'git-unavailable': '本机 git 不可用（命令不存在）',
   'git-error': '本机 git 执行失败'
+}
+
+/**
+ * 把 push-gate 捕获到的异常映射成稳定且可行动的 `reason`。
+ *
+ * D1/D2 收口：原先 catch 把「除未登记仓库外的一切」都标成 `repo-path-missing`，
+ * 于是 `GIT_UNAVAILABLE`（本机没装 git）也提示去查路径，指向了错误的修复动作。
+ * `REPO_PATH_MISSING` 本身还包含两个子情形（压根没填路径 / 填了但路径无效），
+ * 只有拿到 repo 才能区分——所以本函数需要 repo 入参。
+ */
+function pushReasonFromError(e, repo) {
+  if (e.code === CODES.REPO_NOT_REGISTERED) return 'repo-not-registered'
+  if (e.code === CODES.REPO_PATH_MISSING) {
+    // 与 resolveRepoDir 同一判据：`!repo.localPath` 才是「没填」，否则是「填了但无效」
+    return repo && repo.localPath ? 'repo-path-missing' : 'repo-path-unset'
+  }
+  if (e.code === CODES.GIT_UNAVAILABLE) return 'git-unavailable'
+  return 'git-error'
 }
 
 /**
@@ -577,8 +597,9 @@ export async function getNodePushGate(store, nodeRef, { scope = 'self' } = {}) {
     }
     byKey.set(key, item)
     items.push(item)
+    // repo 在 try 外解析：catch 里需要用它的 localPath 区分「没填路径」与「路径无效」
+    const repo = c.repo ? repos.get(c.repo) : null
     try {
-      const repo = c.repo ? repos.get(c.repo) : null
       if (!repo) {
         throw new AppError(
           CODES.REPO_NOT_REGISTERED,
@@ -593,12 +614,16 @@ export async function getNodePushGate(store, nodeRef, { scope = 'self' } = {}) {
       item.reason = state.reason
       item.refs = state.refs
     } catch (e) {
-      // 单条失败不拖垮整体：未登记仓库 / 路径无效都归入 unknown，带稳定 reason
+      // 单条失败不拖垮整体：一律归入 unknown，但 reason 要稳定且指向真实修复动作（D1/D2）
       item.status = 'unknown'
-      item.reason = e.code === CODES.REPO_NOT_REGISTERED ? 'repo-not-registered' : 'repo-path-missing'
+      item.reason = pushReasonFromError(e, repo)
       item.error = { code: e.code || 'ERROR', message: e.message }
     }
-    item.detail = PUSH_REASON_LABELS[item.reason] || (item.status === 'pushed' ? `远程包含：${item.refs.join('、')}` : '')
+    // detail 用真实错误信息（error.message），没有异常对象时才回落到固定说明
+    item.detail =
+      (item.error && item.error.message) ||
+      PUSH_REASON_LABELS[item.reason] ||
+      (item.status === 'pushed' ? `远程包含：${item.refs.join('、')}` : '')
   }
 
   const totals = {

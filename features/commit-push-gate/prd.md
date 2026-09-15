@@ -28,6 +28,12 @@
   - `unknown`：无法判定（未登记仓库 / 本地路径无效 / 无远程 / 本地解析不出该 sha / git 执行失败）。
 - R4 `unknown` **不算通过**：它和 `not_pushed` 一样进入阻塞项，但用不同的 `reason` 区分，
   避免把「没配仓库」伪造成「已推送」或笼统的「未推送」。
+- R4a `reason` 必须是**稳定且可行动**的枚举值，至少区分：远程无该提交（`no-remote-ref-contains`）、
+  未登记仓库（`repo-not-registered`）、未登记本地路径（`repo-path-unset`）、
+  本地路径无效（`repo-path-missing`）、本机 git 不可用（`git-unavailable`）、
+  未配置远程（`no-remote`）、sha 本地不存在（`sha-not-found`）、其它 git 失败（`git-error`）。
+  每个值对应一个明确修复动作，**不得**把多种失败笼统归成一个 reason；
+  `detail` 使用真实错误信息（`error.message`），便于直接定位。
 - R5 顶层三态：全部 `pushed` → `ready=true`；存在任一 `not_pushed` 或 `unknown` → `ready=false`；
   scope 内没有任何已登记提交 → `ready=null`（沿用 `ready=null` 的空态口径，不用 `false` 冒充未推送）。
 - R6 输出 `items`（逐条提交 + 来源节点 + 依据 refs）/ `blockers`（未通过项 + 原因）/
@@ -49,6 +55,10 @@
 - `test/push-gate.test.mjs`：已推送 / 未推送 / 无远程 / 未登记仓库 / 子树聚合与去重 /
   空态 `ready=null` / `unknown` 阻塞但不冒充通过 / markdown 渲染（含表格单元格转义）/
   纯读不产生 revision / 能力清单登记。
+- `reason` 契约回归（`test/push-gate.test.mjs` 的 D1/D2 用例）：未登记本地路径 →
+  `repo-path-unset`；路径无效 → `repo-path-missing` 且 `detail` 带真实路径；
+  本机 git 不可用 → `git-unavailable`（不再误报成路径问题）；
+  四类可行动 reason 互不串味。每条断言在旧实现（catch 一律标 `repo-path-missing`）上都会失败。
 - 三入口 1:1：HTTP `?scope=`、CLI `--scope`、MCP schema 字段集一致；非法 `scope` / `format`
   一律 `VALIDATION_FAILED`（MCP 返回 `isError`，不泄漏 SDK `-32602`）。
 - `npm test` 全绿；文档同步更新（本目录 + `docs/design/04-api.md` + `docs/api.md`

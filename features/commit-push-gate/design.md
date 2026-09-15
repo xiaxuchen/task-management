@@ -32,7 +32,25 @@ git remote                                     # 是否配置了远程
 - 只要有一个 `refs/remotes/*` 包含该提交 → `pushed`（依据列出 ref 名，如 `origin/main`）。
 - 本地解析得出、有远程、但没有任何 remote-tracking ref 包含它 → `not_pushed`。
 - 其余（未登记仓库 / 路径无效 / 无远程 / 本地解析不出 / git 失败）→ `unknown`，
-  并带 `reason`（`repo-not-registered` / `repo-path-missing` / `no-remote` / `sha-not-found` / `git-error`）。
+  并带下面这套稳定的 `reason` 契约。
+
+**R3.2 `reason` 契约（每个值对应一个明确的修复动作）**：
+
+| reason | 触发条件 | 建议修复 |
+|---|---|---|
+| `no-remote-ref-contains` | 本地有该提交、有远程，但无 remote-tracking ref 包含它 | `git push` |
+| `repo-not-registered` | 提交标注的仓库名在 TaskBoard 里不存在 | `repo add` 登记仓库 |
+| `repo-path-unset` | 仓库已登记，但没有填 `localPath`（`!repo.localPath`） | `repo update` 补 `local_path` |
+| `repo-path-missing` | 已填 `localPath`，但该路径不存在或不是 git 仓库 | 修正 `local_path` / 检查磁盘 |
+| `git-unavailable` | 本机 `git` 命令不可用（`ENOENT`，`GIT_UNAVAILABLE`） | 安装 / 修复 git |
+| `no-remote` | 仓库存在且有 `.git`，但没有配置任何远程 | `git remote add` |
+| `sha-not-found` | 本机解析不出该 sha（登记错误，或该提交不在这份工作区） | 核对 sha / `git fetch` |
+| `git-error` | 其它 git 执行失败（命令返回非零） | 看 `detail` 里的真实 stderr |
+
+`reason` 与 `error.code` 的映射由 `pushReasonFromError(e, repo)` 单点完成：
+`REPO_PATH_MISSING` 必须结合 `repo.localPath` 才能区分「没填」（`repo-path-unset`）
+与「填了但无效」（`repo-path-missing`）——**不得**在 catch 里一律标成路径问题，
+否则「本机没装 git」会被误导成去查路径（见 R4.1）。
 
 `git for-each-ref --contains=<sha>` 对**无法解析的 sha 会以 exit 129 报错**（实测），
 所以实现里必须先 `rev-parse` 确认本地存在该 commit，再查 ref；顺序反过来会把
@@ -46,6 +64,12 @@ git remote                                     # 是否配置了远程
 （最危险的失败模式）；当 `not_pushed` 又会让人以为「push 一下就绿」，
 而真实原因是「仓库压根没登记」。因此三态里 `unknown` 独立成一态，
 在 `blockers` 里带 `reason` 说明该怎么修。顶层 `ready` 只要有任一非 `pushed` 就是 `false`。
+
+**R4.1 `detail` 用真实错误信息，不用笼统固定文案**：`detail` 优先取捕获到的
+`error.message`（例如 `本地路径不存在或不是 git 仓库：/x/y` 或 `本机 git 不可用（命令不存在）`），
+只有没有异常对象时才回落到 `PUSH_REASON_LABELS[reason]` 的固定说明。
+这样消费方（看板 / 评审）能直接看到具体是哪个路径、哪条 stderr，
+而不是一句无法行动的分类文案。
 
 **R5 为什么只读本地 ref、不自动 fetch**：自动 fetch 会引入网络请求、凭据与副作用，
 而门禁可能被高频轮询。代价是「同事已 push 但本机没 fetch」会读成 `not_pushed`——

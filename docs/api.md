@@ -428,6 +428,13 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/push-gate?format=md'
 > `unknown` **同样阻塞**但不算通过——最危险的失败模式是把「没配仓库」当成「已推送」。
 > 只读本机已有 ref，**不自动 fetch**：若同事已 push 而本机没 fetch，会读成 `not_pushed`
 > （保守方向的误报，提示先 `git fetch`）。没有已登记提交时 `ready=null`。
+>
+> 阻塞项 `reason` 是稳定且可行动的枚举，每个值对应一个修复动作：
+> `no-remote-ref-contains`（先 `git push`）/ `repo-not-registered`（`repo add`）/
+> `repo-path-unset`（`repo update` 补 `local_path`）/ `repo-path-missing`（修正路径）/
+> `git-unavailable`（本机装 git）/ `no-remote`（`git remote add`）/
+> `sha-not-found`（核对 sha 或 `git fetch`）/ `git-error`（看 `detail` 的真实 stderr）。
+> `detail` 优先带真实错误信息，而不是笼统分类文案。
 
 ## 错误码速查
 

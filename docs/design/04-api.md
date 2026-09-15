@@ -31,7 +31,7 @@
 | DELETE | `/api/commits/:cid` | 删除登记 |
 | GET | `/api/commits/:cid/diff` | 单 commit 预览：文件列表 + 每文件 old / new 与 patch |
 | GET | `/api/nodes/:id/diffs?scope=self\|subtree` | 节点（含子树）聚合预览，按 commit / 仓库分组 |
-| GET | `/api/nodes/:id/push-gate` | 代码推送门禁：`?scope=self\|subtree`，`?format=json\|md`。逐条判定**已登记提交是否到了远程**（`pushed` / `not_pushed` / `unknown`）；`unknown`（未登记仓库 / 无远程 / sha 本地不存在）同样阻塞但**不冒充通过**；只读本机 ref，**不 fetch / 不 push / 不写库、不动 revision**；无已登记提交时 `ready=null` |
+| GET | `/api/nodes/:id/push-gate` | 代码推送门禁：`?scope=self\|subtree`，`?format=json\|md`。逐条判定**已登记提交是否到了远程**（`pushed` / `not_pushed` / `unknown`）；`unknown` 同样阻塞但**不冒充通过**；只读本机 ref，**不 fetch / 不 push / 不写库、不动 revision**；无已登记提交时 `ready=null`。阻塞项 `reason` 为稳定可行动枚举：`no-remote-ref-contains` / `repo-not-registered` / `repo-path-unset`（未登记本地路径）/ `repo-path-missing`（路径无效）/ `git-unavailable`（本机无 git）/ `no-remote` / `sha-not-found` / `git-error`；`detail` 优先带真实错误信息 |
 | POST | `/api/nodes/:id/merges/precheck` | 合并预检（merge-tree，不落库、不合并） |
 | POST | `/api/nodes/:id/merges` | 显式合并：`{units?, repo?, dryRun?}`，逐仓库预检并合并，返回 `{merged[], conflicts[]}` |
 | GET | `/api/merges?nodeId=&state=` | 合并记录列表（含待处理冲突） |
