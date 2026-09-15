@@ -53,6 +53,7 @@
 | **交付证据快照**（冻结交付门禁完整依据 + 指纹，读取时核对 current / drifted，供验收与上线审计） | `delivery-snapshot/` | — | server/{db,store,http,cli,mcp,ops}.mjs（delivery_snapshots）+ NodeDrawer「交付」页 |
 | **代码推送门禁**（已登记提交是否真的到了远程：`pushed`/`not_pushed`/`unknown` 三态 + 子树聚合，纯读不 fetch） | `commit-push-gate/` | — | server/git.mjs（commitPushState）+ server/ops.mjs（getNodePushGate/renderPushGateMd）+ 三入口 commit_push_gate |
 | **研发主线思维导图**（需求 → 设计/文档 → 回归 → 报告 → 验收 → 上线治理的只读图投影） | `workflow-map/` | — | server/{store,ops}.mjs（buildWorkflowMap）+ 三入口 workflow_map + NodeDrawer「主线」页签（WorkflowMapPane） |
+| **工作区准备**（工作单元登记仓库 → 建分支 + worktree → 返回开发提示词；清理需 confirm，未并分支保留） | `workspace-setup/` | 计划 4 | server/{git,store,ops,http,cli,mcp}.mjs（unit_repos / setupWorkspace / unit_*）|
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 
@@ -72,7 +73,6 @@
 |---|---|---|---|
 | 代码集成（显式合并） | `merge-integration/` | 计划 4 | server/git.mjs、merges 表 |
 | 冲突检测与处理 | `conflict-resolution/` | 计划 4 | server/git.mjs、web ConflictPane |
-| 工作区准备（分支 / worktree / 开发提示词） | `workspace-setup/` | 计划 4 | server/git.mjs、unit_repos 表 |
 | MR 自动拉取 | `mr-sync/` | 计划 5 | server/gitlab.mjs、mrs 表 |
 | 冒烟脚本 | `smoke-and-ai-docs/` | 计划 5 | scripts/smoke.mjs |
 
