@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -317,6 +317,20 @@ export function createApp({ store }) {
   app.get(
     '/api/nodes/:id/tracks',
     wrap(async (req, res) => res.json(await getNodeTracks(store, refOf(req), { scope: req.query.scope, branches: req.query.branches === 'true', light: req.query.light === 'true' })))
+  )
+
+  // ---------- 代码推送门禁（登记提交是否真的到了远程） ----------
+
+  app.get(
+    '/api/nodes/:id/push-gate',
+    wrap(async (req, res) => {
+      const gate = await getNodePushGate(store, refOf(req), { scope: req.query.scope })
+      if (store.normalizeFormat(req.query.format) === 'md') {
+        res.type('text/markdown').send(renderPushGateMd(gate))
+        return
+      }
+      res.json(gate)
+    })
   )
   // ---------- 审批合并（同意 → 开发分支合入所属子需求的「需求分支」；主仓库执行） ----------
   app.post(

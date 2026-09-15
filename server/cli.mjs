@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -98,6 +98,7 @@ const HELP = `task-board <命令>
   commit list <ref> [--subtree]
   commit diff <cid>                  单个 commit 的 diff（文件列表 + patch）
   commit track <cid>                 检测提交是否已合入测试/预发/上线分支
+  push gate <ref> [--scope self|subtree] [--format json|md]   代码推送门禁（登记提交是否已到远程）
   node diffs <ref> [--scope self|subtree]   节点（含子树）聚合 diff（含来源节点）
   node tracks <ref> [--scope self|subtree]  节点（含子树）分支合并状态聚合
   repo list
@@ -635,6 +636,12 @@ export async function run(argv) {
     case 'node tracks':
       json(await getNodeTracks(store, ref, { scope: values.scope, branches: !!values.branches }))
       break
+    case 'push gate': {
+      const gate = await getNodePushGate(store, ref, { scope: values.scope })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderPushGateMd(gate) + '\n')
+      else json(gate)
+      break
+    }
     case 'repo list':
       json(store.listRepos())
       break

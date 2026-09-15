@@ -1,7 +1,7 @@
 import { CODES, AppError } from './errors.mjs'
 import { CHILD_TYPES } from './db.mjs'
 import { startAgentRun } from './agent.mjs'
-import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas, commitMetasBatch as gitCommitMetasBatch } from './git.mjs'
+import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitPushState as gitCommitPushState, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas, commitMetasBatch as gitCommitMetasBatch } from './git.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
 export const TOOLS = [
@@ -26,6 +26,7 @@ export const TOOLS = [
   'commit_list',
   'commit_diff',
   'commit_track',
+  'commit_push_gate',
   'node_diffs',
   'node_tracks',
   'commit_add',
@@ -523,6 +524,111 @@ export async function getNodeTracks(store, nodeRef, { scope = 'self', branches =
   return { scope, count: items.length, items }
 }
 
+const PUSH_STATUS_LABELS = {
+  pushed: '已推送',
+  not_pushed: '未推送',
+  unknown: '无法判定'
+}
+
+const PUSH_REASON_LABELS = {
+  'no-remote-ref-contains': '没有任何远程跟踪分支包含该提交（先 git push）',
+  'sha-not-found': '本机解析不出该提交（sha 可能写错，或该提交不在这份工作区）',
+  'no-remote': '仓库没有配置远程（先 git remote add）',
+  'repo-not-registered': '提交标注的仓库未在 TaskBoard 登记',
+  'repo-path-missing': '仓库已登记但本地路径无效',
+  'git-error': '本机 git 执行失败'
+}
+
+/**
+ * 代码推送门禁：节点（含子树）下已登记提交是否真的到了远程。
+ *
+ * 只读本地 ref（不 fetch、不 push、不写库）：推送状态是从本机 git 推导的结论，
+ * 与 acceptance_report / readiness / delivery_gate 同一条「纯读、不落表」原则。
+ * 按 (repo, sha) 去重并回填来源节点，与 node_tracks / getNodeDiffs 口径一致。
+ *
+ * 顶层 ready：全部 pushed → true；有任一 not_pushed / unknown → false；
+ * 没有任何已登记提交 → null（不知道 ≠ 没通过）。
+ */
+export async function getNodePushGate(store, nodeRef, { scope = 'self' } = {}) {
+  const node = store.resolveRef(nodeRef)
+  const effectiveScope = store.normalizeScope(scope)
+  const commits = store.listCommits(node.id, { subtree: effectiveScope === 'subtree' })
+  const repos = new Map(store.listRepos().map((r) => [r.name, r]))
+  const items = []
+  const byKey = new Map()
+
+  for (const c of commits) {
+    const key = `${c.repo || ''}@${c.sha}`
+    const sourcePath = store.getNode(c.nodeId).path
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.sourceNodes.push({ nodeId: c.nodeId, path: sourcePath })
+      continue
+    }
+    const item = {
+      commit: c,
+      sourceNodes: [{ nodeId: c.nodeId, path: sourcePath }],
+      repo: null,
+      status: 'unknown',
+      reason: null,
+      detail: null,
+      refs: [],
+      error: null
+    }
+    byKey.set(key, item)
+    items.push(item)
+    try {
+      const repo = c.repo ? repos.get(c.repo) : null
+      if (!repo) {
+        throw new AppError(
+          CODES.REPO_NOT_REGISTERED,
+          c.repo ? `仓库 ${c.repo} 未登记（先 repo add）` : '该提交未标注仓库',
+          { repo: c.repo }
+        )
+      }
+      const dir = resolveRepoDir(repo)
+      item.repo = { name: repo.name, localPath: repo.localPath }
+      const state = await gitCommitPushState(dir, c.sha)
+      item.status = state.status
+      item.reason = state.reason
+      item.refs = state.refs
+    } catch (e) {
+      // 单条失败不拖垮整体：未登记仓库 / 路径无效都归入 unknown，带稳定 reason
+      item.status = 'unknown'
+      item.reason = e.code === CODES.REPO_NOT_REGISTERED ? 'repo-not-registered' : 'repo-path-missing'
+      item.error = { code: e.code || 'ERROR', message: e.message }
+    }
+    item.detail = PUSH_REASON_LABELS[item.reason] || (item.status === 'pushed' ? `远程包含：${item.refs.join('、')}` : '')
+  }
+
+  const totals = {
+    commits: items.length,
+    pushed: items.filter((i) => i.status === 'pushed').length,
+    notPushed: items.filter((i) => i.status === 'not_pushed').length,
+    unknown: items.filter((i) => i.status === 'unknown').length
+  }
+  const blockers = items
+    .filter((i) => i.status !== 'pushed')
+    .map((i) => ({
+      repo: i.commit.repo,
+      sha: i.commit.sha,
+      nodeId: i.commit.nodeId,
+      sourceNodes: i.sourceNodes.map((s) => s.path),
+      status: i.status,
+      reason: i.reason,
+      detail: i.detail
+    }))
+  const ready = items.length === 0 ? null : blockers.length === 0
+  return {
+    node: { id: node.id, name: node.name, type: node.type },
+    scope: effectiveScope,
+    ready,
+    totals,
+    items,
+    blockers
+  }
+}
+
 /** 批量补齐 patch-id（merge 提交标记为 __merge__；写入 DB 缓存与内存对象） */
 async function ensurePatchIds(store, commits, repos) {
   for (const c of commits) {
@@ -945,6 +1051,47 @@ export function renderReadinessMd(readiness) {
   for (const u of readiness.units) {
     const failed = u.checks.filter((c) => !c.passed).map((c) => c.label)
     lines.push(`| ${u.name} | ${u.type} | ${u.ready ? '是' : '否'} | ${failed.length ? failed.join('、') : '—'} |`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * 代码推送门禁导出：把「登记提交是否到了远程」渲染成可贴进 issue / 评审记录的 markdown。
+ * 与 renderReadinessMd / renderDeliveryGateMd 同风格。
+ */
+export function renderPushGateMd(gate) {
+  // 来源节点路径可能含 `|` 或换行（用户/导入内容），进入表格前必须转义。
+  const cell = (v) =>
+    String(v == null ? '' : v)
+      .replace(/\\/g, '\\\\')
+      .replace(/\|/g, '\\|')
+      .replace(/\r?\n/g, ' ')
+  const t = gate.totals
+  const lines = [
+    `# 代码推送门禁：${gate.node.name}`,
+    '',
+    `- 范围：${gate.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 提交：${t.commits} · 已推送：${t.pushed} · 未推送：${t.notPushed} · 无法判定：${t.unknown}`,
+    `- 推送结论：${gate.ready == null ? '—（没有可判定的提交）' : gate.ready ? '登记提交均已推送' : '存在未推送或无法判定的提交'}`,
+    '',
+    '## 提交明细',
+    '',
+    '| 仓库 | 提交 | 状态 | 依据 |',
+    '|---|---|---|---|'
+  ]
+  for (const i of gate.items) {
+    const basis = i.status === 'pushed' ? i.refs.join('、') : i.detail || i.status
+    lines.push(
+      `| ${cell(i.commit.repo || '—')} | ${cell(i.commit.sha)} | ${cell(PUSH_STATUS_LABELS[i.status] || i.status)} | ${cell(basis)} |`
+    )
+  }
+  if (gate.blockers.length > 0) {
+    lines.push('', '## 阻塞项', '', '| 仓库 | 提交 | 状态 | 来源节点 | 说明 |', '|---|---|---|---|---|')
+    for (const b of gate.blockers) {
+      lines.push(
+        `| ${cell(b.repo || '—')} | ${cell(b.sha)} | ${cell(PUSH_STATUS_LABELS[b.status] || b.status)} | ${cell(b.sourceNodes.join('、'))} | ${cell(b.detail)} |`
+      )
+    }
   }
   return lines.join('\n')
 }

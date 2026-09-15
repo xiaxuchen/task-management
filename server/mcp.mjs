@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -287,6 +287,17 @@ export function createMcpServer({ store }) {
     mcpValidate(async ({ ref, scope, branches }) => {
       const data = await getNodeTracks(store, ref, { scope, branches: !!branches })
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+    })
+  )
+
+  server.tool(
+    'commit_push_gate',
+    '代码推送门禁：节点（含子树）下已登记提交是否已到远程（只读本地 ref，不 fetch / 不 push）；三态 pushed / not_pushed / unknown，unknown 同样阻塞但不冒充通过；format=md 返回可贴进 issue 的 markdown',
+    { ref: z.string(), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ ref, scope, format }) => {
+      const gate = await getNodePushGate(store, ref, { scope })
+      const text = store.normalizeFormat(format) === 'md' ? renderPushGateMd(gate) : JSON.stringify(gate, null, 2)
+      return { content: [{ type: 'text', text }] }
     })
   )
 

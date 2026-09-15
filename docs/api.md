@@ -406,6 +406,29 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/delivery-gate?format=md'
 > `scope` / `format` 都是枚举：非法值返回 `400 VALIDATION_FAILED`，不会静默降级。
 > 验收来源只聚合**启用中**的用例；停用用例不算 `notRun`、也不阻塞交付。
 
+## 代码推送门禁（登记提交是否真的到了远程）
+
+```bash
+# 逐条判定节点下已登记提交是否已 push 到远程
+curl -s http://127.0.0.1:3210/api/nodes/1/push-gate
+
+# 连子树一起判定（挂在项目 / 需求上）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/push-gate?scope=subtree'
+
+# markdown 可直接贴进 issue / 评审记录
+curl -s 'http://127.0.0.1:3210/api/nodes/1/push-gate?format=md'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js push gate "项目A/需求1" [--scope self|subtree] [--format json|md]
+# MCP: commit_push_gate { ref, scope?, format? }
+```
+
+> 单条提交三态：`pushed`（有远程跟踪分支包含它）/ `not_pushed`（本地有、远程没有）/
+> `unknown`（未登记仓库、无远程、或本机解析不出该 sha）。
+> `unknown` **同样阻塞**但不算通过——最危险的失败模式是把「没配仓库」当成「已推送」。
+> 只读本机已有 ref，**不自动 fetch**：若同事已 push 而本机没 fetch，会读成 `not_pushed`
+> （保守方向的误报，提示先 `git fetch`）。没有已登记提交时 `ready=null`。
+
 ## 错误码速查
 
 | HTTP | code | 场景 |

@@ -31,6 +31,7 @@
 | DELETE | `/api/commits/:cid` | 删除登记 |
 | GET | `/api/commits/:cid/diff` | 单 commit 预览：文件列表 + 每文件 old / new 与 patch |
 | GET | `/api/nodes/:id/diffs?scope=self\|subtree` | 节点（含子树）聚合预览，按 commit / 仓库分组 |
+| GET | `/api/nodes/:id/push-gate` | 代码推送门禁：`?scope=self\|subtree`，`?format=json\|md`。逐条判定**已登记提交是否到了远程**（`pushed` / `not_pushed` / `unknown`）；`unknown`（未登记仓库 / 无远程 / sha 本地不存在）同样阻塞但**不冒充通过**；只读本机 ref，**不 fetch / 不 push / 不写库、不动 revision**；无已登记提交时 `ready=null` |
 | POST | `/api/nodes/:id/merges/precheck` | 合并预检（merge-tree，不落库、不合并） |
 | POST | `/api/nodes/:id/merges` | 显式合并：`{units?, repo?, dryRun?}`，逐仓库预检并合并，返回 `{merged[], conflicts[]}` |
 | GET | `/api/merges?nodeId=&state=` | 合并记录列表（含待处理冲突） |
@@ -132,10 +133,10 @@
 `details.allowed = ["self","subtree"]`。**不做静默降级**——早期实现把非 `subtree` 的值吞成 `self`，
 会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
 适用接口：`/readiness`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
-`/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
+`/diffs`、`/tracks`、`/push-gate`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
 
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
 这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `acceptance_report` / `delivery_gate` /
-`release_checklist` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
+`release_checklist` / `node_diffs` / `node_tracks` / `commit_push_gate` / `commit_duplicates` / `release_check`。
