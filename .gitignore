@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .superpowers/
 *.log
 web/public/vditor/

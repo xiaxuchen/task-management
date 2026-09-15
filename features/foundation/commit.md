@@ -1,5 +1,6 @@
 # 提交记录（foundation）
 
+- fix(foundation): 移除被误跟踪的 `node_modules` 符号链接并把 .gitignore 的 `node_modules/` 收窄为 `node_modules`——`node_modules/` 只匹配目录，共享依赖的符号链接会漏过忽略规则，被 `git add -A` 静默入库；全新 clone 落地即断裂链接，`npm ci` 又会删除该被跟踪文件留下 `D node_modules` 脏工作区
 - chore: task-board 仓库骨架与测试基座
 - fix(errors): 错误码写入 err.name，String(err) 与断言可直接命中
 - fix(test): helpers 对 store.mjs 容错，避免 db/config 用例连带失败
