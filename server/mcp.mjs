@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { saveUpload } from './uploads.mjs'
@@ -850,6 +850,18 @@ export function createMcpServer({ store }) {
       const n = store.resolveRef(String(node))
       const status = store.buildAcceptanceStatus(n.id, { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderAcceptanceStatusMd(status) : JSON.stringify(status, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'business_gate',
+    '业务检查门禁：判定节点（含可选子树）的未关闭缺陷是否清干净、启用中的 biz_check 用例最近结论是否全部 pass；format=md 返回可贴进 issue 的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const gate = store.buildBusinessGate(n.id, { scope })
+      const text = store.normalizeFormat(format) === 'md' ? renderBusinessGateMd(gate) : JSON.stringify(gate, null, 2)
       return { content: [{ type: 'text', text }] }
     })
   )

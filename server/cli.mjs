@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline, parseMaxParallelCli } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline, parseMaxParallelCli } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 import { saveUpload } from './uploads.mjs'
 
@@ -158,6 +158,7 @@ const HELP = `task-board <命令>
   release item reorder <ref> --ids "1,2,3"
   release checklist <ref> [--scope self|subtree] [--format json|md]   上线检查清单（完成度 + 阻塞项 + 就绪结论）
   release sql-audit <ref> [--scope self|subtree] [--format json|md]   上线 SQL 风险审查（静态扫描高危写法）
+  business gate <ref> [--scope self|subtree] [--format json|md]     业务检查门禁（未关闭缺陷 + 业务检查用例结论）
   release check <ref> [--case-ids "1,2"] [--scope self|subtree] [--prompt "额外要求"] [--dry-run] [--no-wait] [--wait-timeout 秒]
                                     派单执行上线前置检查（含 code/biz/release_check 用例）；默认等终态并自动收尾
   runtime list [--status online|offline]        运行时列表（含本机 CLI 实例状态）
@@ -681,6 +682,15 @@ export async function run(argv) {
       const audit = store.buildReleaseSqlAudit(node.id, { scope: values.scope })
       if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderReleaseSqlAuditMd(audit) + '\n')
       else json(audit)
+      break
+    }
+
+    // ---------- 业务检查门禁（`business gate <ref>`） ----------
+    case 'business gate': {
+      const node = store.resolveRef(ref)
+      const gate = store.buildBusinessGate(node.id, { scope: values.scope })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderBusinessGateMd(gate) + '\n')
+      else json(gate)
       break
     }
     case 'release check': {
