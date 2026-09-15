@@ -121,7 +121,7 @@ public final class MarkdownRenderer {
                 + "th,td{border:1px solid " + border + ";padding:4px 10px;text-align:left;}"
                 + "th{background:" + codeBg + ";}"
                 + "img{max-width:100%;}"
-                + ".del,del{color:" + muted + ";text-decoration:line-through;}"
+                + ".del,del,.user-del,s,.tb-md s{color:" + muted + ";text-decoration:line-through;}"
                 + "</style>";
     }
 }
