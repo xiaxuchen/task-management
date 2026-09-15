@@ -118,5 +118,16 @@ export function saveUpload({ name, data, dir = UPLOAD_DIR } = {}) {
   fs.mkdirSync(dir, { recursive: true })
   const stored = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`
   fs.writeFileSync(path.join(dir, stored), buffer)
-  return { url: `/uploads/${stored}`, name: stored, size: buffer.length, mime }
+  return { url: `/uploads/${stored}`, name: stored, size: buffer.length, mime, alt: markdownAlt(name) }
+}
+
+/**
+ * 把上传的文件名收敛成可直接放进 Markdown 图片语法 `![alt](url)` 的 alt 文本。
+ *
+ * 关键字符是 `]`：它会把 alt 段提前截断，`![br]eak.png](/uploads/x.png)` 会被解析成纯文本，
+ * 表现为「落库内容看着正常、预览却是裂图」，用户无从判断原因。`\` 必须先转义，
+ * 否则会与后加的转义反斜杠相互吃掉。由服务端统一产出，避免前端各写一份。
+ */
+export function markdownAlt(text) {
+  return String(text ?? '').replace(/\\/g, '\\\\').replace(/\]/g, '\\]').replace(/\[/g, '\\[')
 }

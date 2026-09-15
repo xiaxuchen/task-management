@@ -181,6 +181,29 @@ function readMaybeFile({ content, file }) {
   return content
 }
 
+/**
+ * 读取图片文件并转 base64。把 fs 的裸错误（ENOENT / EISDIR / EACCES）归一成
+ * 稳定业务码 `VALIDATION_FAILED`，与其他入口的错误契约保持一致——
+ * 否则 CLI 会打出 `ENOENT: …` 这种没有 code 的裸错误，AI 无法按码自纠。
+ */
+function readFileAsBase64(file) {
+  let buf
+  try {
+    buf = fs.readFileSync(file)
+  } catch (e) {
+    const hint =
+      e.code === 'ENOENT' ? '文件不存在'
+      : e.code === 'EISDIR' ? '这是一个目录，不是图片文件'
+      : e.code === 'EACCES' ? '没有读取权限'
+      : '文件不可读'
+    throw Object.assign(new Error(`${hint}：${file}`), {
+      code: 'VALIDATION_FAILED',
+      details: { path: file, reason: e.code || 'READ_FAILED' }
+    })
+  }
+  return buf.toString('base64')
+}
+
 /** --enabled 取值：true/1/yes → 1，false/0/no → 0，未提供 → undefined；非法值抛错 */
 function parseEnabled(v) {
   if (v === undefined) return undefined
@@ -242,7 +265,7 @@ export async function run(argv) {
     let data = values.data
     if (imgPath) {
       name = name || path.basename(imgPath)
-      data = fs.readFileSync(imgPath).toString('base64')
+      data = readFileAsBase64(imgPath)
     }
     json(saveUpload({ name, data }))
     return 0

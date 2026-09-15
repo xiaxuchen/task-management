@@ -30,7 +30,17 @@
 | GitLab 网络异常 / 超时（10s） | 502，既有 MR 数据不变 |
 | 端口占用 | 自动 +1 重试至 3220，仍失败则报错退出 |
 | 并发写入 | 单进程单写者；WAL 模式；接口层串行化写操作 |
-| 上传文件类型 / 大小不合规 | 400，提示允许的格式（png / jpg / jpeg / gif / webp）与 10 MB 上限 |
+| 上传文件类型 / 大小不合规 | 400 `UPLOAD_INVALID_TYPE` / `UPLOAD_TOO_LARGE`，提示允许的格式（png / jpg / jpeg / gif / webp）与 10 MB 上限（`details` 带 `maxBytes` / `actualBytes` / `allowed`） |
+| 上传请求体超过框架 JSON 限额（20 MB） | 413 `PAYLOAD_TOO_LARGE`（**不是** 500：框架层错误必须归一成业务码） |
+| 请求体不是合法 JSON | 400 `VALIDATION_FAILED`（框架解析错误同样归一，不泄漏解析器英文消息） |
+| 访问不存在的 `/uploads/*` | 404 `NOT_FOUND`——**终结性 404，不回落 SPA**；否则前端 `<img>` 会拿到 200 + index.html 而静默裂图 |
+| 上传文件名含 `]` / `[` / `\` | 服务端返回转义后的 `alt`，Markdown 图片语法不被截断（否则落库正常、预览裂图） |
+| CLI 上传本地文件不可读（不存在 / 是目录 / 无权限） | 400 `VALIDATION_FAILED`，`details.reason` 区分 `ENOENT` / `EISDIR` / `EACCES`（不裸抛 fs 错误） |
 | 数据备份 | 提示直接复制 `~/.taskboard/data.db` 与 `~/.taskboard/uploads/`（关闭进程后复制） |
 
-错误码（AI 依赖，保持稳定）：`VALIDATION_FAILED`、`PARENT_TYPE_INVALID`、`LEAF_NODE`、`CYCLE_DETECTED`、`PATH_NOT_FOUND`、`PATH_AMBIGUOUS`、`DOC_NAME_EXISTS`、`TEST_CASE_NAME_EXISTS`、`RELEASE_ITEM_NAME_EXISTS`、`REPORT_STATUS_IMMUTABLE`、`CONFIRM_REQUIRED`、`UPLOAD_INVALID_TYPE`、`UPLOAD_TOO_LARGE`、`GITLAB_NOT_CONFIGURED`、`GITLAB_AUTH_FAILED`、`GITLAB_PROJECT_NOT_FOUND`、`GITLAB_UNAVAILABLE`、`REPO_NOT_REGISTERED`、`REPO_PATH_MISSING`、`BRANCH_NOT_FOUND`、`BRANCH_EXISTS_DIFFERENT_BASE`、`WORKTREE_PATH_EXISTS`、`MERGE_CONFLICT`、`GIT_UNAVAILABLE`、`GIT_FAILED`。
+错误码（AI 依赖，保持稳定）：`VALIDATION_FAILED`、`PARENT_TYPE_INVALID`、`LEAF_NODE`、`CYCLE_DETECTED`、`NOT_FOUND`、`PATH_NOT_FOUND`、`PATH_AMBIGUOUS`、`DOC_NAME_EXISTS`、`TEST_CASE_NAME_EXISTS`、`RELEASE_ITEM_NAME_EXISTS`、`REPORT_STATUS_IMMUTABLE`、`CONFIRM_REQUIRED`、`UPLOAD_INVALID_TYPE`、`UPLOAD_TOO_LARGE`、`PAYLOAD_TOO_LARGE`、`GITLAB_NOT_CONFIGURED`、`GITLAB_AUTH_FAILED`、`GITLAB_PROJECT_NOT_FOUND`、`GITLAB_UNAVAILABLE`、`REPO_NOT_REGISTERED`、`REPO_PATH_MISSING`、`BRANCH_NOT_FOUND`、`BRANCH_EXISTS_DIFFERENT_BASE`、`WORKTREE_PATH_EXISTS`、`MERGE_CONFLICT`、`GIT_UNAVAILABLE`、`GIT_FAILED`。
+
+**框架层错误归一**（`http.mjs` 的 `mapFrameworkError`）：body-parser / send 抛出的错误没有业务码，
+直接透传会把「请求体过大」「JSON 格式错」这类纯客户端错误报成 500 服务端故障并刷错误日志堆栈。
+现按 `err.type` 归一：`entity.too.large → 413 PAYLOAD_TOO_LARGE`、`entity.parse.failed → 400 VALIDATION_FAILED`、
+`charset.unsupported → 415`、其余 `4xx` 静态层错误保留状态码并补稳定 code。

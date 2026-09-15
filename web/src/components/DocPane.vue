@@ -103,7 +103,9 @@ async function handleUpload(files) {
     try {
       const data = await readAsDataUrl(file)
       const res = await api.uploadImage({ name: file.name || 'image.png', data })
-      if (vditor) vditor.insertValue(`![${file.name || 'image'}](${res.url})`)
+      // alt 用服务端返回的转义结果：文件名里的 `]` 会截断 Markdown 图片语法，
+      // 导致「落库看着正常、预览却是裂图」（D2）。服务端单点转义，前端不自行拼接。
+      if (vditor) vditor.insertValue(`![${res.alt || 'image'}](${res.url})`)
     } catch (e) {
       failed.push(`${file.name || '图片'}：${e.message}`)
     }

@@ -945,7 +945,10 @@ export function createMcpServer({ store }) {
   server.tool(
     'upload_image',
     '上传文档图片（png / jpg / jpeg / gif / webp，≤10 MB）；data 为 base64 或 data URL，返回可写进 Markdown 的 /uploads/<name> 地址',
-    { name: z.string(), data: z.string() },
+    // `.catch(undefined)`：对外的 JSON schema 仍是 `type: string` + required（AI 看到的契约不变），
+    // 但类型错误 / 缺字段不再被 SDK 拦成 `-32602`，而是下沉到 handler 由 mcpValidate 归一成
+    // `isError + VALIDATION_FAILED`，与 HTTP / CLI 的错误契约一致（D6）。
+    { name: z.string().catch(undefined), data: z.string().catch(undefined) },
     mcpValidate(async ({ name, data }) => {
       const out = saveUpload({ name, data })
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }

@@ -223,6 +223,30 @@ test('HTTP uploads：类型 / 大小不合规 → 400 且 error.code 稳定', as
   assert.equal(tooBig.body.error.code, 'UPLOAD_TOO_LARGE')
 })
 
+test('HTTP uploads：框架层错误不泄漏成 500（D3 回归）——超大 body → 413、非法 JSON → 400', async (t) => {
+  const s = await withCtx(t)
+  // 超过 express.json 的 20 MB 限额：应是 413 PAYLOAD_TOO_LARGE，而不是 500 INTERNAL_ERROR
+  const huge = `{"name":"big.png","data":"${'A'.repeat(21 * 1024 * 1024)}"}`
+  const tooLarge = await fetch(`${s.base}/api/uploads`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: huge
+  })
+  assert.equal(tooLarge.status, 413)
+  const tooLargeBody = await tooLarge.json()
+  assert.equal(tooLargeBody.error.code, 'PAYLOAD_TOO_LARGE')
+
+  // 非法 JSON：应是 400 VALIDATION_FAILED，而不是 500 + 解析器英文消息
+  const badJson = await fetch(`${s.base}/api/uploads`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{not valid json'
+  })
+  assert.equal(badJson.status, 400)
+  const badJsonBody = await badJson.json()
+  assert.equal(badJsonBody.error.code, 'VALIDATION_FAILED')
+})
+
 test('CLI upload：按路径上传 → 返回 url，文件真的落盘', async (t) => {
   const s = await withCtx(t)
   const img = path.join(HOME, 'shot.png')
@@ -240,6 +264,24 @@ test('CLI upload：--name + --data 用法，非法类型以非零码退出', asy
   await assert.rejects(s.execCli(['upload', '--name', 'bad.svg', '--data', b64(PNG)]), /UPLOAD_INVALID_TYPE/)
 })
 
+test('CLI upload：文件不存在 / 传目录 归一成 VALIDATION_FAILED，不再裸抛 ENOENT/EISDIR（D5 回归）', async (t) => {
+  const s = await withCtx(t)
+  const missing = path.join(HOME, 'no-such-file.png')
+  await assert.rejects(s.execCli(['upload', missing]), (e) => {
+    assert.match(String(e.stderr || e.message), /VALIDATION_FAILED/)
+    assert.doesNotMatch(String(e.stderr || e.message), /^ENOENT/m)
+    return true
+  })
+
+  const dir = path.join(HOME, 'a-directory')
+  fs.mkdirSync(dir, { recursive: true })
+  await assert.rejects(s.execCli(['upload', dir]), (e) => {
+    assert.match(String(e.stderr || e.message), /VALIDATION_FAILED/)
+    assert.match(String(e.stderr || e.message), /目录/)
+    return true
+  })
+})
+
 test('MCP upload_image：注册在能力清单里，成功返回 url，非法类型是 isError 而非 SDK 报错', async (t) => {
   const s = await withCtx(t)
   const tools = (await s.mcpTools()).tools.map((x) => x.name)
@@ -252,6 +294,39 @@ test('MCP upload_image：注册在能力清单里，成功返回 url，非法类
   const bad = await s.mcpCall('upload_image', { name: 'p.svg', data: b64(PNG) })
   assert.equal(bad.isError, true)
   assert.match(bad.content[0].text, /UPLOAD_INVALID_TYPE/)
+})
+
+test('MCP upload_image：类型错误 / 缺字段走 isError + VALIDATION_FAILED，不泄漏 SDK -32602（D6 回归）', async (t) => {
+  const s = await withCtx(t)
+  // 对外 schema 不能退化：仍是 type:string + required
+  const tool = (await s.mcpTools()).tools.find((x) => x.name === 'upload_image')
+  assert.deepEqual(tool.inputSchema.properties.name, { type: 'string' })
+  assert.deepEqual(tool.inputSchema.properties.data, { type: 'string' })
+  assert.deepEqual([...tool.inputSchema.required].sort(), ['data', 'name'])
+
+  for (const args of [{ name: 'a.png', data: 5 }, { name: 'a.png' }, {}]) {
+    const r = await s.mcpCall('upload_image', args)
+    assert.equal(r.isError, true, `${JSON.stringify(args)} 应返回 isError`)
+    const text = r.content[0].text
+    assert.doesNotMatch(text, /-32602/, `${JSON.stringify(args)} 不应泄漏 SDK 协议错误`)
+    assert.match(text, /VALIDATION_FAILED/)
+  }
+})
+
+test('上传返回 alt 转义：含 ] 的文件名不会截断 Markdown 图片语法（D2 回归）', async (t) => {
+  const tmp = tmpDir()
+  t.after(() => tmp.cleanup())
+  const { saveUpload } = await import('../server/uploads.mjs')
+
+  // `]` 是真实破坏点：不转义时 `![br]eak.png](url)` 会被解析成纯文本而非图片
+  const out = saveUpload({ name: 'br]eak.png', data: b64(PNG), dir: tmp.dir })
+  assert.equal(out.alt, 'br\\]eak.png')
+  const md = `![${out.alt}](${out.url})`
+  assert.ok(md.includes('br\\]eak.png'), 'alt 里的 ] 必须被转义')
+
+  // `\` 与 `[` 也要转义，且反斜杠不能被后续转义吃掉
+  const out2 = saveUpload({ name: 'a\\b[c.png', data: b64(PNG), dir: tmp.dir })
+  assert.equal(out2.alt, 'a\\\\b\\[c.png')
 })
 
 test('四入口一致：同一图片经共享核心 / HTTP / CLI / MCP 都得到同一落盘语义', async (t) => {

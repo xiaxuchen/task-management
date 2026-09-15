@@ -40,6 +40,29 @@
 返回 `null` 表示已自行处理。因此 `handleUpload` 成功时自己 `insertValue` 并返回 `null`，
 失败时聚合文案返回；成功落图后立即 `saveNow()`，保证 URL 随文档一起持久化。
 
+**R6 未命中的 `/uploads/*` 必须终结于 404，不得回落 SPA**：静态托管命中失败时会 `next()`，
+若交给上层 SPA 回退，图片被删/改名后前端 `<img>` 会拿到 **200 + index.html**，浏览器静默裂图、
+且该 HTML 会被缓存。因此在静态挂载后追加终结性 404；`createApp` 内挂载保证了
+测试与真实服务（含 SPA 回退）行为一致。
+
+**R7 框架层错误必须归一成业务码**：body-parser 抛出的 `PayloadTooLargeError` / `SyntaxError`
+没有 `err.code`，原实现经 `STATUS_BY_CODE` 兜底成 500，把纯客户端错误报成服务端故障并刷堆栈日志。
+现按 `err.type` 映射（`entity.too.large → 413 PAYLOAD_TOO_LARGE`、
+`entity.parse.failed → 400 VALIDATION_FAILED`），与 `scope`/`format` 同一条「值域是契约」纪律。
+
+**R8 `alt` 由服务端转义**：文件名里的 `]` 会截断 `![alt](url)` 语法，导致「落库看着正常、预览却是裂图」。
+服务端在返回体里给转义好的 `alt`（`\` → `\\`、`]` → `\]`、`[` → `\[`，反斜杠必须先转），
+前端直接使用，避免三处各写一份转义。
+
+**R9 CLI 的本地文件错误归一**：`fs.readFileSync` 的 `ENOENT` / `EISDIR` / `EACCES` 会裸抛成
+没有 `code` 的错误，与其他入口的稳定码风格不一致。现包成
+`VALIDATION_FAILED` 并在 `details.reason` 保留原始 errno。
+
+**R10 MCP 类型错误不泄漏 SDK `-32602`**：`z.string()` 会把「类型不对 / 缺字段」拦在协议层，
+返回 SDK 的 `-32602` 而非业务码。改用 `z.string().catch(undefined)`——对外的 JSON schema
+仍是 `type: string` + `required`（AI 看到的契约不变），但非法值下沉到 handler，
+由 `mcpValidate` 归一成 `isError + VALIDATION_FAILED`。
+
 ## 踩坑 / 约束
 
 - **`UPLOAD_DIR` 在模块 import 时就被 `TASKBOARD_HOME` 固定**（与 `config.mjs` 的既有约束一致）。
@@ -47,6 +70,11 @@
   不会真的换目录，落盘会跑到上一个用例的临时目录里。
 - **静态托管必须挂在 SPA 回退之前**：否则 `/uploads/*` 会被 `index.html` 兜底吞掉，
   表现为「图片能传不能看」。
+- **`res.sendFile(绝对路径)` 在含点号目录段下会 404**：`send` 默认拒绝路径中任一含点号的目录段，
+  而开发/CI 常把仓库放在 `.worktrees/xxx`。这会让 SPA 回退**整体失效**，并且
+  「不存在的 /uploads 是否被 SPA 吞掉」的验收会在失效环境里得出错误结论（原交付即踩此坑）。
+  改用 `res.sendFile('index.html', { root: dist })` 的根相对形式；`static-spa` 的 UT 固定在
+  含点号段的布局下跑，锁死这一条。
 - **入口测试各自新建 app / MCP 实例**：共用实例会让先跑完的用例把后跑用例的 server 和 MCP 连接一起关掉
   （表现为 `Not connected` / `ECONNREFUSED`）。
 
