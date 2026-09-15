@@ -5,7 +5,7 @@ import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderSecretScanMd, renderDeliveryGateMd, renderDeliverySnapshotMd, renderPushGateMd, buildDeliveryGateFull, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderSecretScanMd, renderDeliveryGateMd, renderDeliverySnapshotMd, renderPushGateMd, renderWorkflowMapMd, buildDeliveryGateFull, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { saveUpload } from './uploads.mjs'
@@ -1041,6 +1041,33 @@ export function createMcpServer({ store }) {
       const out = applyDesignOutline(store, n.id, { scope, overwrite: !!overwrite, dryRun: !!dryRun, by: 'mcp' })
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
     })
+  )
+
+  server.tool(
+    'workflow_map',
+    '研发主线思维导图：把节点（含可选子树）投影为需求管理 → 概要设计/文档 → AI 可回归测试 → 测试报告 → 验收报告 → 上线配置/SQL/检查与代码/业务检查的只读图；format=md 返回可贴进 issue 的 markdown',
+    {
+      node: z.union([z.number(), z.string()]),
+      scope: z.string().optional(),
+      // 保持 string 由 store.normalizeFormat 统一校验，使三入口的非法 format 都归一到 VALIDATION_FAILED。
+      format: z.string().optional()
+    },
+    async ({ node, scope, format }) => {
+      try {
+        const n = store.resolveRef(String(node))
+        const normalized = store.normalizeFormat(format)
+        const map = store.buildWorkflowMap(n.id, { scope })
+        const text = normalized === 'md' ? renderWorkflowMapMd(map) : JSON.stringify(map, null, 2)
+        return { content: [{ type: 'text', text }] }
+      } catch (e) {
+        // 与 HTTP / CLI 一样把非法 format / scope 归一到 VALIDATION_FAILED；
+        // MCP 侧显式转成 isError，避免 handler 抛异常后客户端无语义结果。
+        return {
+          content: [{ type: 'text', text: `${e.code || 'ERROR'}: ${e.message}${e.details ? ` ${JSON.stringify(e.details)}` : ''}` }],
+          isError: true
+        }
+      }
+    }
   )
 
   // ---------- 上线治理（上线配置 / 上线 SQL / 上线检查清单） ----------

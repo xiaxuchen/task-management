@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderSecretScanMd, renderDeliveryGateMd, renderDeliverySnapshotMd, renderPushGateMd, buildDeliveryGateFull, renderDesignOutlineMd, applyDesignOutline, parseMaxParallelCli } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderSecretScanMd, renderDeliveryGateMd, renderDeliverySnapshotMd, renderPushGateMd, renderWorkflowMapMd, buildDeliveryGateFull, renderDesignOutlineMd, applyDesignOutline, parseMaxParallelCli } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 import { saveUpload } from './uploads.mjs'
 
@@ -157,6 +157,7 @@ const HELP = `task-board <命令>
   delivery snapshots <ref> [--scope self|subtree] [--limit N]       交付快照列表（含当前 / 已偏离核对）
   delivery snapshot-get <sid> [--format json|md]                    读取单条交付快照
   push gate <ref> [--scope self|subtree] [--format json|md]        代码推送门禁（登记提交是否已在远程）
+  workflow map <ref> [--scope self|subtree] [--format json|md]      研发主线思维导图（需求 → 设计/文档 → 回归 → 报告 → 验收 → 上线治理）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
   release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
   release item update <rid> [--name n] [--kind k] [--content c] [--rollback r] [--status s] [--required|--optional]
@@ -630,6 +631,14 @@ export async function run(argv) {
         by
       })
       json(out)
+      break
+    }
+    // ---------- 研发主线思维导图（`workflow map <ref>`） ----------
+    case 'workflow map': {
+      const node = store.resolveRef(ref)
+      const map = store.buildWorkflowMap(node.id, { scope: values.scope })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderWorkflowMapMd(map) + '\n')
+      else json(map)
       break
     }
 
