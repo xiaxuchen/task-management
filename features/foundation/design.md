@@ -38,3 +38,34 @@ openDb(file = DB_PATH) // DatabaseSync，已开 WAL / 外键 / busy_timeout，�
 ## 4. 与主设计文档的对应
 
 §4.9（预置属性定义逐条对应 `SEED_ATTR_DEFS`）、§4.10（config 默认值逐字段对应 `DEFAULT_CONFIG`）、§4.11–4.12（`merges` / `unit_repos` 建表已就位，读写留给计划 4）、§9（错误码清单，本功能只落数据层需要的那些）。
+
+## 5. 数据快照的覆盖口径（XPX-151 缺陷修复）
+
+**缺陷**：表清单曾硬编码在 `scripts/export-snapshot.mjs` 与 `scripts/import-snapshot.mjs` 两处，
+且停在新库最早的 9 张表。后续新增的 `test_cases` / `test_reports` / `release_items` / `comments` /
+`branch_configs` / `agent_runtimes` / `agent_sessions` / `agent_runs` / `agent_run_messages` /
+`ide_requests` 都不在清单里——**导出不报错、导入也不报错，快照静默丢表**。
+靠「记得改两处」防不住这类回归：已有两个并行分支各自手工往清单里补过表，正是这个原因；
+修复过程中又立刻撞到第三个（并行分支新加的 `delivery_snapshots` 不在任何清单里）——
+说明**任何人工维护的表清单都会漂移**，所以最终没有选择「再手写一份更全的清单」。
+
+**修复：表集合与顺序从 schema 推导，不再维护手工清单**（`scripts/snapshot-tables.mjs`）
+
+- `listBusinessTables(db)`：业务表 = `sqlite_master` 全部表 − `EXCLUDED_TABLES`。
+  **新增表自动进快照**，不存在「忘了加」这条路径——这是根治点。
+- `EXCLUDED_TABLES`：有意不进快照的表 + 理由（目前只有 `meta`：
+  `revision` 走快照顶层字段对齐，其余键是打开库时重建的幂等迁移标记）。
+  `assertExclusionsDocumented()` 要求理由非空，「显式排除」与「忘了加」因此可区分。
+- `importPlan(db)`：导入顺序按 `PRAGMA foreign_key_list` 做**拓扑排序**（被引用表在前）；
+  自引用表（`nodes.parent_id` / `agent_runs.parent_run_id`）标记 `selfReferencing`，
+  导入时按 id 升序插入，保证映射命中。
+- 外键映射直接读 `PRAGMA foreign_key_list`（不再手写）：每张表统一按旧 id → 新 id 重建，
+  原实现「漏表就连带漏掉外键映射」的问题不复存在。
+
+**版本与兼容**：快照 `version` 升到 2，并自带 `plan`（导出时的表与外键）。
+导入优先按快照的 `plan` 重建；导入 v1 老快照（无 `plan`）时按目标库 schema 推导，
+且缺表会显式告警（列出将被清空的表），不再静默清库。
+若快照提到的表在当前目标库不存在（schema 不同），跳过并显式告警。
+
+**回归防护**：`test/snapshot.test.mjs` 断言「业务表集合 = 真实表 − 显式排除，新增表自动纳入」
+与「端到端往返不丢表」；把实现改回旧的 9 张硬编码清单，这两组断言会失败（实现时已用变异验证）。

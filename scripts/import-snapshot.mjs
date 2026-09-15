@@ -14,6 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
+import { importPlan, listExistingTables } from './snapshot-tables.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -37,12 +38,33 @@ if (snap.format !== 'taskboard-snapshot') {
   process.exit(1)
 }
 
-/** 清空顺序：外键依赖在后的先删（与导入顺序相反） */
-const IMPORT_ORDER = ['attr_defs', 'repos', 'nodes', 'attr_values', 'documents', 'commits', 'mrs', 'merges', 'unit_repos']
-const DELETE_ORDER = [...IMPORT_ORDER].reverse()
-
 const db = new DatabaseSync(dbPath)
 db.exec('PRAGMA foreign_keys = OFF') // 导入期间自行保证顺序，避免逐条外键校验
+
+// 导入计划优先用快照里记录的 plan（v2+），保证按「导出时那张库」的表集合与外键重建；
+// v1 老快照没有 plan，退回按目标库当前 schema 推导。
+let PLAN = Array.isArray(snap.plan) && snap.plan.length ? snap.plan : importPlan(db)
+
+// 快照可能来自 schema 更全 / 更旧的库：只重建目标库真实存在的表，
+// 其余显式提示（否则 INSERT 会因缺表直接抛错，报错信息也难以理解）。
+const targetTables = new Set(listExistingTables(db))
+const notInTarget = PLAN.filter((t) => !targetTables.has(t.name)).map((t) => t.name)
+if (notInTarget.length) {
+  console.warn(`[import] 警告：目标库没有以下表，已跳过：${notInTarget.join(', ')}（快照来自 schema 不同的库）。`)
+  PLAN = PLAN.filter((t) => targetTables.has(t.name))
+}
+const IMPORT_ORDER = PLAN.map((t) => t.name)
+const DELETE_ORDER = [...IMPORT_ORDER].reverse()
+
+// 「快照本身就没有这张表」与「快照有但为空」后果完全不同：前者导入会清空目标库对应数据。
+// 必须显式提示，不能静默清库（历史缺陷 XPX-151）。
+const absent = IMPORT_ORDER.filter((t) => !Array.isArray(snap.tables?.[t]))
+if (absent.length) {
+  console.warn(
+    `[import] 警告：快照 v${snap.version ?? 1} 未包含以下表，导入后会清空目标库对应数据：${absent.join(', ')}。` +
+      `如需保留，请先用新版导出脚本重新生成快照。`
+  )
+}
 
 const insert = (table, row) => {
   const cols = Object.keys(row)
@@ -54,50 +76,30 @@ db.exec('BEGIN')
 try {
   for (const t of DELETE_ORDER) db.prepare(`DELETE FROM ${t}`).run()
 
-  // 主键重映射：旧 id → 新 id（父子/外键关系靠它重建，不依赖旧 id）
-  const idMaps = { attr_defs: new Map(), repos: new Map(), nodes: new Map() }
+  // 主键重映射：旧 id → 新 id（父子 / 外键关系靠它重建，不依赖旧 id）
+  const idMaps = Object.fromEntries(IMPORT_ORDER.map((t) => [t, new Map()]))
 
-  // 1) attr_defs（无外键依赖）
-  for (const r of snap.tables.attr_defs || []) {
-    const info = insert('attr_defs', r)
-    idMaps.attr_defs.set(r.id, Number(info.lastInsertRowid))
+  const mapId = (table, value) => {
+    if (value == null) return null
+    return idMaps[table]?.get(value) ?? null
   }
 
-  // 2) repos
-  for (const r of snap.tables.repos || []) {
-    const info = insert('repos', r)
-    idMaps.repos.set(r.id, Number(info.lastInsertRowid))
+  // 按计划顺序（外键依赖在前）逐表重建。表集合与外键都来自 schema，新增表无需改这里。
+  for (const { name, fks, selfReferencing } of PLAN) {
+    // 自引用表（nodes.parent_id / agent_runs.parent_run_id）按 id 升序插入，
+    // 保证被引用行先于引用行，映射才能命中。
+    const rows = [...(snap.tables[name] || [])]
+    if (selfReferencing) rows.sort((a, b) => a.id - b.id)
+
+    for (const r of rows) {
+      const row = { ...r }
+      for (const fk of fks) row[fk.column] = mapId(fk.table, r[fk.column])
+      const info = insert(name, row)
+      idMaps[name].set(r.id, Number(info.lastInsertRowid))
+    }
   }
 
-  // 3) nodes：按 id 升序插入，保证父节点先于子节点；映射 parent_id
-  const nodes = [...(snap.tables.nodes || [])].sort((a, b) => a.id - b.id)
-  for (const r of nodes) {
-    const row = { ...r, parent_id: r.parent_id == null ? null : idMaps.nodes.get(r.parent_id) ?? null }
-    const info = insert('nodes', row)
-    idMaps.nodes.set(r.id, Number(info.lastInsertRowid))
-  }
-
-  const mapNode = (v) => (v == null ? null : idMaps.nodes.get(v) ?? null)
-
-  // 4) attr_values（依赖 nodes + attr_defs）
-  for (const r of snap.tables.attr_values || []) {
-    insert('attr_values', { ...r, node_id: mapNode(r.node_id), attr_def_id: idMaps.attr_defs.get(r.attr_def_id) ?? null })
-  }
-
-  // 5) documents / commits / mrs（依赖 nodes）
-  for (const t of ['documents', 'commits', 'mrs']) {
-    for (const r of snap.tables[t] || []) insert(t, { ...r, node_id: mapNode(r.node_id) })
-  }
-
-  // 6) merges（依赖 nodes；repo 存的是仓库名，无需映射）
-  for (const r of snap.tables.merges || []) insert('merges', { ...r, node_id: mapNode(r.node_id) })
-
-  // 7) unit_repos（依赖 nodes + repos）
-  for (const r of snap.tables.unit_repos || []) {
-    insert('unit_repos', { ...r, node_id: mapNode(r.node_id), repo_id: idMaps.repos.get(r.repo_id) ?? null })
-  }
-
-  // 8) revision 对齐快照（前端轮询据此刷新）
+  // revision 对齐快照（前端轮询据此刷新）
   db.prepare("UPDATE meta SET value = ? WHERE key = 'revision'").run(String(snap.revision ?? 0))
 
   db.exec('COMMIT')
