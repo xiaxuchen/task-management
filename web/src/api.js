@@ -58,6 +58,11 @@ export default {
 
   // 交付门禁
   deliveryGate: (nodeId, scope) => api(`/nodes/${nodeId}/delivery-gate?scope=${scope || 'self'}`),
+  // 思维导图（树 → mermaid mindmap 只读投影）
+  mindmap: (nodeId, scope, maxDepth) =>
+    api(
+      `/nodes/${nodeId}/mindmap?scope=${scope || 'self'}${maxDepth ? `&maxDepth=${maxDepth}` : ''}`
+    ),
 
   // commit
   commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),

@@ -48,6 +48,7 @@ export const TOOLS = [
   'test_report_finish',
   'acceptance_report',
   'requirement_readiness',
+  'mindmap',
   'delivery_gate',
   'release_item_list',
   'release_item_upsert',
@@ -949,6 +950,31 @@ export function renderReadinessMd(readiness) {
     const failed = u.checks.filter((c) => !c.passed).map((c) => c.label)
     lines.push(`| ${u.name} | ${u.type} | ${u.ready ? '是' : '否'} | ${failed.length ? failed.join('、') : '—'} |`)
   }
+  return lines.join('\n')
+}
+
+/**
+ * 思维导图导出：把树投影渲染成可直接贴进 issue / 设计文档的 markdown。
+ * 正文是一段 ```mermaid mindmap 代码块（Vditor / GitHub / 飞书等均支持渲染），
+ * 下面附一行统计；复杂到不适合贴图的调用方可以直接取 `buildMindmap` 的结构化 `nodes`/`edges`。
+ *
+ * 与 renderReadinessMd / renderDeliveryGateMd 同风格：**标题 + 一段结论 + 可复制正文**，纯读。
+ */
+export function renderMindmapMd(mindmap) {
+  const t = mindmap.totals
+  const lines = [
+    `# 思维导图：${mindmap.node.name}`,
+    '',
+    `- 范围：${mindmap.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 节点：${t.nodes} · 连接：${t.edges} · 深度：${t.depth}${
+      t.truncated ? ` · 已截断 ${t.truncated} 个子节点（超出 maxDepth）` : ''
+    }`,
+    '',
+    '```mermaid',
+    mindmap.mermaid.trimEnd(),
+    '```',
+    ''
+  ]
   return lines.join('\n')
 }
 

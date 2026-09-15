@@ -41,3 +41,5 @@
 | 34 | 停用用例不参与交付门禁 | `buildAcceptanceReport` / `buildDeliveryGate` 只聚合 `enabled=1` 的用例，与 readiness 口径一致；否则停用历史用例会永远以 `notRun` 阻塞交付，而执行链默认不会选它。删除停用用例不得改变门禁结论 |
 | 35 | `format` 参数禁止静默降级 | 与 `scope` 同一条纪律：`json\|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；三入口统一由 `store.normalizeFormat` 校验，MCP 将业务错误转为 `isError` 文本而不是泄漏 SDK `-32602`。markdown 渲染器必须转义表格单元格中的 `\|` 与换行 |
 | 36 | 需求管理首版不新增表，用专属能力收敛通用节点操作 | 复用 `nodes(type=requirement)` + `documents`；需求列表/创建/状态流转走专属 store 能力并三入口 1:1 暴露。状态机放在 store（不只在 UI / 入口），创建时自动关联两份核心文档，避免「像需求但文档槽位缺失」与状态任意跳转这两类半成品 |
+| 37 | 思维导图是树的只读投影，不落表 | 导图服务的是「俯瞰需求拆解」这一读场景，真相只有节点树一份；落表会产生第二份真相并需同步维护。因此 `buildMindmap` 纯读、不写库、不动 revision（与 `acceptance_report` / `readiness` / `delivery_gate` 同一条「结论不落库」原则），AI 可高频轮询做看板而不制造变更噪声。输出同时给 mermaid 文本与结构化 `nodes`/`edges`/`totals`，服务端不引入图布局引擎 |
+| 38 | mermaid mindmap 标签必须实体转义，空名用占位符 | `mindmap` 节点串用 `["文本"]` 承载；文本里的裸 `"` 会提前闭合节点串导致解析失败，故 `"` → `&quot;`、`&` → `&amp;`（先 `&` 后 `"`，避免二次转义）。空标签 `[""]` 实测 mermaid 11.16 解析失败，改用占位符 `（未命名）`。`maxDepth` 为 `0..50` 整数，`''` / 越界 / 非整数一律 `VALIDATION_FAILED`（`Number('') === 0` 会静默把导图截成只剩根，比报错更难排查）；触达上限时用 `totals.truncated` 记被截断子节点数，避免把截断图误当完整树 |

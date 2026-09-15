@@ -37,6 +37,7 @@
 | **回归测试闭环**（AI 可回归测试用例 + 测试/验收报告 + 提示词派单） | `regression-loop/` | — | server/{db,store,ops}.mjs（test_cases/test_reports）+ 三入口 test_* |
 | **上线治理**（上线配置 / 上线 SQL / 上线检查清单 + agent 前置检查派单） | `release-governance/` | — | server/{db,store,ops}.mjs（release_items）+ 三入口 release_* |
 | **需求就绪门禁**（需求内容 / 概要设计 / 可回归用例三条门禁 + 子树汇总，纯读聚合不落表） | `requirement-readiness/` | — | server/{config,store,ops}.mjs（buildRequirementReadiness）+ 三入口 readiness |
+| **需求思维导图**（树 → mermaid mindmap 只读投影 + 深度截断 + 三入口 1:1 + 抽屉「导图」页签） | `requirement-mindmap/` | — | server/{store,ops}.mjs（buildMindmap）+ 三入口 mindmap + web/src/components/MindmapPane.vue |
 | **交付门禁**（需求就绪 / 测试验收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
 | **需求管理**（需求条目 / 受控状态流转 / 核心文档关联 + Web 需求管理页） | `requirement-management/` | — | server/{store,http,cli,mcp}.mjs（requirement_*）+ web/src/views/RequirementsView.vue |
 
