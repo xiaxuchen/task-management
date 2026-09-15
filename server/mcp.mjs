@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { saveUpload } from './uploads.mjs'
@@ -895,6 +895,18 @@ export function createMcpServer({ store }) {
       const n = store.resolveRef(String(node))
       const mindmap = store.buildMindmap(n.id, { scope, maxDepth: maxDepth === undefined ? null : maxDepth })
       const text = store.normalizeFormat(format) === 'md' ? renderMindmapMd(mindmap) : JSON.stringify(mindmap, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'code_audit',
+    '代码检查：对节点（含可选子树）已登记提交的**新增代码行**做只读静态审查（冲突标记 / 私钥 / 硬编码凭据 / eval / 聚焦测试 / 调试遗留），给出能否通过检查的结论；format=md 返回可贴进评审记录的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const audit = await getNodeCodeAudit(store, n.id, { scope })
+      const text = store.normalizeFormat(format) === 'md' ? renderCodeAuditMd(audit) : JSON.stringify(audit, null, 2)
       return { content: [{ type: 'text', text }] }
     })
   )

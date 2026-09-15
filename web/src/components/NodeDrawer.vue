@@ -122,6 +122,50 @@
         </template>
       </el-tab-pane>
 
+      <el-tab-pane label="代码检查" name="code-audit">
+        <div class="delivery-head">
+          <el-tag :type="auditTagType(audit.ready)" effect="dark" size="large">{{ auditReadyLabel(audit.ready) }}</el-tag>
+          <el-select v-model="auditScope" size="small" style="width:120px" @change="loadCodeAudit">
+            <el-option label="仅本节点" value="self" />
+            <el-option label="含子树" value="subtree" />
+          </el-select>
+        </div>
+        <el-alert
+          v-if="audit.ready === null"
+          type="info"
+          :closable="false"
+          title="没有可审查的新增行，或有提交读不到（仓库未登记 / 路径无效 / sha 不存在）"
+          style="margin-bottom:10px"
+        />
+        <el-alert
+          v-else-if="audit.ready === false"
+          type="error"
+          :closable="false"
+          :title="`命中 ${audit.totals.danger} 项高危问题，涉及 ${audit.totals.files} 个文件`"
+          style="margin-bottom:10px"
+        />
+        <div v-if="audit.ready !== null" class="audit-summary">
+          提交 {{ audit.totals.commits }} · 文件 {{ audit.totals.files }} · 新增行 {{ audit.totals.addedLines }} ·
+          高危 {{ audit.totals.danger }} · 提示 {{ audit.totals.warn }}
+        </div>
+        <el-table v-if="(audit.findings || []).length" :data="audit.findings" size="small" max-height="420">
+          <el-table-column label="级别" width="70">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.severity === 'danger' ? 'danger' : 'warning'" effect="plain">
+                {{ row.severity === 'danger' ? '高危' : '提示' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="title" label="问题" width="150" />
+          <el-table-column label="位置" width="150">
+            <template #default="{ row }">{{ row.path }}:{{ row.line }}</template>
+          </el-table-column>
+          <el-table-column prop="snippet" label="片段" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="suggestion" label="建议" min-width="180" />
+        </el-table>
+        <el-empty v-else-if="audit.ready === true" description="新增行未发现问题" />
+      </el-tab-pane>
+
       <el-tab-pane label="子节点" name="children">
         <el-empty v-if="!children.length" description="无子节点" />
         <el-table v-else :data="children" size="small" @row-click="onChildClick">
@@ -267,6 +311,8 @@ const designOutline = ref({ totals: null, units: [] })
 const designMd = ref('')
 const designHostRef = ref(null)
 const DESIGN_NODE_TYPES = ['project', 'requirement', 'subreq']
+const auditScope = ref('self')
+const audit = ref({ ready: null, totals: {}, findings: [] })
 const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' }
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
 const deliveryDecisionLabel = (d) => ({ ready: '可交付', not_ready: '不可交付', unknown: '待判定' }[d] || d)
@@ -281,6 +327,8 @@ const acceptanceStateLabel = (s) => ({
 }[s] || s)
 const acceptanceTagType = (s) => ({ accepted: 'success', rejected: 'danger', stale: 'warning', pending: 'info' }[s] || 'info')
 const shortFingerprint = (v) => (v ? String(v).slice(0, 8) : '—')
+const auditReadyLabel = (r) => (r === true ? '检查通过' : r === false ? '检查未通过' : '无法判定')
+const auditTagType = (r) => (r === true ? 'success' : r === false ? 'danger' : 'info')
 
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
@@ -480,6 +528,8 @@ async function loadDetail() {
   loadDeliveryGate()
   designScope.value = 'self'
   if (DESIGN_NODE_TYPES.includes(detail.type)) loadDesignOutline()
+  auditScope.value = 'self'
+  loadCodeAudit()
   loadTracks()
   loadDuplicates()
 }
@@ -565,6 +615,14 @@ async function applyDesign() {
     emit('updated')
   } catch (e) {
     ElMessage.error(e.message)
+  }
+}
+
+async function loadCodeAudit() {
+  try {
+    audit.value = await api.codeAudit(props.node.id, auditScope.value)
+  } catch {
+    audit.value = { ready: null, totals: {}, findings: [] }
   }
 }
 
@@ -667,6 +725,12 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
 }
 .design-host.vditor-reset {
   padding: 8px 16px;
+}
+
+.audit-summary {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #606266;
 }
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {
