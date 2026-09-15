@@ -102,7 +102,7 @@ docs/design.md    ← 主设计文档权威副本
       doc_upsert · doc_create · doc_update · doc_remove · doc_reorder
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
 批量  batch · import_outline
-门禁  requirement_readiness · delivery_gate
+门禁  requirement_readiness · code_audit · delivery_gate
 回归  test_case_list · test_case_upsert · test_case_update · test_case_remove · test_case_reorder
       test_run · test_report_list · test_report_get · test_report_finish · acceptance_report
 上线  release_item_list · release_item_upsert · release_item_update · release_item_remove · release_item_reorder
@@ -144,6 +144,7 @@ test run "项目A/需求1" --kind regression [--dry-run]        # 派单执行 +
 test report finish <rid> --status pass --summary 全绿 [--run-id N] [--overwrite]   # 回写报告终态（终态互转需 --overwrite）
 test acceptance "项目A/需求1" [--scope subtree] [--format md]  # 验收报告
 readiness check "项目A/需求1" [--scope subtree] [--format md]  # 需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
+code audit "项目A/需求1" [--scope subtree] [--format md]       # 代码检查（已登记提交新增行的只读静态审查）
 delivery gate "项目A/需求1" [--scope subtree] [--format md]    # 交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
 
 release item upsert "项目A/需求1" --name "执行上线 SQL" --kind sql --content "ALTER TABLE …" --rollback "DROP …"

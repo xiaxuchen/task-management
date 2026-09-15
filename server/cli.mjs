@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderCodeAuditMd, getNodeCodeAudit, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -127,6 +127,7 @@ const HELP = `task-board <命令>
   test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
   readiness check <ref> [--scope self|subtree] [--format json|md]   需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
+  code audit <ref> [--scope self|subtree] [--format json|md]       代码检查（已登记提交新增行的只读静态审查）
   delivery gate <ref> [--scope self|subtree] [--format json|md]     交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
   release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
@@ -441,6 +442,14 @@ export async function run(argv) {
       })
       if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderReadinessMd(readiness) + '\n')
       else json(readiness)
+      break
+    }
+    // ---------- 代码检查（`code audit <ref>`） ----------
+    case 'code audit': {
+      const node = store.resolveRef(ref)
+      const audit = await getNodeCodeAudit(store, node.id, { scope: values.scope })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderCodeAuditMd(audit) + '\n')
+      else json(audit)
       break
     }
     // ---------- 交付门禁（`delivery gate <ref>`） ----------
