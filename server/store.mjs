@@ -147,6 +147,33 @@ export function createStore(db, options = {}) {
   const requirementTransitions = Object.fromEntries(
     requirementStatuses.map((s) => [s, (REQUIREMENT_TRANSITIONS[s] || []).filter((t) => requirementStatusSet.has(t))])
   )
+  const deadEndStatuses = requirementStatuses.filter(
+    (s) => s !== 'done' && (requirementTransitions[s] || []).length === 0
+  )
+  if (deadEndStatuses.length) {
+    throw new AppError(
+      CODES.VALIDATION_FAILED,
+      `status.allowed.requirement 会产生无法继续流转的状态：${deadEndStatuses.join(', ')}`,
+      { deadEnd: deadEndStatuses, transitions: requirementTransitions }
+    )
+  }
+  const reachable = new Set(['todo'])
+  const queue = ['todo']
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const next of requirementTransitions[cur] || []) {
+      if (!reachable.has(next)) {
+        reachable.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  if (!reachable.has('done')) {
+    throw new AppError(CODES.VALIDATION_FAILED, 'status.allowed.requirement 必须保证 done 从 todo 可达', {
+      reachable: [...reachable],
+      transitions: requirementTransitions
+    })
+  }
   const stmt = (sql) => db.prepare(sql)
 
   let bumpDepth = 0
@@ -389,17 +416,20 @@ export function createStore(db, options = {}) {
     const items = listRequirements({ projectId, status })
     const byStatus = {}
     for (const key of requirementStatuses) byStatus[key] = 0
+    let unknownStatusCount = 0
     let missingRequirementDoc = 0
     let missingDesignDoc = 0
     for (const item of items) {
       if (Object.prototype.hasOwnProperty.call(byStatus, item.status)) byStatus[item.status] += 1
+      else unknownStatusCount += 1
       const [requirementDoc, designDoc] = requirementDocNames()
       if (!item.docState.find((d) => d.name === requirementDoc).filled) missingRequirementDoc += 1
       if (!item.docState.find((d) => d.name === designDoc).filled) missingDesignDoc += 1
     }
     return {
-      total: Object.values(byStatus).reduce((sum, n) => sum + n, 0),
+      total: items.length,
       byStatus,
+      unknownStatusCount,
       missingRequirementDoc,
       missingDesignDoc
     }

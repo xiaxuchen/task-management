@@ -313,3 +313,52 @@ test('CLI + config.json：自定义图外状态启动期拒绝，收窄配置的
   assert.equal(list.summary.byStatus.cancelled, undefined)
   assert.equal(list.items[0].canTransitionTo[0], 'testing')
 })
+
+test('HTTP /api/requirements 与 MCP 启动路径拒绝终态不可达 workflow', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const cli = (args) =>
+    execFileP('node', [CLI, ...args], { env: { ...process.env, TASKBOARD_HOME: tmp.dir }, encoding: 'utf8' })
+  await cli(['node', 'upsert', '--path', 'P'])
+
+  const configFile = path.join(tmp.dir, 'config.json')
+  const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'))
+  cfg.status.allowed.requirement = ['todo', 'doing', 'done']
+  fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2) + '\n')
+
+  const runProbe = (source) =>
+    execFileP('node', ['-e', source], {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      env: { ...process.env, TASKBOARD_HOME: tmp.dir },
+      encoding: 'utf8'
+    }).then(
+      () => null,
+      (e) => e
+    )
+
+  const httpFail = await runProbe(`
+    const { startServer } = await import('./server/index.mjs')
+    try {
+      await startServer({ port: 0, open: false })
+      process.exit(0)
+    } catch (e) {
+      console.error(e.code || 'ERROR')
+      process.exit(1)
+    }
+  `)
+  assert.ok(httpFail)
+  assert.match(String(httpFail.stderr || ''), /VALIDATION_FAILED/)
+
+  const mcpFail = await runProbe(`
+    const { runMcp } = await import('./server/mcp.mjs')
+    try {
+      await runMcp()
+      process.exit(0)
+    } catch (e) {
+      console.error(e.code || 'ERROR')
+      process.exit(1)
+    }
+  `)
+  assert.ok(mcpFail)
+  assert.match(String(mcpFail.stderr || ''), /VALIDATION_FAILED/)
+})

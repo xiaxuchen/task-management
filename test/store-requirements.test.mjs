@@ -154,3 +154,35 @@ test('收窄需求状态配置后，canTransitionTo / 流转 / KPI 共用同一�
   assert.equal(summary.total, 1)
   tmp.cleanup()
 })
+
+test('终态不可达或非终态无出边的 workflow 必须在启动期拒绝', async () => {
+  for (const allowed of [
+    ['todo'],
+    ['todo', 'doing', 'done'],
+    ['todo', 'done']
+  ]) {
+    const tmp = await tempHome()
+    assert.throws(
+      () => tmp.store.createStore(tmp.openDb(), { status: { allowed: { requirement: allowed } } }),
+      /VALIDATION_FAILED/,
+      allowed.join(',')
+    )
+    tmp.cleanup()
+  }
+})
+
+test('历史图外状态数据：summary.total 与列表行数一致并显式计数 unknown', async () => {
+  const { tmp, store, p } = await setupWithStatus(['todo', 'doing', 'testing', 'done'])
+  const a = store.createRequirement({ projectId: p.id, name: 'A' })
+  const b = store.createRequirement({ projectId: p.id, name: 'B' })
+  store.db.prepare("UPDATE nodes SET status = 'DONE' WHERE id = ?").run(b.id)
+  store.db.prepare("UPDATE nodes SET status = 'cancelled' WHERE id = ?").run(a.id)
+
+  const items = store.listRequirements({ projectId: p.id })
+  const summary = store.requirementSummary({ projectId: p.id })
+  assert.equal(items.length, 2)
+  assert.equal(summary.total, items.length)
+  assert.equal(summary.unknownStatusCount, 2)
+  assert.deepEqual(summary.byStatus, { todo: 0, doing: 0, testing: 0, done: 0 })
+  tmp.cleanup()
+})
