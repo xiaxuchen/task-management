@@ -23,6 +23,11 @@ TaskBoard 的主链路已经能回答「需求备齐没有」（就绪门禁）�
 - R2 缺陷口径：`status` 为 `done` / `cancelled` 视为**已关闭**，其余（`todo` / `doing` / `testing`）都是**未关闭阻塞项**。
 - R3 用例口径：只算**启用中**的 `biz_check` 用例（停用的既不会被派单，也不该阻塞业务验收）；
   每个用例只认**最近一次**报告结论，避免历史 `pass` 掩盖后来的 `fail`。
+- R3.1 **报告与用例的 kind 必须一致**：报告的 `kind` 是「这份结论属于哪条用例」的一致性凭据。
+  写入侧 `createTestReport` 未传 `kind` 时沿用所挂用例的 `kind`（不再默认 `regression`），
+  显式传了就必须与用例 `kind` 相同，错配一律 `VALIDATION_FAILED` 拒绝入库；
+  读取侧 `buildBusinessGate` / `buildAcceptanceReport` 都只采信 `report.kind === case.kind` 的报告，
+  使老库里已存在的不一致历史行也不再被信任（否则一条 `regression` 的 `pass` 会把业务检查判成通过——假绿）。
 - R4 只有 `pass` 算通过：`running`（已派单未回写）与 `not_run`（从未执行）都阻塞——
   与验收报告 / 上线清单 / 交付门禁同源口径。
 - R5 顶层三态：有任一阻塞项 → `ready=false`；全部通过 → `ready=true`；
@@ -44,7 +49,8 @@ TaskBoard 的主链路已经能回答「需求备齐没有」（就绪门禁）�
 - `test/business-gate.test.mjs`：空态 `ready=null`；未关闭缺陷阻塞 / `cancelled` 与 `done` 关闭；
   用例 `not_run` / `running` / `fail` 阻塞、`pass` 放行；历史 `pass` 不掩盖后来的 `fail`；
   停用与其它 kind 不参与；`scope=self` 与 `subtree` 的纳入差异；非法 `scope` → `VALIDATION_FAILED`；
-  **纯读不产生 revision**；markdown 渲染（含表格单元格 `|` 转义）。
+  **纯读不产生 revision**；markdown 渲染（含表格单元格 `|` 转义）；
+  **报告 kind 与用例 kind 不一致的假绿回归**（写入侧拒绝 + 省略 kind 时沿用用例 kind + 读取侧忽略历史脏行）。
 - `test/business-gate-entrypoints.test.mjs`：CLI 真实子进程与 store 逐字段一致、`--format md`、非法 `--scope` 非零退出；
   MCP 真实协议与 store 一致、非法 `scope` 返回 `isError + VALIDATION_FAILED`（不泄漏 SDK `-32602`）。
 - `test/http.test.mjs`：全链路（未关闭缺陷 + 未跑用例 → 阻塞 → 关闭并跑通 → 放行）、空态、md、非法 `scope` 400。

@@ -181,3 +181,60 @@ test('renderBusinessGateMd：输出可读 markdown 并转义表格单元格', as
   assert.ok(md.includes('a\\|b'), '竖线必须转义，避免把表格切歪')
   assert.ok(md.includes('| C | fail |'))
 })
+
+// ---------- 回归：报告 kind 与用例 kind 不一致时的假绿（独立验收 D1） ----------
+
+test('假绿回归：报告 kind 与用例 kind 不一致时被拒（写入侧一致性校验）', async (t) => {
+  const { tmp, store, s } = await setup()
+  t.after(() => tmp.cleanup())
+  const c = store.createTestCase(s.id, { name: '业务检查项', prompt: 'p', kind: 'biz_check' })
+  // 原问题：createTestReport 只校验 caseId 同节点 / runId 存在，不校验 kind，
+  // 于是一条 regression 报告能挂在 biz_check 用例上冒充业务检查结论。
+  assert.throws(
+    () => store.createTestReport(s.id, { caseId: c.id, kind: 'regression' }),
+    (e) => e.code === 'VALIDATION_FAILED' && /不一致/.test(e.message)
+  )
+  // 与用例 kind 一致才放行
+  const ok = store.createTestReport(s.id, { caseId: c.id, kind: 'biz_check' })
+  assert.equal(ok.kind, 'biz_check')
+  // 省略 kind 时直接沿用用例的 kind（不再默认 regression，避免「少传字段」踩进同一个坑）
+  const derived = store.createTestReport(s.id, { caseId: c.id })
+  assert.equal(derived.kind, 'biz_check')
+  // 没有 caseId（临时跑一次 / 用例已删除）时才回落到默认 regression
+  const loose = store.createTestReport(s.id, {})
+  assert.equal(loose.kind, 'regression')
+})
+
+test('假绿回归：历史脏报告（kind 不一致）不得让业务检查门禁通过（读取侧收窄）', async (t) => {
+  const { tmp, store, s } = await setup()
+  t.after(() => tmp.cleanup())
+  const c = store.createTestCase(s.id, { name: '业务检查项', prompt: 'p', kind: 'biz_check' })
+  // 绕过写入侧校验，直接落一条 kind 不一致的 pass 报告，模拟老库里的历史脏数据
+  store.db
+    .prepare(
+      'INSERT INTO test_reports (node_id,case_id,run_id,kind,status,summary,detail,started_at,finished_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    )
+    .run(s.id, c.id, null, 'regression', 'pass', 'stale', null, new Date().toISOString(), new Date().toISOString(), new Date().toISOString(), 'user')
+
+  const gate = store.buildBusinessGate(s.id)
+  // 不一致的报告被忽略 → 该用例回到 not_run → 阻塞，不再是假绿
+  assert.equal(gate.cases[0].latestStatus, 'not_run')
+  assert.equal(gate.cases[0].latestReportId, null)
+  assert.equal(gate.ready, false)
+  assert.equal(gate.blockers[0].kind, 'unpassed_case')
+})
+
+test('假绿回归：验收报告同样不采纳跨 kind 报告（读取侧口径一致）', async (t) => {
+  const { tmp, store, s } = await setup()
+  t.after(() => tmp.cleanup())
+  const c = store.createTestCase(s.id, { name: '业务检查项', prompt: 'p', kind: 'biz_check' })
+  store.db
+    .prepare(
+      'INSERT INTO test_reports (node_id,case_id,run_id,kind,status,summary,detail,started_at,finished_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    )
+    .run(s.id, c.id, null, 'regression', 'pass', 'stale', null, new Date().toISOString(), new Date().toISOString(), new Date().toISOString(), 'user')
+  const acc = store.buildAcceptanceReport(s.id)
+  assert.equal(acc.items[0].latestStatus, 'not_run')
+  assert.equal(acc.totals.pass, 0)
+  assert.equal(acc.totals.notRun, 1)
+})

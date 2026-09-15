@@ -924,22 +924,27 @@ export function createStore(db, options = {}) {
     }
   }
 
-  /** 引用完整性：用例必须属于本节点，agent 任务必须存在 */
+  /**
+   * 引用完整性：用例必须属于本节点，agent 任务必须存在。
+   * 返回用例行（含 kind），供「报告 kind 必须与用例 kind 一致」的一致性校验复用。
+   */
   function assertReportRefs(nodeId, { caseId, runId }) {
+    let caseRow = null
     if (caseId != null) {
-      const c = db.prepare('SELECT id, node_id FROM test_cases WHERE id = ?').get(Number(caseId))
-      if (!c) throw new AppError(CODES.NOT_FOUND, `测试用例 ${caseId} 不存在`, { caseId })
-      if (c.node_id !== Number(nodeId)) {
+      caseRow = db.prepare('SELECT id, node_id, kind FROM test_cases WHERE id = ?').get(Number(caseId))
+      if (!caseRow) throw new AppError(CODES.NOT_FOUND, `测试用例 ${caseId} 不存在`, { caseId })
+      if (caseRow.node_id !== Number(nodeId)) {
         throw new AppError(CODES.VALIDATION_FAILED, `测试用例 ${caseId} 不属于节点 ${nodeId}`, {
           caseId: Number(caseId),
           nodeId: Number(nodeId),
-          caseNodeId: c.node_id
+          caseNodeId: caseRow.node_id
         })
       }
     }
     if (runId != null && !db.prepare('SELECT id FROM agent_runs WHERE id = ?').get(Number(runId))) {
       throw new AppError(CODES.NOT_FOUND, `agent 任务 ${runId} 不存在`, { runId })
     }
+    return { caseRow }
   }
 
   function createTestCase(nodeId, { name, kind = 'regression', prompt, expectation = null, enabled = 1 }, by = 'user') {
@@ -1052,17 +1057,30 @@ export function createStore(db, options = {}) {
   }
 
   /** 开一条报告（一次执行 = 一行）；run_id 关联 agent 任务，便于从报告回看执行日志 */
-  function createTestReport(nodeId, { caseId = null, runId = null, kind = 'regression', status = 'running', summary = null, detail = null }, by = 'user') {
+  function createTestReport(nodeId, { caseId = null, runId = null, kind = undefined, status = 'running', summary = null, detail = null }, by = 'user') {
     rawNode(nodeId)
-    assertCaseKind(kind)
     assertReportStatus(status)
-    assertReportRefs(nodeId, { caseId, runId })
+    const { caseRow } = assertReportRefs(nodeId, { caseId, runId })
+    // 报告的 kind 与所挂用例的 kind 是**同一个事实**，因此：
+    //   1) 未显式传 kind 时直接沿用用例的 kind（不再默认 regression）——避免「少传一个字段
+    //      就把 regression 结论挂到 biz_check 用例上」的假绿（独立验收发现的边界）；
+    //   2) 显式传了 kind 时必须是同一值，否则拒绝——错配报告一律不入库；
+    //   3) 没有 caseId（用例已删除 / 临时跑一次）时才回落到默认 regression。
+    const effectiveKind = kind == null ? (caseRow ? caseRow.kind : 'regression') : kind
+    assertCaseKind(effectiveKind)
+    if (caseRow && caseRow.kind !== effectiveKind) {
+      throw new AppError(
+        CODES.VALIDATION_FAILED,
+        `报告类型 ${effectiveKind} 与用例「${caseRow.id}」的类型 ${caseRow.kind} 不一致`,
+        { caseId: Number(caseId), caseKind: caseRow.kind, reportKind: effectiveKind }
+      )
+    }
     const ts = now()
     const info = db
       .prepare(
         'INSERT INTO test_reports (node_id,case_id,run_id,kind,status,summary,detail,started_at,finished_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
       )
-      .run(nodeId, caseId, runId, kind, status, summary, detail, ts, status === 'running' ? null : ts, ts, actor(by))
+      .run(nodeId, caseId, runId, effectiveKind, status, summary, detail, ts, status === 'running' ? null : ts, ts, actor(by))
     bumpRevision()
     return testReportVO(db.prepare('SELECT * FROM test_reports WHERE id = ?').get(Number(info.lastInsertRowid)))
   }
@@ -1075,6 +1093,29 @@ export function createStore(db, options = {}) {
       .filter((r) => (caseId ? r.case_id === Number(caseId) : true))
       .filter((r) => (kind ? r.kind === kind : true))
       .map(testReportVO)
+  }
+
+  /**
+   * 每个用例的「最近一条报告」。（一次执行 = 一行，`id` 倒序取第一条。）
+   *
+   * **只接受 `report.kind === case.kind` 的报告**：报告的 kind 是这份结论属于哪条用例的
+   * 一致性凭据。若把 `regression` 报告算到 `biz_check` 用例上，业务检查门禁会拿到一个
+   * 与业务无关的 pass 并判定「业务可验收」——独立验收实测的假绿。
+   * 写入侧 `createTestReport` 已经拦住这种错配；这里再收窄一次读取口径，
+   * 是为了让**已经存在**的不一致历史行不再被信任（老库不受写入侧校验保护）。
+   * 用例被删除后报告 `case_id` 置空，本函数直接跳过，与既有「历史报告保留但不再参与聚合」一致。
+   */
+  function latestReportByCase(caseVOs, reports) {
+    const kindByCase = new Map(caseVOs.map((c) => [c.id, c.kind]))
+    const latest = new Map()
+    for (const r of reports) {
+      if (r.caseId == null) continue
+      const caseKind = kindByCase.get(r.caseId)
+      if (caseKind == null) continue
+      if (r.kind !== caseKind) continue
+      if (!latest.has(r.caseId)) latest.set(r.caseId, r)
+    }
+    return latest
   }
 
   function getTestReport(id) {
@@ -1201,11 +1242,8 @@ export function createStore(db, options = {}) {
       .all(...ids)
       .map(testCaseVO)
     const reports = db.prepare(`SELECT * FROM test_reports WHERE node_id IN (${ph}) ORDER BY id DESC`).all(...ids).map(testReportVO)
-    const latestByCase = new Map()
-    for (const r of reports) {
-      if (r.caseId == null) continue
-      if (!latestByCase.has(r.caseId)) latestByCase.set(r.caseId, r)
-    }
+    // 只认 kind 与用例一致的报告，避免跨 kind 的结论冒充本用例结论（见 latestReportByCase）
+    const latestByCase = latestReportByCase(cases, reports)
     const items = cases.map((c) => {
       const latest = latestByCase.get(c.id) || null
       return {
@@ -1646,11 +1684,8 @@ export function createStore(db, options = {}) {
       .prepare(`SELECT * FROM test_reports WHERE node_id IN (${ph}) ORDER BY id DESC`)
       .all(...ids)
       .map(testReportVO)
-    const latestByCase = new Map()
-    for (const r of reports) {
-      if (r.caseId == null) continue
-      if (!latestByCase.has(r.caseId)) latestByCase.set(r.caseId, r)
-    }
+    // 只认 kind 与用例一致的报告：跨 kind 的 pass 不得把业务检查判成通过（见 latestReportByCase）
+    const latestByCase = latestReportByCase(checkCases, reports)
     const cases = checkCases.map((c) => {
       const latest = latestByCase.get(c.id) || null
       return {

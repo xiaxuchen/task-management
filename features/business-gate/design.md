@@ -24,6 +24,20 @@
 后来回归出的 `fail` 会被历史 `pass` 掩盖。取每用例 `id DESC` 的第一条（即最近一条）与
 `buildAcceptanceReport` / `buildReleaseChecklist` 完全同源。
 
+**R3.1 报告 kind 必须与用例 kind 一致（独立验收发现的假绿）**：`test_reports.kind` 不是自由标签，
+它记录「这份结论属于哪一类用例」。原实现只在 `createTestReport` 校验 `caseId` 同节点与 `runId` 存在，
+既不看报告的 `kind`，聚合时也按 `caseId` 直接取最近报告——于是 `biz_check` 用例挂上一条
+`regression` 的 `pass` 报告即可让业务检查门禁 `ready=true`（独立验收实测）。修法是**写读两侧同时收窄**：
+
+- **写入侧**：未显式传 `kind` 时直接沿用所挂用例的 `kind`（不再默认 `regression`，避免「少传一个字段」
+  就踩进同一个坑）；显式传了就必须与用例 `kind` 相同，否则 `VALIDATION_FAILED` 拒绝入库。
+  只有无 `caseId`（临时跑一次 / 用例已删除）时才回落到默认 `regression`。
+- **读取侧**：`latestReportByCase` 只把 `report.kind === case.kind` 的报告认作该用例的结论。
+  这一层不是冗余——它保护**已经存在**的老库脏数据（写入侧校验对历史行无效），
+  也让 `buildBusinessGate` 与 `buildAcceptanceReport` 共用同一份口径，不会一个说通过、另一个说未过。
+
+两层都不可省：只做写入侧会让历史脏数据继续假绿；只做读取侧则新写入仍可继续生产脏数据。
+
 **R4 为什么 `running` 与 `not_run` 都阻塞**：`running` 表示已派单但还没回写结论，
 `not_run` 表示从未执行——两者都**没有拿到业务通过证据**。把它们当通过等于「没验就放行」，
 与交付门禁「`not_pushed` / `unknown` 都不冒充通过」、验收报告「`running` / `notRun` 不计入分母」同一条纪律。
@@ -49,7 +63,7 @@
 | 来源 | 通过条件 | 阻塞条件 |
 |---|---|---|
 | 缺陷（`nodes.type='defect'`） | `status` ∈ `done` / `cancelled` | `status` ∈ `todo` / `doing` / `testing` |
-| 业务检查用例（`test_cases.kind='biz_check'` 且 `enabled=1`） | 最近一次报告 `status='pass'` | 最近一次为 `fail` / `blocked` / `error` / `cancelled` / `running`，或从未执行（`not_run`） |
+| 业务检查用例（`test_cases.kind='biz_check'` 且 `enabled=1`） | 最近一次**且 `report.kind='biz_check'`** 的报告 `status='pass'` | 最近一次为 `fail` / `blocked` / `error` / `cancelled` / `running`，或从未执行（`not_run`），或该用例只有 kind 不一致的报告（视同 `not_run`） |
 
 空态：范围内无缺陷且无启用中的 `biz_check` 用例 → `ready=null`。
 
@@ -59,6 +73,9 @@
   `cases` 里用 `testCaseVO`（含 `expectation`），两者不要互相套用字段。
 - 停用用例（`enabled=0`）必须显式排除：SQL 里带 `AND enabled = 1`，
   这与 `buildAcceptanceReport` 的过滤一致；漏掉会让「停用的历史用例」永远以 `not_run` 拦住业务验收。
+- 报告与用例的 `kind` 一致性校验在 `assertReportRefs` 返回的用例行上完成（复用同一次查询，不额外查库）；
+  读取侧走 `latestReportByCase` 单点实现，`buildBusinessGate` 与 `buildAcceptanceReport` 共用，
+  避免两处各写一份过滤条件后再次跑偏。
 - `scope=subtree` 走 `subtreeIds`，与其它聚合接口同一份口径；`self` 只审本节点。
 - markdown 渲染必须转义表格单元格里的 `|` 与换行（缺陷名 / 用例名可能含这些字符），
   否则会多分列或截断表格（与 `renderDeliveryGateMd.cell()` 同款处理）。

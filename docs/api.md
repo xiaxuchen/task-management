@@ -404,6 +404,9 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/business-gate?format=md'
 
 > **判定口径**：`defect` 节点 `status` 为 `done` / `cancelled` 才算关闭，其余（含 `testing`）都是阻塞项；
 > `biz_check` 用例只认**最近一次**报告，`pass` 才通过，`running`（已派单未回写）与 `not_run`（从未执行）都阻塞。
+> 报告必须与用例 **kind 一致**才被采信：`createTestReport` 未传 `kind` 时沿用用例的 `kind`，
+> 显式传了不一致的 `kind` 直接 `400 VALIDATION_FAILED`；聚合侧也只认 `report.kind === case.kind`，
+> 因此老库里跨 kind 的历史报告视同未执行（不会拿 `regression` 的 pass 冒充业务检查结论）。
 > 范围内既无缺陷、也无启用中的 `biz_check` 用例时返回 `ready=null`（没有可判定对象，不伪造成通过）。
 > `blockers` 按 `open_defect` / `unpassed_case` 分型，便于调用方直接生成待办。
 

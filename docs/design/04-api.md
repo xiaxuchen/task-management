@@ -82,7 +82,7 @@
 
 | Method | Path | 说明 |
 |---|---|---|
-| GET | `/api/nodes/:id/business-gate` | 业务检查门禁：`?scope=self\|subtree`，`?format=json\|md`。判定范围内**未关闭缺陷**（`defect` 且 `status` ∉ `done`/`cancelled`）与**启用中的 `biz_check` 用例最近结论**（只认 `pass`，`running` / `not_run` 都阻塞）；无缺陷且无启用用例时 `ready=null`；`blockers` 按 `open_defect` / `unpassed_case` 分型；**纯读聚合，不写库、不动 revision** |
+| GET | `/api/nodes/:id/business-gate` | 业务检查门禁：`?scope=self\|subtree`，`?format=json\|md`。判定范围内**未关闭缺陷**（`defect` 且 `status` ∉ `done`/`cancelled`）与**启用中的 `biz_check` 用例最近结论**（只认 `pass`，`running` / `not_run` 都阻塞）；只采信 `report.kind === case.kind` 的报告（跨 kind 的报告视同未执行，防假绿）；无缺陷且无启用用例时 `ready=null`；`blockers` 按 `open_defect` / `unpassed_case` 分型；**纯读聚合，不写库、不动 revision** |
 
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
