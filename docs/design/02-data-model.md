@@ -451,7 +451,10 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 规则正则与 `WHERE` 判定只看代码区掩码，大小写不敏感。
 
 `config.releaseSqlAudit.rules` 缺省用默认规则集；非数组或**空数组显式拒绝**（`VALIDATION_FAILED`），
-不静默回退默认。
+不静默回退默认。只有 `undefined`（字段不写）算「未配置」，**显式 `null` 按非数组拒绝**。
+
+已知风险（首版不修）：PostgreSQL 的嵌套块注释（`/* outer /* inner */ ... */`）按单层处理，
+内层语句可能被误判为真实语句；PRD §3 已声明不做方言适配。
 
 结论口径：范围内**无 `kind=sql` 上线项 → `ready=null`**（不用 `false` 冒充未通过，也不当绿灯）；
 有 SQL 项且无 `danger` → `true`；任一 `danger` → `false`。

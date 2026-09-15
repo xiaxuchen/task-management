@@ -38,6 +38,7 @@
   与 `acceptance_report` / `readiness` / `release_checklist` / `delivery_gate` / 推送门禁同一条原则。
 - R7a `config.releaseSqlAudit.rules` 缺省用默认规则集；非数组或**空数组显式拒绝**
   （`VALIDATION_FAILED`），不静默回退默认，避免「配置写错」与「想放宽规则」都变成悄悄用默认集。
+  只有 `undefined`（字段不写）算「未配置」；**显式 `null` 属于非数组，同样拒绝**。
 - R8 `scope` / `format` 一律透传给 `store.normalizeScope` / `normalizeFormat` 单点校验，
   **不得在入口先做三元降级**；非法值返回 `VALIDATION_FAILED`（MCP 返回 `isError`，不泄漏 SDK `-32602`）。
 
@@ -47,6 +48,8 @@
 - 不自动改写 SQL 或补回滚脚本（由 AI / 人通过 `release_item_upsert` 修订）；
 - 不改 `release_items` 表结构、不新增表、不改上线清单与交付门禁的来源集合；
 - 不做 SQL 方言适配（MySQL / PostgreSQL 语法差异留给后续按需扩展规则集）。
+  已知风险：PostgreSQL 的嵌套块注释（`/* outer /* inner */ ... */`）首版按单层处理，
+  内层语句可能被误判为真实语句——按非目标声明不在本轮实现。
 
 ## 4. 验收标准
 
@@ -56,7 +59,8 @@
 - **词法边界固定回归（D1/D2/D3）**：`UPDATE t SET note = 'where';` 必须判缺 `WHERE`；
   `SELECT '--'; DROP TABLE t;` 必须命中 `drop_table`；`UPDATE t SET note = ';' WHERE id = 1;`
   必须判为安全；并覆盖 `/* */` 同类场景与注释里的 `;`。
-- **规则集契约**：`rules: []` 显式拒绝；`rules` 缺省仍用默认规则集。
+- **规则集契约**：六种输入各钉一条——`rules` 缺省与整个 `releaseSqlAudit` 选项缺省仍用默认规则集；
+  `[]` / `null` / 字符串 / 数字 / 对象一律 `VALIDATION_FAILED`（`null` 不得当缺省处理）。
 - 三入口 1:1：HTTP `?scope=&format=`、CLI `--scope --format`、MCP 字段集一致；
   非法 `scope` / `format` 一律 `VALIDATION_FAILED`（MCP 返回 `isError`）。
 - `npm test` 全绿；文档同步更新（本目录 + `docs/design/02-data-model.md` + `docs/design/04-api.md`

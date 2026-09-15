@@ -183,28 +183,52 @@ test('D2/D3 回归：注释里的 ; 也不参与分段', async (t) => {
   assert.equal(audit.blockers.length, 0)
 })
 
-test('S3 契约：releaseSqlAudit.rules 空数组显式拒绝，不静默回退默认规则', async (t) => {
+/**
+ * S3 规则集契约：六种输入各钉一条。
+ * - 缺省（字段不写 / 整个选项不传）→ 用默认规则集；
+ * - 空数组 / null / 字符串 / 数字 / 对象 → 非数组显式拒绝 VALIDATION_FAILED，不静默回退默认。
+ */
+async function sqlAuditStoreFor(t, releaseSqlAudit) {
   const tmp = await tempHome()
   t.after(() => tmp.cleanup())
-  const db = tmp.openDb()
-  const store = tmp.store.createStore(db, { releaseSqlAudit: { rules: [] } })
+  const opts = releaseSqlAudit === undefined ? {} : { releaseSqlAudit }
+  const store = tmp.store.createStore(tmp.openDb(), opts)
   const p = store.createNode({ type: 'project', name: 'P' })
   const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
   addSql(store, r.id, 'x', 'DROP TABLE t;')
-  assert.throws(() => store.buildReleaseSqlAudit(r.id), /VALIDATION_FAILED/)
-})
+  return { store, r }
+}
 
-test('S3 契约：releaseSqlAudit.rules 缺省仍用默认规则集', async (t) => {
-  const tmp = await tempHome()
-  t.after(() => tmp.cleanup())
-  const store = tmp.store.createStore(tmp.openDb(), { releaseSqlAudit: { requireRollback: false } })
-  const p = store.createNode({ type: 'project', name: 'P' })
-  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
-  addSql(store, r.id, 'x', 'DROP TABLE t;')
+test('S3 契约 1/6：rules 缺省（字段不写）→ 用默认规则集', async (t) => {
+  const { store, r } = await sqlAuditStoreFor(t, { requireRollback: false })
   const audit = store.buildReleaseSqlAudit(r.id)
   assert.equal(audit.ready, false)
   assert.deepEqual(audit.blockers.map((b) => b.key), ['drop_table'])
 })
+
+test('S3 契约 2/6：releaseSqlAudit 整个选项缺省 → 用默认规则集', async (t) => {
+  const { store, r } = await sqlAuditStoreFor(t, undefined)
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false)
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['drop_table'])
+})
+
+for (const [label, value] of [
+  ['空数组', []],
+  ['null', null],
+  ['字符串', 'drop_table'],
+  ['数字', 1],
+  ['对象', { key: 'drop_table' }]
+]) {
+  test(`S3 契约：rules = ${label} → 非数组显式拒绝 VALIDATION_FAILED`, async (t) => {
+    const { store, r } = await sqlAuditStoreFor(t, { rules: value })
+    assert.throws(
+      () => store.buildReleaseSqlAudit(r.id),
+      (e) => e.code === 'VALIDATION_FAILED',
+      `rules = ${label} 必须显式拒绝，而不是静默回退默认规则集`
+    )
+  })
+}
 
 test('sql audit：DROP COLUMN 与缺回滚是 warn，不阻塞', async (t) => {
   const { tmp, store, r } = await setup()

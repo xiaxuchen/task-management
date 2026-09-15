@@ -1730,12 +1730,21 @@ export function createStore(db, options = {}) {
 
   /**
    * 规则集契约：`releaseSqlAudit.rules` 缺省 / 未配置 → 用默认规则；
-   * **空数组显式拒绝**，而不是静默回退默认——否则「想放宽规则」和「配置写错」都表现为
-   * 悄悄使用默认集，或（若改成默认放行）把审查变成橡皮图章。要放宽请保留至少一条规则。
+   * 其余输入（**含 `null`**）一律按「非数组」显式拒绝，而不是静默回退默认——
+   * `undefined`（字段缺省）才是「未配置」；`null` 是显式写了空值，属于配置写错。
+   * 空数组同样拒绝：否则「想放宽规则」和「配置写错」都表现为悄悄使用默认集，
+   * 或（若改成默认放行）把审查变成橡皮图章。要放宽请保留至少一条规则。
    */
   function resolveSqlAuditRules() {
     const configured = releaseSqlAudit ? releaseSqlAudit.rules : undefined
-    if (configured === undefined || configured === null) return DEFAULT_RELEASE_SQL_AUDIT.rules
+    if (configured === undefined) return DEFAULT_RELEASE_SQL_AUDIT.rules
+    if (configured === null) {
+      throw new AppError(
+        CODES.VALIDATION_FAILED,
+        'releaseSqlAudit.rules 不能为 null——缺省（字段不写）才用默认规则集；显式 null 属于非法配置',
+        { rules: null }
+      )
+    }
     if (!Array.isArray(configured)) {
       throw new AppError(CODES.VALIDATION_FAILED, 'releaseSqlAudit.rules 必须是数组', { rules: configured })
     }
