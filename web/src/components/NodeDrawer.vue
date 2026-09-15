@@ -44,6 +44,10 @@
         <DocPane :node-id="node.id" />
       </el-tab-pane>
 
+      <el-tab-pane label="导图" name="mindmap">
+        <MindmapPane :node-id="node.id" />
+      </el-tab-pane>
+
       <el-tab-pane label="交付" name="delivery">
         <div class="delivery-head">
           <el-tag :type="deliveryTagType(gate.decision)" effect="dark" size="large">{{ deliveryDecisionLabel(gate.decision) }}</el-tag>
@@ -184,6 +188,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
 import DiffPane from './DiffPane.vue'
+import MindmapPane from './MindmapPane.vue'
 
 const props = defineProps({ node: Object, visible: Boolean, initialTab: { type: String, default: 'info' } })
 const emit = defineEmits(['close', 'updated'])

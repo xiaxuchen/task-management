@@ -78,6 +78,12 @@
 |---|---|---|
 | GET | `/api/nodes/:id/readiness` | 需求就绪门禁：`?scope=self\|subtree`，`?format=json\|md`。判定需求内容 / 概要设计 / 可回归用例三条门禁；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；无待判定需求时 `ready=null`；**纯读聚合，不写库、不动 revision** |
 
+### 思维导图（树 → mermaid mindmap 的只读投影）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/mindmap` | 思维导图：`?scope=self\|subtree`（缺省 `self`；Web 页签默认 `subtree`）、`?maxDepth=0..50`（缺省不截断）、`?format=json\|md`。返回 mermaid `mindmap` 文本 + 结构化 `nodes`/`edges`/`totals`；`totals.truncated` 记超过 `maxDepth` 被截断的子节点数；标签转义 `"`/`&`，空名用占位符；**纯读投影，不写库、不动 revision** |
+
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 | Method | Path | 说明 |
@@ -131,11 +137,11 @@
 其余取值（含大小写错如 `Subtree`、拼错、多值、空串）一律 `400 VALIDATION_FAILED`，
 `details.allowed = ["self","subtree"]`。**不做静默降级**——早期实现把非 `subtree` 的值吞成 `self`，
 会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
-适用接口：`/readiness`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
+适用接口：`/readiness`、`/mindmap`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
 `/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
 
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
-这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `acceptance_report` / `delivery_gate` /
+这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `mindmap` / `acceptance_report` / `delivery_gate` /
 `release_checklist` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。

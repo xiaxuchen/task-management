@@ -383,6 +383,30 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 > `release-checklist` / `delivery-gate` / `diffs` / `tracks` / `duplicates`。
 > 空态：子树内没有需求时返回 `ready=null`（`totals.units=0`），不是 400。
 
+## 思维导图（树 → mermaid mindmap 的只读投影）
+
+```bash
+# 子树导图（JSON：mermaid 文本 + 结构化 nodes/edges/totals）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/mindmap?scope=subtree'
+
+# 只画本节点
+curl -s 'http://127.0.0.1:3210/api/nodes/1/mindmap?scope=self'
+
+# 截断到第 1 层（totals.truncated 记被截断的子节点数）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/mindmap?scope=subtree&maxDepth=1'
+
+# markdown：标题 + 统计 + mermaid 代码块，可直接贴 issue / 设计文档
+curl -s 'http://127.0.0.1:3210/api/nodes/1/mindmap?scope=subtree&format=md'
+
+# CLI / MCP 等价入口（CLI 为单层命令）
+# node bin/taskboard.js mindmap "项目A/需求1" [--scope self|subtree] [--max-depth N] [--format json|md]
+# MCP: mindmap { node, scope?, maxDepth?, format? }
+```
+
+> 导图是节点树的**只读投影**：不写库、不动 revision。标签里的 `"` / `&` 会被转义成实体，
+> 空名用 `（未命名）` 占位。`maxDepth` 只接受 `0..50` 的整数，其它值（含空串）返回
+> `400 VALIDATION_FAILED`，**不会静默截成只剩根节点**。Web 端对应节点抽屉的「导图」页签。
+
 ## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 ```bash

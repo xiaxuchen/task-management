@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -57,6 +57,7 @@ const OPTIONS = {
   'work-dir': { type: 'string' },
   'exit-code': { type: 'string' },
   'max-attempts': { type: 'string' },
+  'max-depth': { type: 'string' },
   title: { type: 'string' },
   'since-seq': { type: 'string' },
   ids: { type: 'string' },
@@ -127,6 +128,7 @@ const HELP = `task-board <命令>
   test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
   readiness check <ref> [--scope self|subtree] [--format json|md]   需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
+  mindmap <ref> [--scope self|subtree] [--max-depth N] [--format json|md]  思维导图（mermaid mindmap 投影；看整棵子树用 --scope subtree）
   delivery gate <ref> [--scope self|subtree] [--format json|md]     交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
   release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
@@ -228,7 +230,14 @@ export async function run(argv) {
   const db = openDb()
   const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness })
   const by = values.actor || 'cli'
-  const [group, action, ref] = positionals
+  let [group, action, ref] = positionals
+  // `mindmap <ref>` 是单层命令（帮助如此，PM 口径亦如此），与 `readiness check <ref>` /
+  // `delivery gate <ref>` 的两层结构不同：不经归一化时 parseArgs 会把 ref 落在 action 位，
+  // switch key 变成 `mindmap <ref>` 而永远匹配不到 `case 'mindmap'`——正是本次要修的断点。
+  if (group === 'mindmap' && ref === undefined) {
+    ref = action
+    action = ''
+  }
   const json = (v) => console.log(JSON.stringify(v, null, 2))
 
   switch (`${group} ${action || ''}`.trim()) {
@@ -441,6 +450,17 @@ export async function run(argv) {
       })
       if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderReadinessMd(readiness) + '\n')
       else json(readiness)
+      break
+    }
+    // ---------- 思维导图（`mindmap <ref>`，树 → mermaid mindmap 只读投影） ----------
+    case 'mindmap': {
+      const node = store.resolveRef(ref)
+      const mindmap = store.buildMindmap(node.id, {
+        scope: values.scope,
+        maxDepth: values['max-depth']
+      })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderMindmapMd(mindmap) + '\n')
+      else json(mindmap)
       break
     }
     // ---------- 交付门禁（`delivery gate <ref>`） ----------
