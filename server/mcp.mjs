@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { saveUpload } from './uploads.mjs'
@@ -1043,6 +1043,18 @@ export function createMcpServer({ store }) {
   )
 
   server.tool(
+    'release_sql_audit',
+    '上线 SQL 风险审查：静态扫描节点（含可选子树）下 kind=sql 上线项，DROP/TRUNCATE/无 WHERE 的 UPDATE/DELETE 阻塞，DROP COLUMN/缺回滚提示；format=md 返回可贴进上线单的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const audit = store.buildReleaseSqlAudit(n.id, { scope })
+      const text = store.normalizeFormat(format) === 'md' ? renderReleaseSqlAuditMd(audit) : JSON.stringify(audit, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
     'release_check',
     '派单执行上线前置检查：把上线清单 + code_check/biz_check/release_check 用例拼成提示词交给 agent 运行时，并为每条用例开 running 报告。dryRun 只返回将要检查的内容',
     {
@@ -1131,7 +1143,7 @@ export function createMcpServer({ store }) {
 export async function runMcp() {
   const cfg = loadConfig()
   const db = openDb()
-  const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness, status: cfg.status })
+  const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness, status: cfg.status, releaseSqlAudit: cfg.releaseSqlAudit })
   const server = createMcpServer({ store })
   const transport = new StdioServerTransport()
   await server.connect(transport)

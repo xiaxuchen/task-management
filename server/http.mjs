@@ -1,7 +1,7 @@
 import express from 'express'
 import fs from 'node:fs'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderReadinessMd, renderMindmapMd, renderDeliveryGateMd, renderDesignOutlineMd, applyDesignOutline } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken, UPLOAD_DIR } from './config.mjs'
@@ -856,6 +856,19 @@ export function createApp({ store }) {
         return
       }
       res.json(checklist)
+    })
+  )
+  app.get(
+    '/api/nodes/:id/release-sql-audit',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      // scope / format 原样透传，由 store 单点校验（非法值报错，不静默降级 self / json）
+      const audit = store.buildReleaseSqlAudit(node.id, { scope: req.query.scope })
+      if (store.normalizeFormat(req.query.format) === 'md') {
+        res.type('text/markdown').send(renderReleaseSqlAuditMd(audit))
+        return
+      }
+      res.json(audit)
     })
   )
   app.post(

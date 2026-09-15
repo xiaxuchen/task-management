@@ -181,8 +181,9 @@ async function main() {
 
   for (const it of items) await cli(['release', 'item', 'update', String(it.id), '--status', 'done'])
   checklist = await cli(['release', 'checklist', String(req.id), '--scope', 'subtree'])
-  assert(checklist.ready === true, '必做项完成后上线清单应 ready', checklist.totals)
-  step('上线检查：必做项完成后 → ready=true')
+  assert(checklist.ready === false, '必做项完成但检查用例未执行时上线清单仍应未就绪', checklist.totals)
+  assert(checklist.totals.checkNotRun === 2, '未执行的 code_check / biz_check 应作为检查用例阻塞上线', checklist.totals)
+  step('上线检查：必做项完成但检查用例未执行 → ready=false（不产假绿灯）')
 
   // ---------- 9. 交付门禁（需求就绪 + 测试验收 + 上线治理 + 代码推送的最终汇总） ----------
   const gate = await cli(['delivery', 'gate', String(req.id), '--scope', 'subtree'])
@@ -191,13 +192,14 @@ async function main() {
 
   // 关键断言：本轮是开发阶段集成，尚未派发测试（PM 明确测试阶段后续另行派发），
   // 因此交付门禁必须**正确地判定为不可交付**，且失败来源恰是「测试验收」——
-  // 需求就绪与上线治理都已通过。这证明门禁不是无脑绿灯，也证明前三段链路真的通了。
+  // 需求就绪已通过；上线治理仍被未执行的 code_check / biz_check 阻塞。
+  // 这证明门禁不是无脑绿灯，也证明上线检查用例真的纳入就绪判定。
   assert(gate.decision === 'not_ready', '未派发测试时交付门禁应为 not_ready（不得伪造成可交付）', gate.decision)
   const byLabel = Object.fromEntries(gate.sources.map((s) => [s.key, s.status]))
   assert(byLabel.readiness === 'pass', '需求就绪来源应为 pass', byLabel)
   assert(byLabel.acceptance === 'fail', '测试验收来源应为 fail（尚无测试证据）', byLabel)
-  assert(byLabel.release === 'pass', '上线治理来源应为 pass', byLabel)
-  step('交付门禁：正确判定 not_ready——需求就绪 pass / 测试验收 fail（无证据）/ 上线治理 pass')
+  assert(byLabel.release === 'fail', '上线治理来源应为 fail（检查用例尚未执行）', byLabel)
+  step('交付门禁：正确判定 not_ready——需求就绪 pass / 测试验收 fail / 上线治理 fail（检查未跑）')
 
   const gateMd = await cliRaw(['delivery', 'gate', String(req.id), '--scope', 'subtree', '--format', 'md'])
   assert(/^# 交付门禁/m.test(gateMd), '交付门禁应可导出 markdown', gateMd.slice(0, 200))
@@ -231,6 +233,10 @@ async function main() {
     step(`验收签收：测试证据变化后原签收自动失效（state=${staleStatus.state}）`)
     await cli(['test', 'acceptance-sign', String(req.id), '--decision', 'accepted', '--scope', 'subtree', '--comment', '证据齐备后重新签收'])
     step('验收签收：对最新证据重新签收 accepted')
+
+    const readyChecklist = await cli(['release', 'checklist', String(req.id), '--scope', 'subtree'])
+    assert(readyChecklist.ready === true, '检查用例全部通过后上线清单应 ready', readyChecklist.totals)
+    step('上线检查：必做项完成后 → ready=true')
 
     const greenGate = await cli(['delivery', 'gate', String(req.id), '--scope', 'subtree'])
     assert(greenGate.decision === 'ready', '测试证据齐备后交付门禁应转为 ready', greenGate)
