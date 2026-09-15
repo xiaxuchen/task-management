@@ -1,3 +1,4 @@
 # 提交记录：需求管理
 
 - feat(requirement-management): 需求管理端到端垂直切片——新增专属列表/创建/状态流转能力（store + HTTP + CLI + MCP 1:1），创建需求时自动关联「需求内容 / 概要设计」两份文档，列表返回文档关联状态、就绪结论与 KPI；需求状态机在 store 强制，通用 node.update 不能绕过；新增 RequirementsView 页签与 DocPane 文档抽屉；补 store/HTTP/CLI/MCP 回归
+- fix(requirement-management): 收口 QA 缺陷 1–5——需求状态白名单下沉到通用 create/update，枚举外状态与通用创建绕过统一拒绝；`type=requirement` 的 create/upsert/batch 全部生成两份核心文档槽位；status 筛选同时作用于列表与 KPI；MCP 非法 status 改为 VALIDATION_FAILED；非法/空 projectId 显式拒绝；补 QA 建议的四类回归

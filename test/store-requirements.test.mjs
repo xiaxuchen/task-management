@@ -68,3 +68,47 @@ test('通用 node.update 也不能绕过需求状态机', async () => {
   assert.equal(store.getNode(r.id).status, 'todo')
   tmp.cleanup()
 })
+
+test('通用 create/update 对枚举外状态值统一拒绝', async () => {
+  const { tmp, store, p1 } = await setup()
+  assert.throws(() => store.createNode({ parentId: p1.id, type: 'requirement', name: 'R', status: 'DONE' }), /VALIDATION_FAILED/)
+  assert.throws(() => store.createNode({ parentId: p1.id, type: 'requirement', name: 'R2', status: 'bogus' }), /VALIDATION_FAILED/)
+  assert.throws(() => store.createNode({ parentId: p1.id, type: 'requirement', name: 'R done', status: 'done' }), /VALIDATION_FAILED/)
+
+  const r = store.createRequirement({ projectId: p1.id, name: 'R3' })
+  assert.throws(() => store.updateNode(r.id, { status: 'DONE' }), /VALIDATION_FAILED/)
+  assert.throws(() => store.updateNode(r.id, { status: 'done' }), /VALIDATION_FAILED/)
+  assert.equal(store.getNode(r.id).status, 'todo')
+  tmp.cleanup()
+})
+
+test('通用创建 type=requirement 必须生成与专属创建一致的两份文档槽位', async () => {
+  const { tmp, store, p1 } = await setup()
+  const generic = store.createNode({ parentId: p1.id, type: 'requirement', name: '通用创建' })
+  const dedicated = store.createRequirement({ projectId: p1.id, name: '专属创建' })
+  const shape = (node) =>
+    store
+      .listRequirements({ projectId: p1.id })
+      .find((r) => r.id === node.id)
+      .docState.map((d) => [d.name, d.linked, d.filled])
+  assert.deepEqual(shape(generic), shape(dedicated))
+  assert.deepEqual(shape(generic), [
+    ['需求内容', true, false],
+    ['概要设计', true, false]
+  ])
+  tmp.cleanup()
+})
+
+test('status 筛选下 summary 与 items 口径一致', async () => {
+  const { tmp, store, p1 } = await setup()
+  const a = store.createRequirement({ projectId: p1.id, name: 'A' })
+  store.createRequirement({ projectId: p1.id, name: 'B' })
+  store.transitionRequirement(a.id, { status: 'doing' })
+
+  const out = store.listRequirements({ projectId: p1.id, status: 'doing' })
+  const summary = store.requirementSummary({ projectId: p1.id, status: 'doing' })
+  assert.equal(out.length, 1)
+  assert.equal(summary.total, 1)
+  assert.deepEqual(summary.byStatus, { todo: 0, doing: 1, testing: 0, done: 0, cancelled: 0 })
+  tmp.cleanup()
+})
