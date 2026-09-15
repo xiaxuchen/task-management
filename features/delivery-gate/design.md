@@ -7,7 +7,7 @@
   - `pushGate` 证据由调用方注入（推送判定要读本机 git ref，是异步的）。
 - `server/ops.mjs`：`buildDeliveryGateFull(store, ref, { scope })` 是唯一 async 汇总入口——
   - 先 `getNodePushGate` 算出推送证据，再注入同步聚合，保证交付结论覆盖「代码是否真的 push」；
-  - 不直接查明细表，避免和三个来源的口径漂移；
+  - 不直接查明细表，避免和四个来源的口径漂移；
   - 不写库、不 bump revision。
 - `server/ops.mjs`：`renderDeliveryGateMd(gate)`，并把 `delivery_gate` 登记进 `TOOLS`。
 - `server/http.mjs` / `cli.mjs` / `mcp.mjs`：三入口 1:1 暴露。
@@ -40,7 +40,7 @@
 `ready=true` 映射为 `pass`，`ready=false` 映射为 `fail`。可选项未完成不会阻塞交付。
 
 **R5 blocker 展平到条目级**：需求就绪给出未过门禁，测试给出未通过 / 未完成用例，上线给出未完成必做项，推送给出未推送 / 无法判定的提交。
-让 AI 与人都能直接从 `blockers` 生成待办，而不用再去遍历三个 evidence 对象。
+让 AI 与人都能直接从 `blockers` 生成待办，而不用再去遍历四个 evidence 对象。
 
 **R6 三入口与 UI 同源**：HTTP / CLI / MCP / Web 都直接消费 `buildDeliveryGate` 的返回值；
 UI 只做标签映射，不复制判定逻辑。
