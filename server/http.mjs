@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderDeliverySnapshotMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -564,6 +564,43 @@ export function createApp({ store }) {
         return
       }
       res.json(gate)
+    })
+  )
+  app.post(
+    '/api/nodes/:id/delivery-snapshots',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      res.status(201).json(
+        store.captureDeliverySnapshot(
+          node.id,
+          { scope: b.scope, note: b.note },
+          actorOf(req)
+        )
+      )
+    })
+  )
+  app.get(
+    '/api/nodes/:id/delivery-snapshots',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(
+        store.listDeliverySnapshots(node.id, {
+          scope: req.query.scope ?? null,
+          limit: req.query.limit
+        })
+      )
+    })
+  )
+  app.get(
+    '/api/delivery-snapshots/:sid',
+    wrap((req, res) => {
+      const snapshot = store.getDeliverySnapshot(Number(req.params.sid))
+      if (store.normalizeFormat(req.query.format) === 'md') {
+        res.type('text/markdown').send(renderDeliverySnapshotMd(snapshot))
+        return
+      }
+      res.json(snapshot)
     })
   )
 

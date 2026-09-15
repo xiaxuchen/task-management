@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderDeliverySnapshotMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -767,6 +767,39 @@ export function createMcpServer({ store }) {
       const n = store.resolveRef(String(node))
       const gate = store.buildDeliveryGate(n.id, { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderDeliveryGateMd(gate) : JSON.stringify(gate, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'delivery_snapshot_capture',
+    '冻结当前交付门禁结论为不可变快照（记录当时证据与指纹），用于验收留痕 / 上线审计',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), note: z.string().optional() },
+    mcpValidate(async ({ node, scope, note }) => {
+      const n = store.resolveRef(String(node))
+      const snapshot = store.captureDeliverySnapshot(n.id, { scope, note }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(snapshot, null, 2) }] }
+    })
+  )
+
+  server.tool(
+    'delivery_snapshot_list',
+    '列出节点的交付快照（倒序），每条带 current / drifted 核对状态',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), limit: z.number().optional() },
+    mcpValidate(async ({ node, scope, limit }) => {
+      const n = store.resolveRef(String(node))
+      const items = store.listDeliverySnapshots(n.id, { scope: scope ?? null, limit })
+      return { content: [{ type: 'text', text: JSON.stringify(items, null, 2) }] }
+    })
+  )
+
+  server.tool(
+    'delivery_snapshot_get',
+    '读取单条交付快照；format=md 返回可贴进验收 / 上线记录的 markdown',
+    { id: z.number(), format: z.string().optional() },
+    mcpValidate(async ({ id, format }) => {
+      const snapshot = store.getDeliverySnapshot(id)
+      const text = store.normalizeFormat(format) === 'md' ? renderDeliverySnapshotMd(snapshot) : JSON.stringify(snapshot, null, 2)
       return { content: [{ type: 'text', text }] }
     })
   )

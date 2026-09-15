@@ -103,6 +103,7 @@ docs/design.md    ← 主设计文档权威副本
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
 批量  batch · import_outline
 门禁  requirement_readiness · delivery_gate
+      交付快照 delivery_snapshot_capture · delivery_snapshot_list · delivery_snapshot_get
 回归  test_case_list · test_case_upsert · test_case_update · test_case_remove · test_case_reorder
       test_run · test_report_list · test_report_get · test_report_finish · acceptance_report
 上线  release_item_list · release_item_upsert · release_item_update · release_item_remove · release_item_reorder
@@ -145,6 +146,9 @@ test report finish <rid> --status pass --summary 全绿 [--run-id N] [--overwrit
 test acceptance "项目A/需求1" [--scope subtree] [--format md]  # 验收报告
 readiness check "项目A/需求1" [--scope subtree] [--format md]  # 需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
 delivery gate "项目A/需求1" [--scope subtree] [--format md]    # 交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
+delivery snapshot "项目A/需求1" [--note 备注]                  # 冻结当前交付证据（完整依据 + 指纹）
+delivery snapshots "项目A/需求1" [--scope subtree]             # 快照列表（current / drifted）
+delivery snapshot-get <sid> [--format md]                       # 单条快照（可贴验收 / 上线记录）
 
 release item upsert "项目A/需求1" --name "执行上线 SQL" --kind sql --content "ALTER TABLE …" --rollback "DROP …"
 release item list "项目A/需求1" [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
@@ -165,8 +169,8 @@ release check "项目A/需求1" [--scope subtree] [--dry-run] [--no-wait]   # �
 4. 单点更新用 `node upsert` / `attr set`（幂等，可反复调用）
 5. 破坏性操作（删除 / 移动）必须带 `--confirm`（HTTP 侧为 `confirm: true`），否则 400 `CONFIRM_REQUIRED`
 
-**写操作会记录 actor**：CLI 默认 `cli`，MCP 为 `ai`，Web 为 `user`，导入为 `import`；
-可用 `--actor ai` 覆盖。UI 上有徽标区分。
+**写操作会记录 actor**：CLI 默认 `cli`，MCP 工具的显式回写为 `mcp`，Web 为 `user`，导入为 `import`，
+服务内部为 `system`；CLI 可用 `--actor ai` 覆盖。UI 上有徽标区分。
 
 ## 关键约束（不要做）
 

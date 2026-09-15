@@ -1,7 +1,8 @@
 import { AppError, CODES } from './errors.mjs'
 import { CHILD_TYPES, LEAF_TYPES } from './db.mjs'
+import { createHash } from 'node:crypto'
 
-const ACTORS = new Set(['user', 'ai', 'cli', 'import'])
+const ACTORS = new Set(['user', 'ai', 'cli', 'import', 'mcp', 'system'])
 const now = () => new Date().toISOString()
 const REVIEW_STATUSES = ['pending', 'approved', 'issue']
 
@@ -1737,6 +1738,102 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 交付证据快照（冻结门禁结论，供验收 / 上线审计） ----------
+  //
+  // 实时门禁回答「现在能不能交付」；快照回答「当时凭什么放行」。快照只在显式 capture 时写入，
+  // 后续读取会重新构建当前门禁并比较 fingerprint，返回 current / drifted，而不是把旧结论冒充现状。
+
+  function stableJson(value) {
+    if (Array.isArray(value)) return `[${value.map((v) => stableJson(v)).join(',')}]`
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value)
+        .sort()
+        .map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`)
+        .join(',')}}`
+    }
+    return JSON.stringify(value)
+  }
+
+  function deliveryFingerprint(gate) {
+    return createHash('sha256').update(stableJson(gate)).digest('hex')
+  }
+
+  function deliverySnapshotVO(row) {
+    const gate = safeParse(row.gate_json)
+    let drift = null
+    try {
+      const currentGate = buildDeliveryGate(row.node_id, { scope: row.scope })
+      const currentFingerprint = deliveryFingerprint(currentGate)
+      drift = {
+        status: currentFingerprint === row.fingerprint ? 'current' : 'drifted',
+        currentFingerprint,
+        currentDecision: currentGate.decision
+      }
+    } catch {
+      // 节点被删除时快照会随 FK 级联删除；其它读取异常不把审计记录伪装成 current。
+      drift = { status: 'unknown', currentFingerprint: null, currentDecision: null }
+    }
+    return {
+      id: row.id,
+      nodeId: row.node_id,
+      scope: row.scope,
+      decision: row.decision,
+      ready: row.ready == null ? null : !!row.ready,
+      fingerprint: row.fingerprint,
+      note: row.note,
+      createdAt: row.created_at,
+      createdBy: row.created_by,
+      gate,
+      drift
+    }
+  }
+
+  function captureDeliverySnapshot(nodeId, { scope = 'self', note = null } = {}, by = 'user') {
+    const root = rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    const gate = buildDeliveryGate(root.id, { scope: effectiveScope })
+    const fingerprint = deliveryFingerprint(gate)
+    const ts = now()
+    const info = db
+      .prepare(
+        `INSERT INTO delivery_snapshots (node_id, scope, decision, ready, fingerprint, gate_json, note, created_at, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        root.id,
+        effectiveScope,
+        gate.decision,
+        gate.ready == null ? null : gate.ready ? 1 : 0,
+        fingerprint,
+        JSON.stringify(gate),
+        note == null ? null : String(note),
+        ts,
+        actor(by)
+      )
+    bumpRevision()
+    return deliverySnapshotVO(db.prepare('SELECT * FROM delivery_snapshots WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function listDeliverySnapshots(nodeId, { scope = null, limit = 50 } = {}) {
+    const root = rawNode(nodeId)
+    const effectiveScope = scope == null ? null : normalizeScope(scope)
+    const lim = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Number(limit), 200) : 50
+    const rows = effectiveScope
+      ? db
+          .prepare('SELECT * FROM delivery_snapshots WHERE node_id = ? AND scope = ? ORDER BY id DESC LIMIT ?')
+          .all(root.id, effectiveScope, lim)
+      : db
+          .prepare('SELECT * FROM delivery_snapshots WHERE node_id = ? ORDER BY id DESC LIMIT ?')
+          .all(root.id, lim)
+    return rows.map(deliverySnapshotVO)
+  }
+
+  function getDeliverySnapshot(id) {
+    const row = db.prepare('SELECT * FROM delivery_snapshots WHERE id = ?').get(Number(id))
+    if (!row) throw new AppError(CODES.NOT_FOUND, `交付快照 ${id} 不存在`, { id })
+    return deliverySnapshotVO(row)
+  }
+
   // ---------- agent 运行时管理（参考 multica agent_runtime / chat_session / agent_task_queue） ----------
   //
   // 三层模型：
@@ -2568,6 +2665,9 @@ export function createStore(db, options = {}) {
     buildReleaseChecklist,
     // 交付门禁（汇总需求就绪 / 验收 / 上线结论）
     buildDeliveryGate,
+    captureDeliverySnapshot,
+    listDeliverySnapshots,
+    getDeliverySnapshot,
     // agent 运行时管理
     upsertRuntime,
     heartbeatRuntime,

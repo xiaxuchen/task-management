@@ -424,3 +424,26 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 判定单元只有 `requirement` / `subreq` 两类（项目不承载需求正文，任务组 / 子任务 / 缺陷是拆分产物）；
 `scope=subtree` 在子树里挑出这两类逐单元判定。结论口径：全部单元就绪 → `ready=true`，
 任一未就绪 → `false`，**无待判定需求 → `null`**（不用 `false` 冒充未就绪）。
+
+### 4.17 delivery_snapshots（交付证据快照）
+
+实时交付门禁回答「现在能不能交付」；验收与上线审计还需要回答「当时凭什么放行」。
+`delivery_snapshots` 在显式 capture 时冻结一份门禁结论与完整证据，后续只读不改写。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE；节点删除后快照同步删除 |
+| scope | TEXT NOT NULL | `self` / `subtree`（CHECK 约束） |
+| decision | TEXT NOT NULL | 冻结时结论：`ready` / `not_ready` / `unknown` |
+| ready | INTEGER NULL | 冻结时的布尔结论；`unknown` 时为 NULL |
+| fingerprint | TEXT NOT NULL | 对完整门禁 JSON 的 SHA-256 稳定指纹 |
+| gate_json | TEXT NOT NULL | 冻结时的完整门禁对象（sources / evidence / blockers / totals） |
+| note | TEXT | 人工备注（验收单号 / 上线批次等） |
+| created_at | TEXT | 冻结时间 |
+| created_by | TEXT | 操作者（user / ai / cli / mcp） |
+
+约束：index `idx_delivery_snapshots_node(node_id, id)`。
+读取时按同一 `node_id + scope` 重新构建当前门禁并比较指纹，返回 `drift.status=current|drifted`；
+`drifted` 表示历史证据仍原样保留，但当前源数据已变化。快照写入是显式动作，每次只递增一次 revision；
+读取快照只做核对，不写库、不 bump revision。
