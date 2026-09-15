@@ -103,6 +103,109 @@ test('sql audit：注释里的关键字不误伤（行注释 + 块注释）', as
   assert.equal(audit.totals.danger, 0)
 })
 
+// ---------- 词法边界反例（独立测试 D1/D2/D3 的固定回归） ----------
+// 三处判定必须共享同一份词法状态：字符串字面量不得影响注释剥离 / `;` 分段 / `WHERE` 判定。
+
+test('D1 回归：字符串字面量里的 where 不能洗白无条件的 UPDATE', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  addSql(store, r.id, 'd1', "UPDATE t SET note = 'where';")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false, "字面量 'where' 不是真正的 WHERE，必须判定为缺 WHERE")
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['update_without_where'])
+})
+
+test('D1 回归：双引号 / 反引号字面量里的 where 同样不能洗白', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  addSql(store, r.id, 'd1-dq', 'UPDATE t SET note = "where";')
+  addSql(store, r.id, 'd1-bq', 'UPDATE t SET note = `where`;')
+  addSql(store, r.id, 'd1-esc', "UPDATE t SET note = 'it''s where';")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false)
+  assert.equal(audit.totals.danger, 3)
+  assert.ok(audit.blockers.every((b) => b.key === 'update_without_where'))
+})
+
+test('D2 回归：字符串字面量里的 -- 不能吞掉后续 DROP TABLE', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  addSql(store, r.id, 'd2', "SELECT '--'; DROP TABLE t;")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false, "字面量里的 -- 是字符串内容，不是行注释")
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['drop_table'])
+})
+
+test('D2 回归：字符串字面量里的 /* */ 不能吞掉后续 TRUNCATE', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  addSql(store, r.id, 'd2-block', "SELECT '/* hidden */'; TRUNCATE TABLE t;")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false)
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['truncate'])
+})
+
+test('D2 回归：真实行注释 / 块注释仍然不误伤后续危险语句识别', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  // 注释本身被掩掉，但注释之后的 DROP TABLE 必须照常命中
+  addSql(store, r.id, 'd2-real-comment', "-- 说明：这次要删表\n/* 迁移脚本 */\nDROP TABLE t;")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false)
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['drop_table'])
+})
+
+test('D3 回归：字符串字面量里的 ; 不能切断语句（合法 UPDATE 不得误报）', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  addSql(store, r.id, 'd3', "UPDATE t SET note = ';' WHERE id = 1;")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, true, "字面量里的 ; 不应切段，整条 UPDATE 仍带 WHERE")
+  assert.equal(audit.blockers.length, 0)
+})
+
+test('D3 回归：字面量里的 ; 与真实分段混排时各自正确', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  // 第一条带真 WHERE（字面量里还有 ;），第二条无条件 DELETE —— 只有第二条该被拦
+  addSql(store, r.id, 'd3-mixed', "UPDATE a SET x = ';' WHERE id = 1; DELETE FROM b;")
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false)
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['delete_without_where'])
+})
+
+test('D2/D3 回归：注释里的 ; 也不参与分段', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  addSql(store, r.id, 'd23', 'UPDATE t SET x = 1 /* a; b */ WHERE id = 2;')
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, true)
+  assert.equal(audit.blockers.length, 0)
+})
+
+test('S3 契约：releaseSqlAudit.rules 空数组显式拒绝，不静默回退默认规则', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const db = tmp.openDb()
+  const store = tmp.store.createStore(db, { releaseSqlAudit: { rules: [] } })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  addSql(store, r.id, 'x', 'DROP TABLE t;')
+  assert.throws(() => store.buildReleaseSqlAudit(r.id), /VALIDATION_FAILED/)
+})
+
+test('S3 契约：releaseSqlAudit.rules 缺省仍用默认规则集', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const store = tmp.store.createStore(tmp.openDb(), { releaseSqlAudit: { requireRollback: false } })
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  addSql(store, r.id, 'x', 'DROP TABLE t;')
+  const audit = store.buildReleaseSqlAudit(r.id)
+  assert.equal(audit.ready, false)
+  assert.deepEqual(audit.blockers.map((b) => b.key), ['drop_table'])
+})
+
 test('sql audit：DROP COLUMN 与缺回滚是 warn，不阻塞', async (t) => {
   const { tmp, store, r } = await setup()
   t.after(() => tmp.cleanup())

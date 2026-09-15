@@ -445,8 +445,13 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 | `danger` | `drop_table`（DROP TABLE/DATABASE）、`truncate`、`delete_without_where`、`update_without_where` | 阻塞：任一命中 → `ready=false`，进 `blockers` |
 | `warn` | `drop_column`、`sql_no_rollback`（缺回滚脚本） | 仅提示：进 `warnings`，不改变 `ready` |
 
-无 `WHERE` 判定按**语句边界**（按 `;` 切分）在单条语句内进行，避免同段带 `WHERE` 的语句洗白无条件的 `UPDATE` / `DELETE`；
-匹配前先剥离行注释与块注释，避免注释里的关键字误伤。大小写不敏感。
+注释剥离、`;` 分段与 `WHERE` 判定共享**一次词法扫描**（`scanSql`），只在字符串 / 注释之外识别这些边界，
+统一处理单引号 / 双引号 / 反引号、转义符与注释状态：字符串字面量里的 `where` / `--` / 块注释符号 / `;`
+都不得影响判定（否则会分别造成「洗白无条件 `UPDATE`」「吞掉后续 `DROP TABLE`」「错误切段误报」三类假结论）。
+规则正则与 `WHERE` 判定只看代码区掩码，大小写不敏感。
+
+`config.releaseSqlAudit.rules` 缺省用默认规则集；非数组或**空数组显式拒绝**（`VALIDATION_FAILED`），
+不静默回退默认。
 
 结论口径：范围内**无 `kind=sql` 上线项 → `ready=null`**（不用 `false` 冒充未通过，也不当绿灯）；
 有 SQL 项且无 `danger` → `true`；任一 `danger` → `false`。

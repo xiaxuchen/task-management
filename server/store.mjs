@@ -1631,28 +1631,82 @@ export function createStore(db, options = {}) {
   // 与 acceptance_report / readiness / release_checklist 同一条「只读聚合」原则：
   // 纯读、不落表、不 bump revision——结论从已登记内容实时推导，避免第二份真相。
 
-  /** 剥离行注释与块注释，避免注释里的关键字误伤（见 design R4）。 */
-  function stripSqlComments(sql) {
-    return String(sql ?? '')
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/--[^\n\r]*/g, ' ')
-  }
-
-  /** 按 `;` 切分语句；无分号的脚本作为单条语句处理。 */
-  function splitSqlStatements(sql) {
-    return stripSqlComments(sql)
-      .split(';')
-      .map((s) => s.trim())
-      .filter(Boolean)
+  /**
+   * 单次词法扫描：把 SQL 切成语句，并同时产出「只剩代码区」的掩码文本。
+   *
+   * 为什么不能分别做三处全文正则（独立测试 D1/D2/D3 的根因）：注释剥离、`;` 分段、
+   * `WHERE` 判定必须共享同一份词法状态，否则字符串字面量会互相污染——
+   *   - `UPDATE t SET note = 'where';`  字面量里的 where 会替无条件 UPDATE 洗白；
+   *   - `SELECT '--'; DROP TABLE t;`    字面量里的 `--` 会当行注释吞掉后续危险语句；
+   *   - `UPDATE t SET note = ';' WHERE id = 1;` 字面量里的 `;` 会错误切断语句。
+   *
+   * 处理范围：单引号字符串、双引号 / 反引号标识符、双减号行注释、斜杠星号块注释，
+   * 以及字符串内的反斜杠转义与成对引号转义（两个单引号 / 两个双引号 / 两个反引号）。
+   * 字符串与注释区间在掩码里替换为空格（保留字符长度便于定位），因此后续的规则正则与
+   * `WHERE` 判定只在**代码区**进行；注释本身视作空白，被注释隔开的关键字仍能被正确识别。
+   */
+  function scanSql(sql) {
+    const text = String(sql ?? '')
+    const masked = new Array(text.length).fill(' ')
+    const spans = []
+    let start = 0
+    let i = 0
+    while (i < text.length) {
+      const ch = text[i]
+      if (ch === '-' && text[i + 1] === '-') {
+        // 行注释：吞到行尾（换行本身留作空白）
+        i += 2
+        while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i += 1
+        continue
+      }
+      if (ch === '/' && text[i + 1] === '*') {
+        // 块注释：吞到配对的 */（未闭合则吞到结尾）
+        i += 2
+        while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1
+        i = Math.min(i + 2, text.length)
+        continue
+      }
+      if (ch === "'" || ch === '"' || ch === '`') {
+        const quote = ch
+        i += 1
+        while (i < text.length) {
+          if (text[i] === '\\') {
+            i += 2
+            continue
+          }
+          if (text[i] === quote) {
+            if (text[i + 1] === quote) {
+              i += 2
+              continue
+            }
+            i += 1
+            break
+          }
+          i += 1
+        }
+        continue
+      }
+      if (ch === ';') {
+        spans.push({ start, end: i })
+        i += 1
+        start = i
+        continue
+      }
+      masked[i] = ch
+      i += 1
+    }
+    spans.push({ start, end: text.length })
+    return spans
+      .map(({ start: s, end: e }) => ({ raw: text.slice(s, e).trim(), code: masked.slice(s, e).join('') }))
+      .filter((s) => s.raw.length > 0)
   }
 
   /**
-   * 单条语句命中哪些规则。
-   * `requireNoWhere` 的规则只在**整条语句内**没有 WHERE 时命中——不能全表搜 where，
-   * 否则同一段里带了 WHERE 的 UPDATE 会把无条件的 DELETE 洗白（见 design R3）。
+   * 单条语句命中哪些规则。规则与 `WHERE` 判定只针对**代码区**（字符串 / 注释已掩成空格），
+   * 因此不会被字面量里的文本左右（见 design R3）；`raw` 只用于回显给调用方。
    */
-  function auditSqlStatement(statement, rules) {
-    const lower = statement.toLowerCase()
+  function auditSqlStatement({ raw, code }, rules) {
+    const lower = code.toLowerCase()
     const hasWhere = /\bwhere\b/.test(lower)
     const hits = []
     for (const rule of rules) {
@@ -1668,10 +1722,31 @@ export function createStore(db, options = {}) {
         key: rule.key,
         severity: rule.severity === 'warn' ? 'warn' : 'danger',
         label: rule.label || rule.key,
-        statement
+        statement: raw
       })
     }
     return hits
+  }
+
+  /**
+   * 规则集契约：`releaseSqlAudit.rules` 缺省 / 未配置 → 用默认规则；
+   * **空数组显式拒绝**，而不是静默回退默认——否则「想放宽规则」和「配置写错」都表现为
+   * 悄悄使用默认集，或（若改成默认放行）把审查变成橡皮图章。要放宽请保留至少一条规则。
+   */
+  function resolveSqlAuditRules() {
+    const configured = releaseSqlAudit ? releaseSqlAudit.rules : undefined
+    if (configured === undefined || configured === null) return DEFAULT_RELEASE_SQL_AUDIT.rules
+    if (!Array.isArray(configured)) {
+      throw new AppError(CODES.VALIDATION_FAILED, 'releaseSqlAudit.rules 必须是数组', { rules: configured })
+    }
+    if (configured.length === 0) {
+      throw new AppError(
+        CODES.VALIDATION_FAILED,
+        'releaseSqlAudit.rules 不能为空数组——空规则集会静默放行所有 SQL；如需放宽请保留至少一条规则',
+        { rules: configured }
+      )
+    }
+    return configured
   }
 
   /**
@@ -1682,17 +1757,14 @@ export function createStore(db, options = {}) {
     const root = rawNode(nodeId)
     const effectiveScope = normalizeScope(scope)
     const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
-    const rules =
-      Array.isArray(releaseSqlAudit.rules) && releaseSqlAudit.rules.length
-        ? releaseSqlAudit.rules
-        : DEFAULT_RELEASE_SQL_AUDIT.rules
+    const rules = resolveSqlAuditRules()
     const requireRollback = releaseSqlAudit.requireRollback !== false
 
     const sqlItems = ids.flatMap((id) => listReleaseItems(id, { kind: 'sql' }))
 
     const items = sqlItems.map((item) => {
       const hits = []
-      for (const statement of splitSqlStatements(item.content)) {
+      for (const statement of scanSql(item.content)) {
         hits.push(...auditSqlStatement(statement, rules))
       }
       if (requireRollback && !String(item.rollback ?? '').trim()) {

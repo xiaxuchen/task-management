@@ -24,6 +24,9 @@
 - R2 规则命中按**严重度**分两级：
   - `danger`（高危，阻塞）：`DROP TABLE` / `DROP DATABASE`、`TRUNCATE`、无 `WHERE` 的 `DELETE`、无 `WHERE` 的 `UPDATE`；
   - `warn`（提示，不阻塞）：`ALTER TABLE ... DROP COLUMN`、`kind=sql` 但缺回滚脚本。
+- R2a 注释剥离、`;` 分段、`WHERE` 判定共享**一次词法扫描**：只在字符串 / 注释之外识别
+  `;`、`WHERE` 与规则关键字，统一处理单引号 / 双引号 / 反引号、转义符与注释状态。
+  字符串字面量里的 `where` / `--` / 块注释符号 / `;` 不得影响判定。
 - R3 `DROP` / `TRUNCATE` / 无 `WHERE` 的更新删除是**不可逆**操作，必须阻塞（`ready=false`）；
   仅有 `warn` 时结论仍为可继续（`ready=true`），但要在 `blockers` 之外单列 `warnings`。
 - R4 每个上线项要**附回滚脚本**才是完整的可执行 SQL 项；`kind=sql` 且 `rollback` 为空时记一条 `warn`。
@@ -33,6 +36,8 @@
   `totals`（SQL 项数与危险 / 提示计数），并支持 `format=md` 直接贴进上线单 / 评审记录。
 - R7 只读聚合：**不写库、不动 revision**——审查是从已登记内容推导出的结论，
   与 `acceptance_report` / `readiness` / `release_checklist` / `delivery_gate` / 推送门禁同一条原则。
+- R7a `config.releaseSqlAudit.rules` 缺省用默认规则集；非数组或**空数组显式拒绝**
+  （`VALIDATION_FAILED`），不静默回退默认，避免「配置写错」与「想放宽规则」都变成悄悄用默认集。
 - R8 `scope` / `format` 一律透传给 `store.normalizeScope` / `normalizeFormat` 单点校验，
   **不得在入口先做三元降级**；非法值返回 `VALIDATION_FAILED`（MCP 返回 `isError`，不泄漏 SDK `-32602`）。
 
@@ -48,6 +53,10 @@
 - `test/release-sql-audit.test.mjs`：四条 `danger` 规则各自独立命中；`danger` 阻塞、仅 `warn` 不阻塞；
   缺回滚脚本记 `warn`；`scope=subtree` 汇总与逐项明细；空态 `ready=null`；
   大小写 / 多行 / 注释不误伤；纯读不改 revision；markdown 渲染（含表格单元格转义）。
+- **词法边界固定回归（D1/D2/D3）**：`UPDATE t SET note = 'where';` 必须判缺 `WHERE`；
+  `SELECT '--'; DROP TABLE t;` 必须命中 `drop_table`；`UPDATE t SET note = ';' WHERE id = 1;`
+  必须判为安全；并覆盖 `/* */` 同类场景与注释里的 `;`。
+- **规则集契约**：`rules: []` 显式拒绝；`rules` 缺省仍用默认规则集。
 - 三入口 1:1：HTTP `?scope=&format=`、CLI `--scope --format`、MCP 字段集一致；
   非法 `scope` / `format` 一律 `VALIDATION_FAILED`（MCP 返回 `isError`）。
 - `npm test` 全绿；文档同步更新（本目录 + `docs/design/02-data-model.md` + `docs/design/04-api.md`
