@@ -45,6 +45,58 @@ test('code-audit：脱敏发生在截断之前，长值不会以明文经截断�
   assert.ok(findings[0].snippet.includes('AA***'), `应保留掩码：${findings[0].snippet}`)
 })
 
+// ---------- D1 回归：一行多个凭据赋值 ----------
+
+test('D1 回归：同一行两个凭据赋值且值相同，两处都不得出现明文', () => {
+  // QA 的最小复现：第二个值与前一个普通字符串相同
+  const qa = "const note = 'leakvalue999'; const token = 'leakvalue999'"
+  const qaFindings = auditAddedLines([{ path: 'x.js', line: 1, text: qa }])
+  assert.equal(qaFindings.length, 1)
+  assert.equal(qaFindings[0].rule, 'hardcoded_secret')
+  assert.ok(!qaFindings[0].snippet.includes('leakvalue999'), `QA 复现仍泄漏明文：${qaFindings[0].snippet}`)
+
+  // 两个凭据赋值、值相同
+  const same = "const token = 'samevalue123'; const apiKey = 'samevalue123'"
+  const sameFindings = auditAddedLines([{ path: 'x.js', line: 1, text: same }])
+  assert.equal(sameFindings.length, 1)
+  assert.ok(!sameFindings[0].snippet.includes('samevalue123'), `同值双凭据仍泄漏：${sameFindings[0].snippet}`)
+  // 两处都应留下掩码（而不是只掩第二处）
+  assert.equal((sameFindings[0].snippet.match(/sa\*\*\*/g) || []).length, 2, `两处都应掩码：${sameFindings[0].snippet}`)
+})
+
+test('D1 回归：同一行两个凭据赋值且值不同，两个值都不得出现明文', () => {
+  const line = "const token = 'firstvalue12'; const apiKey = 'secondvalue3'"
+  const findings = auditAddedLines([{ path: 'x.js', line: 1, text: line }])
+  assert.equal(findings.length, 1)
+  assert.ok(!findings[0].snippet.includes('firstvalue12'), `第一个值泄漏：${findings[0].snippet}`)
+  assert.ok(!findings[0].snippet.includes('secondvalue3'), `第二个值泄漏：${findings[0].snippet}`)
+})
+
+test('D1 回归：同一值在本行出现多次时全部掩码（明文不可从片段还原）', () => {
+  const line = "x = 'aaaa1111bbbb'; token = 'aaaa1111bbbb'; y = 'aaaa1111bbbb'"
+  const findings = auditAddedLines([{ path: 'x.js', line: 1, text: line }])
+  assert.equal(findings.length, 1)
+  assert.ok(!findings[0].snippet.includes('aaaa1111bbbb'), `仍有明文残留：${findings[0].snippet}`)
+})
+
+test('D1 回归：短值是长值前缀时，长值按自身长度掩码而不是被短值打断', () => {
+  const line = "token = 'abcdefgh'; secret = 'abcdefghij'"
+  const findings = auditAddedLines([{ path: 'x.js', line: 1, text: line }])
+  assert.equal(findings.length, 1)
+  assert.ok(!findings[0].snippet.includes('abcdefgh'), `前缀值泄漏：${findings[0].snippet}`)
+  // 短值 8 字符、长值 10 字符：各自的掩码长度要对得上
+  assert.ok(findings[0].snippet.includes('ab***(8)'), findings[0].snippet)
+  assert.ok(findings[0].snippet.includes('ab***(10)'), findings[0].snippet)
+})
+
+test('D1 回归：占位值不被当成秘密掩码，同行的真实凭据照常掩码', () => {
+  const line = "const a = 'changeme1234'; const token = 'realsecret99'"
+  const findings = auditAddedLines([{ path: 'x.js', line: 1, text: line }])
+  assert.equal(findings.length, 1)
+  assert.ok(findings[0].snippet.includes('changeme1234'), `占位值不该被掩码：${findings[0].snippet}`)
+  assert.ok(!findings[0].snippet.includes('realsecret99'), `真实凭据泄漏：${findings[0].snippet}`)
+})
+
 test('code-audit：.only / fit / fdescribe 仅在测试文件里判 danger', () => {
   assert.deepEqual(one('it.only("x", () => {})', 'test/a.test.mjs'), ['focused_test'])
   assert.deepEqual(one('fit("x", () => {})', 'src/spec/a.js'), ['focused_test'])

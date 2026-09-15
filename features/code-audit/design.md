@@ -35,6 +35,17 @@
 顺序反了会让被截断的超长凭据以明文残留在片段里——安全扫描变成第二条泄露通道。
 `maskSecret` 只保留前 2 个字符 + 长度，绝不回显原值（`test/code-audit-rules.test.mjs` 有专门用例）。
 
+**R4.1 脱敏必须覆盖一行里的所有凭据值与其所有出现位置（D1 修复）**：第一版 `mask()` 取第一条匹配后
+`line.replace(value, mask)`，有两个漏洞：① 只处理一行的**第一条**凭据赋值，后面的不看；
+② `replace` 是**按文本**命中第一个出现的相同文本，所以当第二个凭据的值与本行前面的普通字符串相同时
+（QA 最小复现 `const note = 'leakvalue999'; const token = 'leakvalue999'`），被掩码的是无辜的 `note`，
+真正的凭据反而保持明文。修复后 `maskSecretValues` 先 `collectSecretValues` 扫出**全部**非占位凭据值，
+再用「按值长度降序的一次正则交替 + `replace` 回调」掩码该值的**每一个**出现位置——
+只掩「赋值处那一个区间」仍不够，因为同一个值在本行别处出现时明文依旧可从片段读出；
+降序是为避免短值恰好是长值前缀时把长值打断（`abcdefgh` vs `abcdefghij`）。
+回归用例覆盖「同值双凭据 / 不同值双凭据 / 同值多次出现 / 前缀碰撞 / 占位值不被误掩」，
+并断言 JSON、markdown、MCP 文本与 Web 消费的 `snippet` 字段均无明文。
+
 **R5 `ready=null` 的三个来源**：没有提交 / 没有新增行 / 有提交读不到 / 扫描被截断，四者都返回 `null`：
 **看不到 ≠ 没问题**。与验收报告 `passRate=null`、上线清单「无必做项 `ready=null`」、就绪门禁「无待判定需求 `ready=null`」同口径。
 `ready=false` 仅在**确定**命中 danger 时给出，不把「信息不足」和「检查不通过」混为一谈。
@@ -85,6 +96,6 @@
 - 接口表：`docs/design/04-api.md`「代码检查」段
 - 接口示例：`docs/api.md`
 - 测试策略：`docs/design/08-testing.md`（单测分组：`test/code-audit*.test.mjs`）
-- 决策：`docs/design/09-decisions.md` 决策 36（代码检查只读、扫新增行、danger 才阻塞）
+- 决策：`docs/design/09-decisions.md` 决策 36（代码检查只读、扫新增行、danger 才阻塞）、决策 37（脱敏必须覆盖一行内所有凭据值及所有出现位置）
 - 相邻功能：`../commit-registry/`（提交登记）、`../diff-preview/`（`commitDiff` / `commitStat`）、
   `../release-governance/`（`kind=code_check` 的 AI 检查用例）、`../delivery-gate/`（交付结论）

@@ -216,6 +216,47 @@ test('code audit：非法 scope 报 VALIDATION_FAILED；空提交（无新增行
   assert.equal(audit.totals.addedLines, 0)
 })
 
+test('D1 回归：一行两个凭据赋值且值相同，JSON 与 markdown 均不得出现任一明文', async (t) => {
+  const { tmp, store, ops } = await setup()
+  const repo = makeRepo()
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(repo.root, { recursive: true, force: true })
+  })
+  const { r } = seed(store, 'demo', repo.dir)
+  // QA 最小复现 + 两个凭据赋值同值，一起落进同一个提交
+  const sha = repo.commit(
+    {
+      'leak.js': [
+        "const note = 'leakvalue999'; const token = 'leakvalue999'",
+        "const token = 'samevalue123'; const apiKey = 'samevalue123'"
+      ].join('\n') + '\n'
+    },
+    'risky one-liners'
+  )
+  store.addCommit(r.id, { repo: 'demo', sha })
+
+  const audit = await ops.getNodeCodeAudit(store, r.id)
+  assert.equal(audit.ready, false)
+  assert.equal(audit.totals.danger, 2, '两行各命中一次')
+
+  // ① JSON（HTTP / CLI / MCP / Web 都消费这一份结构）
+  const json = JSON.stringify(audit)
+  for (const secret of ['leakvalue999', 'samevalue123']) {
+    assert.ok(!json.includes(secret), `JSON 泄漏明文 ${secret}`)
+    assert.ok(!audit.blockers.some((b) => b.snippet.includes(secret)), `blockers 泄漏明文 ${secret}`)
+  }
+
+  // ② markdown（可粘贴输出）
+  const md = ops.renderCodeAuditMd(audit)
+  for (const secret of ['leakvalue999', 'samevalue123']) {
+    assert.ok(!md.includes(secret), `markdown 泄漏明文 ${secret}`)
+  }
+  // 两处都应留下掩码
+  assert.ok(md.includes('le***(12)'), md)
+  assert.ok(md.includes('sa***(12)'), md)
+})
+
 test('code audit：纯读，不产生 revision', async (t) => {
   const { tmp, store, ops } = await setup()
   const repo = makeRepo()

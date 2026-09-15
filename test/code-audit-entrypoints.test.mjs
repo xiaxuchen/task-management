@@ -12,7 +12,7 @@ const execFileP = promisify(execFile)
 const CLI = path.resolve(import.meta.dirname, '../bin/taskboard.js')
 
 /** 临时 git 仓库 + 一个包含高危新增行的提交 */
-function makeRepo() {
+function makeRepo({ riskyLine = 'const token = "abcdefghijkl"' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskboard-codeaudit-ep-'))
   const dir = path.join(root, 'work')
   fs.mkdirSync(dir)
@@ -23,10 +23,40 @@ function makeRepo() {
   fs.writeFileSync(path.join(dir, 'base.js'), 'export const a = 1\n')
   g(['add', '.'])
   g(['commit', '-q', '-m', 'init'])
-  fs.writeFileSync(path.join(dir, 'x.js'), 'const token = "abcdefghijkl"\n')
+  fs.writeFileSync(path.join(dir, 'x.js'), `${riskyLine}\n`)
   g(['add', '.'])
   g(['commit', '-q', '-m', 'risky'])
   return { root, dir, sha: g(['rev-parse', 'HEAD']).trim() }
+}
+
+/**
+ * 用既有 store 起一个真实 HTTP 服务（代码检查这条链路里唯一没被 CLI/MCP 覆盖的通道）。
+ * 复用调用方自己的 store，避免 ESM 模块级 TASKBOARD_HOME 被其它用例先导入而串库。
+ */
+async function httpClient(store) {
+  const { createApp } = await import('../server/http.mjs')
+  const app = createApp({ store })
+  const server = await new Promise((resolve, reject) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s))
+    s.once('error', reject)
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  return {
+    store,
+    get: (p) => fetch(`${base}${p}`).then((r) => r.json()),
+    text: (p) => fetch(`${base}${p}`).then((r) => r.text()),
+    close: () => new Promise((r) => server.close(r))
+  }
+}
+
+/** D1 的最小复现：一行两个凭据赋值，且第二个的值与前面一个普通字符串相同 */
+const D1_RISKY_LINE = "const note = 'leakvalue999'; const token = 'leakvalue999'"
+const D1_SECRETS = ['leakvalue999']
+
+function assertNoPlaintext(label, text) {
+  for (const secret of D1_SECRETS) {
+    assert.ok(!String(text).includes(secret), `${label} 泄漏明文 ${secret}`)
+  }
 }
 
 async function cli(home, args) {
@@ -148,4 +178,61 @@ test('MCP code_audit：非法 scope 返回 isError + VALIDATION_FAILED（不泄�
   const out = await call('code_audit', { node: r.id, scope: 'Subtree' })
   assert.equal(out.isError, true)
   assert.match(out.content[0].text, /VALIDATION_FAILED/)
+})
+
+test('D1 回归：同一行两个凭据赋值（值相同），CLI / HTTP / MCP / Web 四条输出通道均无明文', async (t) => {
+  const tmp = await tempHome()
+  const home = tmp.dir
+  const repo = makeRepo({ riskyLine: D1_RISKY_LINE })
+  t.after(() => {
+    tmp.cleanup()
+    fs.rmSync(repo.root, { recursive: true, force: true })
+  })
+
+  await cli(home, ['node', 'upsert', '--path', 'P/R'])
+  await cli(home, ['repo', 'add', '--name', 'demo', '--local-path', repo.dir])
+  await cli(home, ['commit', 'add', 'P/R', '--repo', 'demo', '--sha', repo.sha])
+
+  // ① CLI JSON
+  const cliJsonRaw = await cli(home, ['code', 'audit', 'P/R'])
+  assertNoPlaintext('CLI JSON', cliJsonRaw)
+  assert.equal(JSON.parse(cliJsonRaw).ready, false)
+
+  // ② CLI markdown
+  const cliMd = await cli(home, ['code', 'audit', 'P/R', '--format', 'md'])
+  assertNoPlaintext('CLI markdown', cliMd)
+
+  // ③ HTTP（JSON + markdown）——CLI 子进程写入的正是 tmp.dir/data.db，这里开同一文件
+  const httpStore = tmp.store.createStore(tmp.openDb())
+  const node = httpStore.resolveRef('P/R')
+  const http = await httpClient(httpStore)
+  t.after(() => http.close())
+  const httpJson = await http.get(`/api/nodes/${node.id}/code-audit`)
+  assertNoPlaintext('HTTP JSON', JSON.stringify(httpJson))
+  assert.equal(httpJson.ready, false)
+  const httpMd = await http.text(`/api/nodes/${node.id}/code-audit?format=md`)
+  assertNoPlaintext('HTTP markdown', httpMd)
+
+  // ④ MCP（真实协议文本）
+  const { store: mcpStore, call, close } = await mcpClient()
+  t.after(async () => {
+    await close()
+  })
+  const mp = mcpStore.createNode({ type: 'project', name: 'P' })
+  const mr = mcpStore.createNode({ parentId: mp.id, type: 'requirement', name: 'R' })
+  mcpStore.addRepo({ name: 'demo', localPath: repo.dir })
+  mcpStore.addCommit(mr.id, { repo: 'demo', sha: repo.sha })
+  const mcpOut = await call('code_audit', { node: mr.id })
+  assert.equal(mcpOut.isError, undefined)
+  assertNoPlaintext('MCP text', mcpOut.content[0].text)
+
+  // ⑤ Web 页签消费的契约：findings[*].snippet / blockers[*].snippet 就是渲染源，
+  //    这两处不得含明文（UI 无二次脱敏，store 返回什么就显示什么）
+  const webPayload = JSON.parse(mcpOut.content[0].text)
+  for (const finding of webPayload.findings) {
+    assertNoPlaintext('Web findings.snippet', finding.snippet)
+  }
+  for (const blocker of webPayload.blockers) {
+    assertNoPlaintext('Web blockers.snippet', blocker.snippet)
+  }
 })

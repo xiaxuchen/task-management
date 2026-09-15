@@ -35,6 +35,60 @@ const PLACEHOLDER_VALUE_RE =
 const SECRET_ASSIGN_RE =
   /[A-Za-z0-9_.-]*(?<key>password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|accesskey|private[_-]?key|credential)[A-Za-z0-9_.-]*\s*["']?\s*[:=]\s*(?<quote>['"]?)(?<value>[^\s'"]{8,})\k<quote>/i
 
+/**
+ * 全行扫描用副本：`g` 找出**一行里的所有**凭据赋值。
+ * 直接复用上面的 source，保证命中口径与单条版一致（改一边不会漂移）。
+ */
+const SECRET_ASSIGN_SCAN_RE = new RegExp(SECRET_ASSIGN_RE.source, 'gi')
+
+/**
+ * 收集一行里所有「非占位」的凭据字面值（去重）。
+ *
+ * 必须扫**全部**匹配而不是只取第一条：一行两个凭据赋值时只看第一条会漏掉后面的。
+ */
+function collectSecretValues(line) {
+  const values = new Set()
+  for (const m of line.matchAll(SECRET_ASSIGN_SCAN_RE)) {
+    const value = m.groups.value
+    if (PLACEHOLDER_VALUE_RE.test(value)) continue
+    values.add(value)
+  }
+  return [...values]
+}
+
+/** 该行是否至少有一个非占位的凭据赋值（命中判定与掩码共用同一套扫描） */
+function hasHardcodedSecret(line) {
+  return collectSecretValues(line).length > 0
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 掩码一行里**所有**凭据值的出现位置，返回新的行文本。
+ *
+ * 三条约束决定了实现方式：
+ * 1. 一行可能有多个凭据赋值，必须逐个处理，不能只看第一条；
+ * 2. 不能用 `line.replace(value, mask)` 裸替换——那是**按文本**命中第一个相同文本，
+ *    当第二个凭据的值与前面的普通字符串相同时（QA D1 最小复现
+ *    `const note = 'leakvalue999'; const token = 'leakvalue999'`），被掩码的会是无辜的
+ *    `note`，真正的凭据反而保持明文；
+ * 3. 只掩码「赋值处那一个区间」仍然不够：同一个值若在本行别处也出现，凭据明文依旧可从
+ *    片段里读出来。所以这里把**该值的所有出现位置**一起掩码——宁可多脱敏，不可漏脱敏。
+ *
+ * 用「一次正则交替 + 回调」而不是逐个 `replace` 串行处理，是为了避免短值先替换把长值
+ * 打断（如同时存在 `abcdefgh` 与 `abcdefghij`），也不会二次处理已生成的掩码文本。
+ */
+function maskSecretValues(line) {
+  const values = collectSecretValues(line)
+  if (values.length === 0) return line
+  // 长值优先，避免短值是长值前缀时先命中
+  const pattern = [...values].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|')
+  const re = new RegExp(pattern, 'g')
+  return line.replace(re, (hit) => maskSecret(hit))
+}
+
 /** 私钥块起始行：命中即高危（covers PEM / OpenSSH / PKCS8） */
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----/
 
@@ -104,16 +158,8 @@ export const CODE_AUDIT_RULES = [
     severity: 'danger',
     title: '疑似硬编码凭据',
     suggestion: '改为从环境变量 / 密钥服务读取，并轮换已进入提交历史的凭据',
-    test: (line) => {
-      const m = SECRET_ASSIGN_RE.exec(line)
-      if (!m) return false
-      return !PLACEHOLDER_VALUE_RE.test(m.groups.value)
-    },
-    mask: (line) => {
-      const m = SECRET_ASSIGN_RE.exec(line)
-      if (!m) return line
-      return line.replace(m.groups.value, maskSecret(m.groups.value))
-    }
+    test: (line) => hasHardcodedSecret(line),
+    mask: (line) => maskSecretValues(line)
   },
   {
     key: 'debugger_statement',

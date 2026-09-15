@@ -25,7 +25,8 @@ TaskBoard 已经能登记提交、预览 diff、追踪合并与推送，但「�
   范围内没有提交、没有新增行、有提交读不到、或扫描被截断 → `ready=null`（「不知道」不冒充「通过」）。
 - R4 逐条证据包含节点来源 / 提交 / 文件 / 行号 / 规则 / 严重度 / 片段 / 建议；
   `blockers`（仅 danger）/ `warnings` / `totals.byRule`；支持 `format=md`。
-- R5 **硬编码凭据必须先脱敏再截断**：任何输出（含 markdown / MCP 文本）都不得回显原值，
+- R5 **硬编码凭据必须先脱敏再截断，且覆盖一行内所有凭据值**：任何输出（含 markdown / MCP 文本 / Web 片段）
+  都不得回显原值；一行有多个凭据赋值（哪怕值相同）时逐个掩码，同值在本行多次出现也一并掩码——
   否则代码检查本身会成为第二条泄露通道。
 - R6 只读聚合：**不写库、不动 revision**（与 `acceptance_report` / `readiness` / `release_checklist` 同一条原则）。
 - R7 单条提交读取失败（仓库未登记 / 路径无效 / sha 不存在）不拖垮整体，记 `item.error` 并让结论落到 `ready=null`。
