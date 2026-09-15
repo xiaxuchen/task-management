@@ -35,6 +35,37 @@
 16 是硬上限，防止一次调用把本机打爆。两个值都是命名常量（`DEFAULT_MAX_PARALLEL` /
 `MAX_PARALLEL_LIMIT`），调用方可显式覆盖到上限。
 
+**类型校验必须「先卡类型、再判值域」，并且三入口同一把尺子**（缺陷 2 修复）：
+早期写法是 `Number(value)` 再判整数，于是 `true` → 1、`"4"` → 4、`[1]` → 1 都被隐式放过；
+而 MCP 用 zod `z.number()` 在协议层就把非 number 拦成 SDK `-32602`，HTTP / ops 却放行——
+同样一个 `maxParallel=true`，三入口结论不同。修复后：
+
+- `normalizeMaxParallel` 先 `typeof value !== 'number'` 拒绝，再判 `Number.isInteger` 与 1..16；
+- 校验从 fan-out 分支**提到 `runTestCases` 开头**，所以 `fanout:false` 时非法值同样被拒
+  （早期错误：grouped 分支完全不校验，非法 `maxParallel` 被静默忽略）；
+- CLI 侧补 `parseMaxParallelCli`：argv 天然是文本，只接受规范十进制整数字面量
+  （`/^\d+$/`），`1.5` / `0x10` / `1e1` / 空串 / 带空白一律 `VALIDATION_FAILED`，再交给
+  `normalizeMaxParallel` 判值域；
+- MCP 侧把 schema 从 `z.number()` 改成 `z.unknown()`，让非 number 走进 handler，
+  由 `mcpValidate` 统一转成 `isError + VALIDATION_FAILED`，不泄漏 SDK `-32602`
+  （与决策 31/35 对 `scope` / `format` 的处理同一条纪律）。
+
+**重试 = 一次新的执行，用例报告必须随 child run 刷新**（缺陷 1 修复）：
+`agent_run_retry` 本来只建 child run，父 run 上的用例报告仍停在旧的 `error`——
+「可单独重试」在 UI / 门禁上看不出效果，验收报告还会一直按旧结论算。
+修复放在 `store.retryAgentRun`：建 child run 后，查父 run 关联的每条 `test_reports`，
+为每条用例**随 child run 新开一条 `running` 报告**。这里选「新开一条」而不是「原地 rebind 父报告」，
+因为：
+
+1. 回归闭环的既有口径是**一次执行 = 一行**（R6），原地改写会丢掉失败那次的历史；
+2. child run 落终态时 `finalizeReportsForRun` 只扫自己 `run_id` 下的 `running` 报告，
+   新开的报告天然被它收尾，无需给重试单独写一条收尾路径；
+3. 验收报告按「用例最近一条报告」取结论，新报告 id 更大，自动落到重试结果上；
+4. 父 run 若本就不带用例报告（普通 agent 任务），循环体为空，不会凭空造报告。
+
+「建 child run + 随 child 开报告」用 `withoutBump` 合并，仍只递增**一次** revision
+（与 `finishAgentRun` 的「收尾任务 + 收尾报告」同款）。
+
 ## 3. 返回结构
 
 ```jsonc

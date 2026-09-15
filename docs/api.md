@@ -302,9 +302,13 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
   -H 'content-type: application/json' -d '{"kind":"regression"}'
 
 # 并行派单（fan-out）：每条用例派一个独立 agent 任务，返回 {runs, reports, tasks}；
-# maxParallel 设并行护栏（缺省 4，上限 16），选中数超过护栏返回 400 VALIDATION_FAILED（不静默截断）
+# maxParallel 必须是 number 类型的 1..16 整数（缺省 4）；非 number / 越界 / 选中数超护栏
+# 一律 400 VALIDATION_FAILED（不静默降级、不静默截断）；fanout:false 时同样校验
 curl -s -X POST http://127.0.0.1:3210/api/nodes/1/test-runs \
   -H 'content-type: application/json' -d '{"kind":"regression","fanout":true,"maxParallel":4}'
+
+# 重试失败的执行：会为用例随 child run 新开 running 报告，child 终态刷新后验收报告随之更新
+curl -s -X POST http://127.0.0.1:3210/api/agent-runs/7/retry
 ```
 
 > **两种派单模式**：缺省 `grouped` 把选中用例拼成一段提示词、派一个 agent 任务、共用一条 run（向后兼容）；

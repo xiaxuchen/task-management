@@ -696,7 +696,10 @@ export function createMcpServer({ store }) {
       cwd: z.string().optional(),
       dryRun: z.boolean().optional(),
       fanout: z.boolean().optional(),
-      maxParallel: z.number().optional()
+      // 故意不在协议层用 z.number() 卡类型：否则 `true` / "4" / [1] 会被 SDK 拦成 -32602，
+      // 与 HTTP / CLI 的 VALIDATION_FAILED 口径不一致（决策 31/35 的「业务错误不泄漏 SDK 错误」
+      // 同样适用于值域/类型）。这里接原始值，交给 handler 内的 normalizeMaxParallel 统一严格拒绝。
+      maxParallel: z.unknown().optional()
     },
     // 业务错误（如 fan-out 护栏超限 / maxParallel 值域）走 isError + 稳定错误码，
     // 不把异常直接抛回 SDK（与其它门禁 / 聚合工具同一口径）。
