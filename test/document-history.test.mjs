@@ -192,16 +192,41 @@ test('文档历史（CLI）：doc history 与 doc restore 与 store 语义一致
   t.after(() => tmp.cleanup())
   const home = tmp.dir
   await cli(home, ['node', 'upsert', '--path', 'P/R'])
-  await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', 'v1'])
-  await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', 'v2'])
+  // 用非预置文档名，让本用例专注于「CLI 与 store 的版本历史语义一致」，
+  // 不被 requirement 的预置文档拓扑（「需求内容」+「概要设计」）耦合。
+  await cli(home, ['doc', 'upsert', 'P/R', '--name', '接口设计', '--content', 'v1'])
+  await cli(home, ['doc', 'upsert', 'P/R', '--name', '接口设计', '--content', 'v2'])
   const docs = await cli(home, ['doc', 'list', 'P/R'])
-  const doc = docs.find((d) => d.name === '概要设计')
+  const doc = docs.find((d) => d.name === '接口设计')
 
   const history = await cli(home, ['doc', 'history', String(doc.id)])
   assert.deepEqual(history.map((v) => v.content), ['v2', 'v1'])
   const restored = await cli(home, ['doc', 'restore', String(doc.id), '--version', String(history.at(-1).id)])
   assert.equal(restored.document.content, 'v1')
   assert.equal(restored.version.reason, 'restore')
+})
+
+test('文档历史 × 需求预置文档：预置即带初始版本，upsert 预置文档追加 update 版本（集成口径）', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const home = tmp.dir
+  await cli(home, ['node', 'upsert', '--path', 'P/R'])
+
+  const docs = await cli(home, ['doc', 'list', 'P/R'])
+  const preset = docs.find((d) => d.name === '概要设计')
+  // 需求节点预置「需求内容」+「概要设计」，各自带一条空白初始版本（create）
+  const initial = await cli(home, ['doc', 'history', String(preset.id)])
+  assert.equal(initial.length, 1)
+  assert.equal(initial[0].reason, 'create')
+  assert.equal(initial[0].content, '')
+
+  await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', '设计正文'])
+  const after = await cli(home, ['doc', 'history', String(preset.id)])
+  // 追加 update 版本，空白初始版本保留（可回退到「未填写」状态）
+  assert.deepEqual(after.map((v) => [v.reason, v.content]), [
+    ['update', '设计正文'],
+    ['create', '']
+  ])
 })
 
 test('文档历史（MCP）：doc_version_list / doc_version_restore 真实协议可用', async (t) => {
