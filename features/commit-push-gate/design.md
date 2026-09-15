@@ -76,10 +76,17 @@ git remote                                     # 是否配置了远程
 这是**保守**方向的误报（宁可说没推，不可说推了），提示里明确让人先 `git fetch`。
 与 `branch-track` 的「ref-not-found → 先 fetch」同一条纪律。
 
-**R6 已被决策 38 收口，`push` 现为 `delivery_gate` 的第四个来源**：首版曾刻意不并入
-（当时 `totals.sources` 恒为 3、既有测试逐字段断言 `notApplicable: 3`，新增来源会改变契约），
-但那会留下「需求就绪 + 测试通过即可交付」的假绿灯——登记的提交没 push 也看不到。
-现由决策 38 并入：`totals.sources` 由 3 → 4，`not_pushed` / `unknown` 一律阻塞交付。
+**R6 为什么首版不并进 `delivery_gate`（已由决策 58 收口）**：首版刻意把推送判定留在
+交付门禁之外，理由是 `totals.sources` 当时恒为 3、既有测试逐字段断言 `notApplicable: 3`，
+新增第 4 个来源会改变这个契约与所有 `deepEqual`，需要同时决定「未推送是否可以交付」。
+
+该收口**已由决策 58 完成**：`push` 现在是 `delivery_gate` 的**第四个来源**
+（`totals.sources` 3 → 4），口径与其余来源一致——范围内无登记提交 → `not_applicable`（不阻塞）、
+全部已推送 → `pass`、`not_pushed` / `unknown` → `fail` 并展平到 `blockers`。
+推送判定要读本机 git ref（异步），而 store 聚合是同步纯读，因此新增 `ops.buildDeliveryGateFull`
+先算 `pushGate` 再注入 `store.buildDeliveryGate({ pushGate })`，三入口只走 async 版本；
+同步入口漏传推送证据时，只要范围内有登记提交即判 `fail`（未判定 ≠ 通过）。
+详见 `../delivery-gate/design.md` 与决策 58。
 
 **R7 空态 `ready=null`**：scope 内没有任何已登记提交时返回 `null`，
 与验收报告 `passRate=null`、需求就绪 / 上线清单 / 交付门禁的 `ready=null` 保持同一条口径：
@@ -106,6 +113,7 @@ MCP 用 `mcpValidate` 把业务错误转成 `isError` 文本，不泄漏 SDK `-3
 - 接口表：`docs/design/04-api.md`「代码推送门禁」段
 - 接口示例：`docs/api.md`
 - 测试策略：`docs/design/08-testing.md`（单测分组：`test/push-gate.test.mjs`）
-- 决策：`docs/design/09-decisions.md` 决策 36（推送门禁纯读）/ 37（reason 契约）
+- 决策：`docs/design/09-decisions.md` 决策 56（推送门禁纯读）/ 57（reason 契约）/
+  58（并入 `delivery_gate` 作为第四个来源）
 - 相邻功能：`../commit-registry/`（提交登记与去重）、`../branch-track/`（合并追踪）、
   `../delivery-gate/`（交付门禁）
