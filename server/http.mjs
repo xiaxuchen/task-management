@@ -1,9 +1,11 @@
 import express from 'express'
+import fs from 'node:fs'
 import { AppError, CODES } from './errors.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
-import { loadConfig, saveConfig, maskToken } from './config.mjs'
+import { loadConfig, saveConfig, maskToken, UPLOAD_DIR } from './config.mjs'
+import { saveUpload } from './uploads.mjs'
 
 const STATUS_BY_CODE = {
   [CODES.VALIDATION_FAILED]: 400,
@@ -57,6 +59,16 @@ export function createApp({ store }) {
   // ---------- 发现与读取 ----------
 
   app.get('/api/health', wrap((req, res) => res.json({ ok: true, revision: store.getRevision() })))
+
+  // 图片上传：Vditor 粘贴 / 选择图片 → base64 JSON → 返回可被 Markdown 引用的 URL。
+  // 静态访问由 index.mjs 的 express.static(UPLOAD_DIR) 提供（/uploads/:name）。
+  app.post(
+    '/api/uploads',
+    wrap((req, res) => {
+      const out = saveUpload({ name: req.body?.name, data: req.body?.data })
+      res.status(201).json(out)
+    })
+  )
 
   app.get(
     '/api/schema',
@@ -907,6 +919,10 @@ export function createApp({ store }) {
   )
 
   // ---------- 错误处理 ----------
+  // 文档图片静态访问（Markdown 预览直接引用 /uploads/<name>）。
+  // 挂在 createApp 内，保证测试与真实服务（含 SPA 回退）行为一致。
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+  app.use('/uploads', express.static(UPLOAD_DIR))
   // 只对 /api/* 路由返回 404 JSON，非 API 路由放过（让上层静态托管或 SPA 回退处理）
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api/')) return next()

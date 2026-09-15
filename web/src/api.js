@@ -41,6 +41,9 @@ export default {
   docDelete: (docId) => api(`/documents/${docId}`, { method: 'DELETE' }),
   docReorder: (nodeId, data) => api(`/nodes/${nodeId}/documents/reorder`, { method: 'POST', body: JSON.stringify(data) }),
 
+  // 文档图片上传（base64 JSON）→ { url: "/uploads/<name>" }
+  uploadImage: (data) => api('/uploads', { method: 'POST', body: JSON.stringify(data) }),
+
   // 交付门禁
   deliveryGate: (nodeId, scope) => api(`/nodes/${nodeId}/delivery-gate?scope=${scope || 'self'}`),
 

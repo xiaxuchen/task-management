@@ -222,6 +222,37 @@ curl -s -X DELETE http://127.0.0.1:3210/api/documents/4
 { "error": { "code": "DOC_NAME_EXISTS", "message": "节点下已存在文档「需求内容」" } }
 ```
 
+### 文档图片上传
+
+Vditor 粘贴 / 拖拽 / 选择图片后走这里；落盘到 `~/.taskboard/uploads/`，返回的地址可直接写进 Markdown。
+
+```bash
+# base64（也接受 data:image/png;base64,... 形式）
+curl -s -X POST http://127.0.0.1:3210/api/uploads \
+  -H 'content-type: application/json' \
+  -d "{\"name\":\"shot.png\",\"data\":\"$(base64 -i shot.png)\"}"
+```
+
+```json
+{ "url": "/uploads/1757900000000-a1b2c3d4e5f6.png", "name": "1757900000000-a1b2c3d4e5f6.png", "size": 20481, "mime": "image/png" }
+```
+
+```bash
+# 静态访问（Markdown 预览即走这里）
+curl -s -o out.png http://127.0.0.1:3210/uploads/1757900000000-a1b2c3d4e5f6.png
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js upload ./shot.png [--name x.png] [--data <base64>]
+# MCP: upload_image { name, data }
+```
+
+校验口径：扩展名白名单（`png / jpg / jpeg / gif / webp`）→ 解码后字节数 ≤ 10 MB → **魔数**与声明类型交叉校验
+（改名 / 伪装的类型不符一律拦下，落盘扩展名以真实内容为准）。不合规返回：
+
+```json
+{ "error": { "code": "UPLOAD_INVALID_TYPE", "message": "文件扩展名（.png）与内容不符，实际为 .gif", "details": { "allowed": ["png","jpg","jpeg","gif","webp"], "maxBytes": 10485760 } } }
+```
+
 ## 提交登记 / 仓库 / 配置
 
 ```bash

@@ -101,6 +101,7 @@ docs/design.md    ← 主设计文档权威副本
       attr_set · attr_add · attr_update · attr_remove
       doc_upsert · doc_create · doc_update · doc_remove · doc_reorder
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
+      upload_image
 批量  batch · import_outline
 门禁  requirement_readiness · delivery_gate
 回归  test_case_list · test_case_upsert · test_case_update · test_case_remove · test_case_reorder
@@ -127,6 +128,7 @@ node get "项目A/需求1"                  # ref 可为 id 或路径
 node upsert --path "项目A/需求1"        # get-or-create，幂等
 attr set "项目A/需求1" status=doing     # 单项属性更新
 doc upsert "项目A/需求1" --name 需求内容 --file desc.md   # 按文档名幂等
+upload ./shot.png                                      # 上传文档图片 → { url: "/uploads/<name>" }
 import --file outline.md --dry-run     # 大纲导入，先预演
 batch --file ops.json                  # 多步一次调用
 node delete <ref> --confirm            # 破坏性操作必须 --confirm

@@ -38,6 +38,7 @@
 | **上线治理**（上线配置 / 上线 SQL / 上线检查清单 + agent 前置检查派单） | `release-governance/` | — | server/{db,store,ops}.mjs（release_items）+ 三入口 release_* |
 | **需求就绪门禁**（需求内容 / 概要设计 / 可回归用例三条门禁 + 子树汇总，纯读聚合不落表） | `requirement-readiness/` | — | server/{config,store,ops}.mjs（buildRequirementReadiness）+ 三入口 readiness |
 | **交付门禁**（需求就绪 / 测试验收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
+| **图片上传**（文档粘贴 / 选择图片 → base64 JSON → `/uploads/<name>`，魔数与声明类型交叉校验） | `uploads/` | 计划 5 | server/uploads.mjs + server/{http,cli,mcp}.mjs（upload_image）+ DocPane Vditor upload.handler |
 
 ### 已实现但**不设独立目录**（语义并入上述目录，避免索引重复）
 
@@ -59,7 +60,6 @@
 | 冲突检测与处理 | `conflict-resolution/` | 计划 4 | server/git.mjs、web ConflictPane |
 | 工作区准备（分支 / worktree / 开发提示词） | `workspace-setup/` | 计划 4 | server/git.mjs、unit_repos 表 |
 | MR 自动拉取 | `mr-sync/` | 计划 5 | server/gitlab.mjs、mrs 表 |
-| 图片上传 | `uploads/` | 计划 5 | server/http.mjs、`/uploads` 静态 |
 | 冒烟脚本 | `smoke-and-ai-docs/` | 计划 5 | scripts/smoke.mjs |
 
 > 计划 4–5 的功能目录里已有 `prd.md`（需求 + 验收标准）与 `design.md`（设计要点 + 关联章节 + 注意事项），

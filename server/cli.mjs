@@ -1,10 +1,12 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
+import { saveUpload } from './uploads.mjs'
 
 const OPTIONS = {
   path: { type: 'string' },
@@ -83,6 +85,7 @@ const OPTIONS = {
   port: { type: 'string' },
   'gitlab-base': { type: 'string' },
   'gitlab-token': { type: 'string' },
+  data: { type: 'string' },
   'include-disabled': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' }
 }
@@ -111,6 +114,7 @@ const HELP = `task-board <命令>
   attr set <ref> k=v [k2=v2 ...]
   attr-def add --type t --key k --label l [--data-type text|textarea|number|date|select|url] [--options '[...]'] [--required]
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
+  upload <图片路径> [--name <文件名>] [--data <base64>]   上传文档图片 → { url: "/uploads/..." }
   commit add <ref> --sha <sha> [--repo <名>] [--note <说明>] [--branch <分支>] [--overwrite-branch]
   commit review <cid> --review-status pending|approved|issue [--review-note "意见"]
   commit combined-diff --ids "1,2,3"   多个 commit 的合并变更（按仓库分组、文件并集、净 old/new）
@@ -230,6 +234,19 @@ export async function run(argv) {
   const by = values.actor || 'cli'
   const [group, action, ref] = positionals
   const json = (v) => console.log(JSON.stringify(v, null, 2))
+
+  // `upload <图片路径>`：第二段是路径而不是子命令，必须在拼 `group action` 之前拦下
+  if (group === 'upload') {
+    const imgPath = action || values.file
+    let name = values.name
+    let data = values.data
+    if (imgPath) {
+      name = name || path.basename(imgPath)
+      data = fs.readFileSync(imgPath).toString('base64')
+    }
+    json(saveUpload({ name, data }))
+    return 0
+  }
 
   switch (`${group} ${action || ''}`.trim()) {
     case 'tree': {

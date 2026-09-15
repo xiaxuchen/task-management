@@ -22,3 +22,4 @@
 - fix(web): 自动保存改由轮询驱动（Vditor input 回调触发时机不稳定，实测数秒未回调），
   且轮询须在 after 回调启动（构造后 getValue() 不可靠）；修复防抖定时器被轮询不断重置导致永不保存
 - fix(tree-table-ui): 修复 SettingsView 提示词模板里未转义的 `{{...}}` 导致 Vite 构建失败（模板参数改由脚本常量传入，文本占位符用 `v-pre`）
+- feat(uploads): 文档编辑区启用 Vditor 工具栏 `upload` 按钮并接入图片上传 handler（此前为避免点了报错而刻意关闭）

@@ -10,7 +10,7 @@
   - `commits`：sha 校验、同节点幂等
   - `gitlab`：分页、401、404、超时（mock `fetch`）
   - `config`：默认值生成、权限 600、token 打码
-  - `uploads`：扩展名 / 大小校验、落盘命名、静态访问
+  - `uploads`：扩展名白名单 / ≤10 MB / **魔数与声明类型交叉校验**（改名与伪装被拦下）/ 落盘命名（时间戳 + 随机串，不覆盖）/ 静态访问可取回原始字节；三入口 1:1（HTTP 201 + `GET /uploads/:name`、CLI 路径与 `--data` 两种用法、MCP `upload_image` 非法值走 `isError` 而非 SDK 报错）；四入口落盘语义逐字段一致
   - `git`：diff / log 读取、`merge-tree` 预检（构造真冲突用例）、merge 成功与失败、未登记仓库
   - `merges`：状态机（`precheck_conflict` → `resolved` / `merged`）、批量按序合并遇冲突停下、abort 不改分支
   - `conflicts`：三方内容读取、逐块接受 / 拒绝产出、补丁可 `git apply`

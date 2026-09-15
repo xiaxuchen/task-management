@@ -7,6 +7,7 @@ import { loadConfig, saveConfig, maskToken } from './config.mjs'
 import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
+import { saveUpload } from './uploads.mjs'
 
 export function createMcpServer({ store }) {
   const cfg = loadConfig()
@@ -939,6 +940,16 @@ export function createMcpServer({ store }) {
       }
       return { content: [{ type: 'text', text: JSON.stringify(maskToken(saveConfig(patch)), null, 2) }] }
     }
+  )
+
+  server.tool(
+    'upload_image',
+    '上传文档图片（png / jpg / jpeg / gif / webp，≤10 MB）；data 为 base64 或 data URL，返回可写进 Markdown 的 /uploads/<name> 地址',
+    { name: z.string(), data: z.string() },
+    mcpValidate(async ({ name, data }) => {
+      const out = saveUpload({ name, data })
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+    })
   )
 
   return server
