@@ -145,6 +145,57 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/reorder \
   -H 'content-type: application/json' -d '{"parentPath":"充电平台","orderedIds":[3,2,1]}'
 ```
 
+## 需求管理（需求条目 / 状态流转 / 文档关联）
+
+```bash
+# 需求列表 + KPI（可按项目和状态筛选）
+curl -s 'http://127.0.0.1:3210/api/requirements?projectId=1'
+curl -s 'http://127.0.0.1:3210/api/requirements?projectId=1&status=doing'
+
+# 新建需求：自动关联「需求内容」与「概要设计」两份文档
+curl -s -X POST http://127.0.0.1:3210/api/requirements \
+  -H 'content-type: application/json' \
+  -d '{"projectId":1,"name":"26Q3 充电订单导出"}'
+
+# 状态流转：todo→doing→testing→done；未完成前可 cancelled；cancelled 可恢复 todo
+curl -s -X POST http://127.0.0.1:3210/api/requirements/2/transition \
+  -H 'content-type: application/json' -d '{"status":"doing"}'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js requirement list --project "项目A" [--status doing]
+# node bin/taskboard.js requirement create --project "项目A" --name "需求1"
+# node bin/taskboard.js requirement transition "项目A/需求1" --status doing
+# MCP: requirement_list / requirement_create / requirement_transition
+```
+
+```json
+{
+  "revision": 12,
+  "summary": {
+    "total": 3,
+    "byStatus": { "todo": 1, "doing": 1, "testing": 1, "done": 0, "cancelled": 0 },
+    "missingRequirementDoc": 1,
+    "missingDesignDoc": 2
+  },
+  "items": [
+    {
+      "id": 2,
+      "type": "requirement",
+      "name": "26Q3 充电订单导出",
+      "status": "doing",
+      "docState": [
+        { "name": "需求内容", "linked": true, "filled": true },
+        { "name": "概要设计", "linked": true, "filled": false }
+      ],
+      "canTransitionTo": ["testing", "cancelled"]
+    }
+  ]
+}
+```
+
+> 创建需求会把「需求内容」和「概要设计」两份文档槽位一次性建好；`filled=false` 只表示文档已关联但正文仍为空。
+> 非法状态跳转返回 `400 VALIDATION_FAILED`，通用 `PATCH /api/nodes/:id` 也不能绕过需求状态机。
+
 ## 幂等写入（AI 首选）
 
 ### 按路径 get-or-create

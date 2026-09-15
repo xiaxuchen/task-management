@@ -12,6 +12,7 @@ const OPTIONS = {
   name: { type: 'string' },
   status: { type: 'string' },
   parent: { type: 'string' },
+  project: { type: 'string' },
   to: { type: 'string' },
   attr: { type: 'string', multiple: true },
   format: { type: 'string' },
@@ -108,6 +109,9 @@ const HELP = `task-board <命令>
   node update <ref> [--name n] [--status s] [--parent <path>] [--attr k=v ...] [--confirm]
   node move <ref> --to <path> --confirm
   node delete <ref> --confirm
+  requirement list [--project <ref>] [--status todo|doing|testing|done|cancelled]
+  requirement create --project <ref> --name <名> [--attr k=v ...]
+  requirement transition <ref> --status todo|doing|testing|done|cancelled
   attr set <ref> k=v [k2=v2 ...]
   attr-def add --type t --key k --label l [--data-type text|textarea|number|date|select|url] [--options '[...]'] [--required]
   doc upsert <ref> --name <文档名> [--content <正文>|--file <path>]    # 按文档名幂等
@@ -283,6 +287,31 @@ export async function run(argv) {
       json(store.deleteNode(store.resolveRef(ref).id))
       break
     }
+    // ---------- 需求管理（条目 / 状态流转 / 文档关联） ----------
+    case 'requirement list': {
+      const projectId = values.project ? store.resolveRef(values.project).id : null
+      json({
+        revision: store.getRevision(),
+        summary: store.requirementSummary({ projectId }),
+        items: store.listRequirements({ projectId, status: values.status || null })
+      })
+      break
+    }
+    case 'requirement create': {
+      if (!values.project) throw Object.assign(new Error('创建需求需要 --project <ref>'), { code: 'VALIDATION_FAILED' })
+      json(
+        store.createRequirement({
+          projectId: store.resolveRef(values.project).id,
+          name: values.name,
+          attrs: parseAttrPairs(values.attr),
+          actor: by
+        })
+      )
+      break
+    }
+    case 'requirement transition':
+      json(store.transitionRequirement(store.resolveRef(ref).id, { status: values.status, actor: by }))
+      break
     case 'attr list':
       json(store.listAttrDefs(values.type, { includeDisabled: !!values['include-disabled'] }))
       break

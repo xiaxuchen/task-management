@@ -40,3 +40,4 @@
 | 33 | 交付门禁复用三段既有聚合，不落表 | 交付结论 = 需求就绪 + 测试验收 + 上线治理的**只读汇总**；每个来源是三态（`pass` / `fail` / `not_applicable`），最终为 `ready` / `not_ready` / `unknown`。不适用不等于通过，全部不适用时 `ready=null` 而非绿灯；`acceptance` 的 `running` / `notRun` 也不算交付证据。落表会产生第二份真相，因此与 `acceptance_report` / `readiness` 同样纯读、不 bump revision |
 | 34 | 停用用例不参与交付门禁 | `buildAcceptanceReport` / `buildDeliveryGate` 只聚合 `enabled=1` 的用例，与 readiness 口径一致；否则停用历史用例会永远以 `notRun` 阻塞交付，而执行链默认不会选它。删除停用用例不得改变门禁结论 |
 | 35 | `format` 参数禁止静默降级 | 与 `scope` 同一条纪律：`json\|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；三入口统一由 `store.normalizeFormat` 校验，MCP 将业务错误转为 `isError` 文本而不是泄漏 SDK `-32602`。markdown 渲染器必须转义表格单元格中的 `\|` 与换行 |
+| 36 | 需求管理首版不新增表，用专属能力收敛通用节点操作 | 复用 `nodes(type=requirement)` + `documents`；需求列表/创建/状态流转走专属 store 能力并三入口 1:1 暴露。状态机放在 store（不只在 UI / 入口），创建时自动关联两份核心文档，避免「像需求但文档槽位缺失」与状态任意跳转这两类半成品 |
