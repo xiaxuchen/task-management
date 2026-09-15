@@ -44,6 +44,9 @@ export default {
   // 交付门禁
   deliveryGate: (nodeId, scope) => api(`/nodes/${nodeId}/delivery-gate?scope=${scope || 'self'}`),
 
+  // 业务检查门禁
+  businessGate: (nodeId, scope) => api(`/nodes/${nodeId}/business-gate?scope=${scope || 'self'}`),
+
   // commit
   commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),
   commitAdd: (nodeId, data) => api(`/nodes/${nodeId}/commits`, { method: 'POST', body: JSON.stringify(data) }),

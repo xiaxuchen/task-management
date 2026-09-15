@@ -78,6 +78,40 @@
         </template>
       </el-tab-pane>
 
+      <el-tab-pane label="业务检查" name="business">
+        <div class="delivery-head">
+          <el-tag :type="bizTagType(bizGate.ready)" effect="dark" size="large">{{ bizDecisionLabel(bizGate.ready) }}</el-tag>
+          <el-select v-model="bizScope" size="small" style="width:120px" @change="loadBusinessGate">
+            <el-option label="仅本节点" value="self" />
+            <el-option label="含子树" value="subtree" />
+          </el-select>
+        </div>
+        <el-alert
+          v-if="bizGate.ready === null"
+          type="info"
+          :closable="false"
+          title="当前范围没有缺陷，也没有启用中的业务检查用例"
+          style="margin-bottom:10px"
+        />
+        <el-table :data="bizGate.defects || []" size="small">
+          <el-table-column prop="name" label="缺陷" min-width="160" />
+          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="已关闭" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.closed ? 'success' : 'warning'" effect="plain">{{ row.closed ? '是' : '否' }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <template v-if="(bizGate.cases || []).length">
+          <el-divider content-position="left">业务检查用例</el-divider>
+          <el-table :data="bizGate.cases" size="small" max-height="280">
+            <el-table-column prop="name" label="用例" min-width="180" />
+            <el-table-column prop="latestStatus" label="最近结果" width="110" />
+            <el-table-column prop="latestReportId" label="报告" width="90" />
+          </el-table>
+        </template>
+      </el-tab-pane>
+
       <el-tab-pane label="子节点" name="children">
         <el-empty v-if="!children.length" description="无子节点" />
         <el-table v-else :data="children" size="small" @row-click="onChildClick">
@@ -203,11 +237,15 @@ const commits = ref([])
 const repos = ref([])
 const deliveryScope = ref('self')
 const gate = ref({ decision: 'unknown', sources: [], blockers: [] })
+const bizScope = ref('self')
+const bizGate = ref({ ready: null, defects: [], cases: [], blockers: [] })
 const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' }
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
 const deliveryDecisionLabel = (d) => ({ ready: '可交付', not_ready: '不可交付', unknown: '待判定' }[d] || d)
 const deliveryStatusLabel = (s) => ({ pass: '通过', fail: '未通过', not_applicable: '不适用' }[s] || s)
 const deliveryTagType = (s) => ({ ready: 'success', pass: 'success', not_ready: 'danger', fail: 'danger' }[s] || 'info')
+const bizDecisionLabel = (v) => (v == null ? '待判定' : v ? '业务可验收' : '尚不可验收')
+const bizTagType = (v) => (v == null ? 'info' : v ? 'success' : 'danger')
 
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
@@ -405,6 +443,8 @@ async function loadDetail() {
   repos.value = repoList
   deliveryScope.value = 'self'
   loadDeliveryGate()
+  bizScope.value = 'self'
+  loadBusinessGate()
   loadTracks()
   loadDuplicates()
 }
@@ -414,6 +454,14 @@ async function loadDeliveryGate() {
     gate.value = await api.deliveryGate(props.node.id, deliveryScope.value)
   } catch {
     gate.value = { decision: 'unknown', sources: [], blockers: [] }
+  }
+}
+
+async function loadBusinessGate() {
+  try {
+    bizGate.value = await api.businessGate(props.node.id, bizScope.value)
+  } catch {
+    bizGate.value = { ready: null, defects: [], cases: [], blockers: [] }
   }
 }
 

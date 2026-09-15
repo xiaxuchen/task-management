@@ -78,6 +78,12 @@
 |---|---|---|
 | GET | `/api/nodes/:id/readiness` | 需求就绪门禁：`?scope=self\|subtree`，`?format=json\|md`。判定需求内容 / 概要设计 / 可回归用例三条门禁；只判 `requirement` / `subreq`（其它类型 `self` → 400 `VALIDATION_FAILED`，提示用 `scope=subtree`）；无待判定需求时 `ready=null`；**纯读聚合，不写库、不动 revision** |
 
+### 业务检查门禁（业务可验收性的只读判定）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/nodes/:id/business-gate` | 业务检查门禁：`?scope=self\|subtree`，`?format=json\|md`。判定范围内**未关闭缺陷**（`defect` 且 `status` ∉ `done`/`cancelled`）与**启用中的 `biz_check` 用例最近结论**（只认 `pass`，`running` / `not_run` 都阻塞）；无缺陷且无启用用例时 `ready=null`；`blockers` 按 `open_defect` / `unpassed_case` 分型；**纯读聚合，不写库、不动 revision** |
+
 ### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 | Method | Path | 说明 |

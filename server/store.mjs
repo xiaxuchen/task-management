@@ -1608,6 +1608,108 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 业务检查门禁（业务可验收性的只读判定） ----------
+  //
+  // 上线治理把「业务检查」的**执行**挂在 test_cases 的 `biz_check` 用例上（见
+  // features/release-governance/design.md R1），但此前没有任何聚合回答「业务侧到底能不能验收」：
+  // 验收报告按 kind 不分桶（业务检查混在回归里），上线清单只把 biz_check 当作上线证据之一。
+  // 本门禁补上这条独立结论，只回答两件事：
+  //   1) 范围内**未关闭的缺陷**（defect 且 status 不在 done/cancelled）有没有清干净；
+  //   2) 范围内启用中的 `biz_check` 用例最近一次结论是否都是 `pass`。
+  // 纯读聚合：不落表、不 bump revision——结论必须随源数据实时变化，避免第二份真相。
+
+  /** 缺陷视为「已关闭」的状态：与 config.status.allowed.defect 的终态一致。 */
+  const CLOSED_DEFECT_STATUSES = new Set(['done', 'cancelled'])
+
+  function buildBusinessGate(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const ph = ids.map(() => '?').join(',')
+
+    // 缺陷：只把「未闭合」的算阻塞，终态（done / cancelled）不再拦住业务验收。
+    const defectRows = db
+      .prepare(`SELECT * FROM nodes WHERE id IN (${ph}) AND type = 'defect' ORDER BY sort, id`)
+      .all(...ids)
+    const openDefects = defectRows.filter((r) => !CLOSED_DEFECT_STATUSES.has(r.status))
+
+    // 业务检查用例：与 buildReleaseChecklist / runReleaseChecks 的 kind 口径一致，
+    // 只算启用中的用例（停用的既不会被派单，也不该阻塞业务验收）。
+    const checkCases = db
+      .prepare(`SELECT * FROM test_cases WHERE node_id IN (${ph}) AND enabled = 1 ORDER BY node_id, sort, id`)
+      .all(...ids)
+      .map(testCaseVO)
+      .filter((c) => c.kind === 'biz_check')
+
+    // 每个用例只取最近一次报告（一次执行 = 一行），避免历史 pass 掩盖后来的 fail。
+    const reports = db
+      .prepare(`SELECT * FROM test_reports WHERE node_id IN (${ph}) ORDER BY id DESC`)
+      .all(...ids)
+      .map(testReportVO)
+    const latestByCase = new Map()
+    for (const r of reports) {
+      if (r.caseId == null) continue
+      if (!latestByCase.has(r.caseId)) latestByCase.set(r.caseId, r)
+    }
+    const cases = checkCases.map((c) => {
+      const latest = latestByCase.get(c.id) || null
+      return {
+        id: c.id,
+        nodeId: c.nodeId,
+        name: c.name,
+        expectation: c.expectation,
+        latestStatus: latest ? latest.status : 'not_run',
+        latestReportId: latest ? latest.id : null
+      }
+    })
+    // 与 acceptance / delivery-gate 同源口径：只有 pass 才算通过；
+    // running（已派单未回写）与 not_run（从未执行）都不是可交付证据。
+    const blockingCases = cases.filter((c) => c.latestStatus !== 'pass')
+
+    const blockers = [
+      ...openDefects.map((r) => ({
+        kind: 'open_defect',
+        nodeId: r.id,
+        name: r.name,
+        status: r.status
+      })),
+      ...blockingCases.map((c) => ({
+        kind: 'unpassed_case',
+        nodeId: c.nodeId,
+        name: c.name,
+        latestStatus: c.latestStatus,
+        latestReportId: c.latestReportId
+      }))
+    ]
+
+    // 空态：范围内既没有缺陷、也没有启用中的 biz_check 用例 → 没有可判定对象。
+    const hasJudgement = defectRows.length > 0 || cases.length > 0
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope: effectiveScope,
+      ready: hasJudgement ? blockers.length === 0 : null,
+      totals: {
+        defects: defectRows.length,
+        openDefects: openDefects.length,
+        closedDefects: defectRows.length - openDefects.length,
+        cases: cases.length,
+        pass: cases.filter((c) => c.latestStatus === 'pass').length,
+        running: cases.filter((c) => c.latestStatus === 'running').length,
+        notRun: cases.filter((c) => c.latestStatus === 'not_run').length,
+        blockingCases: blockingCases.length
+      },
+      blockers,
+      defects: defectRows.map((r) => ({
+        id: r.id,
+        nodeId: r.id,
+        name: r.name,
+        status: r.status,
+        closed: CLOSED_DEFECT_STATUSES.has(r.status)
+      })),
+      cases
+    }
+  }
+
   // ---------- 交付门禁（汇总需求就绪 / 验收 / 上线三段结论） ----------
   //
   // 前三个功能各自回答一段问题：需求就绪门禁=能不能进测试，验收报告=测试过没过，
@@ -2566,6 +2668,8 @@ export function createStore(db, options = {}) {
     deleteReleaseItem,
     reorderReleaseItems,
     buildReleaseChecklist,
+    // 业务检查门禁（业务可验收性的只读判定）
+    buildBusinessGate,
     // 交付门禁（汇总需求就绪 / 验收 / 上线结论）
     buildDeliveryGate,
     // agent 运行时管理
