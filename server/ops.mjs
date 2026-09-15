@@ -52,6 +52,8 @@ export const TOOLS = [
   'acceptance_status',
   'acceptance_sign',
   'requirement_readiness',
+  'design_outline',
+  'design_outline_apply',
   'delivery_gate',
   'release_item_list',
   'release_item_upsert',
@@ -1023,6 +1025,117 @@ export function renderDeliveryGateMd(gate) {
     for (const b of gate.blockers) lines.push(`| ${cell(b.label)} | ${cell(b.name)} | ${cell(b.detail)} |`)
   }
   return lines.join('\n')
+}
+
+/** mermaid 节点文本转义：双引号 / 换行会破坏 `id["text"]` 语法 */
+function mermaidText(name) {
+  return String(name == null ? '' : name)
+    .replace(/"/g, "'")
+    .replace(/\r?\n/g, ' ')
+    .replace(/[\[\]{}()]/g, '')
+    .trim()
+}
+
+/** 概要设计骨架里的层级标题：按节点类型给稳定的小节名 */
+const DESIGN_SECTION_BY_TYPE = {
+  requirement: '目标与范围',
+  subreq: '子需求设计',
+  group: '任务组拆分',
+  task: '实现要点',
+  defect: '缺陷处理'
+}
+
+/**
+ * 概要设计大纲导出：
+ * - `format=md`（或 `renderDesignOutlineMd`）产出可直接 upsert 进「概要设计」文档的 markdown 骨架，
+ *   内含一张 mermaid 思维导图 + 逐层小节（结构与需求树一致）；
+ * - 骨架里标注「待补充」，避免把它当成「设计已写完」——门禁判的是正文非空白，
+ *   所以调用方仍需让 AI / 人补上真正的设计内容（apply 的 `overwrite:false` 也不会覆盖已有正文）。
+ */
+export function renderDesignOutlineMd(outline) {
+  const nodeLabel = (n) => (DESIGN_SECTION_BY_TYPE[n.type] || '节点')
+  const lines = [`# 概要设计：${outline.node.name}`, '']
+
+  if (outline.totals.nodes === 0) {
+    lines.push('_（没有可推导的节点结构——请先补充子需求 / 任务组 / 子任务）_')
+    return lines.join('\n')
+  }
+
+  // mermaid 思维导图：直接复用需求树，AI / 人一眼看到拆分结构。
+  // 单需求（scope=self）时根节点本身就是待推导的需求，避免多画一层重复分支。
+  const selfAsRoot = outline.units.length === 1 && outline.units[0].nodeId === outline.node.id
+  lines.push('## 结构思维导图', '', '```mermaid', 'mindmap', `  root(("${mermaidText(outline.node.name)}"))`)
+  const walkMind = (n, depth) => {
+    const indent = '  '.repeat(depth + 1)
+    lines.push(`${indent}["${mermaidText(n.name)}"]`)
+    for (const c of n.children) walkMind(c, depth + 1)
+  }
+  if (selfAsRoot) {
+    for (const c of outline.units[0].tree.children) walkMind(c, 1)
+  } else {
+    for (const unit of outline.units) {
+      // 需求本身作为根下的第一层分支
+      lines.push(`    ["${mermaidText(unit.name)}"]`)
+      for (const c of unit.tree.children) walkMind(c, 2)
+    }
+  }
+  lines.push('```', '')
+
+  const walkSections = (n, depth) => {
+    const prefix = '#'.repeat(Math.min(depth + 2, 6))
+    lines.push(`${prefix} ${n.name}`, '', `_${nodeLabel(n)}｜待补充：目标 / 方案 / 影响面 / 验证方式_`, '')
+    for (const c of n.children) walkSections(c, depth + 1)
+  }
+  if (selfAsRoot) walkSections(outline.units[0].tree, 1)
+  else for (const unit of outline.units) walkSections(unit.tree, 1)
+  return lines.join('\n').trimEnd()
+}
+
+/**
+ * 把推导出的概要设计骨架**写入**「概要设计」文档（三入口共用，AI 主要入口）。
+ * - 默认 `overwrite:false`：已有非空内容不覆盖，只回报 `written:false`——避免把人工写好的设计冲掉；
+ * - `overwrite:true` 才覆盖；
+ * - 文档名取 `config.readiness.designDoc`，与需求就绪门禁判定的是同一份文档名，写对才算数。
+ * 返回值区分 `created`（文档是否新建）与 `written`（内容是否真的变了）。
+ */
+export function applyDesignOutline(store, nodeRef, { scope = 'self', overwrite = false, dryRun = false, by = 'user' } = {}) {
+  const node = store.resolveRef(String(nodeRef))
+  const outline = store.buildDesignOutline(node.id, { scope })
+  const designDocName = (store.getReadinessConfig && store.getReadinessConfig().designDoc) || '概要设计'
+
+  const results = []
+  for (const unit of outline.units) {
+    const docs = store.listDocuments(unit.nodeId)
+    const existing = docs.find((d) => d.name === designDocName)
+    const hasContent = !!existing && String(existing.content || '').trim() !== ''
+    if (hasContent && !overwrite) {
+      results.push({ nodeId: unit.nodeId, name: unit.name, doc: designDocName, created: false, written: false, reason: 'already_filled' })
+      continue
+    }
+    if (dryRun) {
+      results.push({ nodeId: unit.nodeId, name: unit.name, doc: designDocName, created: !existing, written: false, reason: 'dry_run' })
+      continue
+    }
+    const content = renderDesignOutlineMd({
+      node: { id: unit.nodeId, name: unit.name, type: unit.type },
+      scope: 'self',
+      totals: { units: 1, nodes: unit.nodeCount },
+      units: [unit]
+    })
+    const r = store.upsertDocument(unit.nodeId, designDocName, content, by)
+    results.push({ nodeId: unit.nodeId, name: unit.name, doc: designDocName, created: !!r.created, written: true })
+  }
+
+  return {
+    node: outline.node,
+    scope: outline.scope,
+    dryRun: !!dryRun,
+    designDoc: designDocName,
+    overwrite: !!overwrite,
+    written: results.filter((r) => r.written).length,
+    skipped: results.filter((r) => !r.written).length,
+    results
+  }
 }
 
 /**

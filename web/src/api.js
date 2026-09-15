@@ -63,6 +63,10 @@ export default {
   acceptanceStatus: (nodeId, scope) => api(`/nodes/${nodeId}/acceptance-status?scope=${scope || 'self'}`),
   acceptanceSign: (nodeId, data) => api(`/nodes/${nodeId}/acceptance-signoff`, { method: 'POST', body: JSON.stringify(data) }),
 
+  // 概要设计大纲 / 思维导图
+  designOutline: (nodeId, scope) => api(`/nodes/${nodeId}/design-outline?scope=${scope || 'self'}`),
+  designOutlineApply: (nodeId, data) => api(`/nodes/${nodeId}/design-outline/apply`, { method: 'POST', body: JSON.stringify(data || {}) }),
+
   // commit
   commitList: (nodeId, subtree) => api(`/nodes/${nodeId}/commits${subtree ? '?subtree=true' : ''}`),
   commitAdd: (nodeId, data) => api(`/nodes/${nodeId}/commits`, { method: 'POST', body: JSON.stringify(data) }),

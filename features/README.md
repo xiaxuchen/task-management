@@ -37,6 +37,7 @@
 | **回归测试闭环**（AI 可回归测试用例 + 测试/验收报告 + 验收签收 + 提示词派单） | `regression-loop/` | — | server/{db,store,ops}.mjs（test_cases/test_reports/acceptance_signoffs）+ 三入口 test_* |
 | **上线治理**（上线配置 / 上线 SQL / 上线检查清单 + agent 前置检查派单） | `release-governance/` | — | server/{db,store,ops}.mjs（release_items）+ 三入口 release_* |
 | **需求就绪门禁**（需求内容 / 概要设计 / 可回归用例三条门禁 + 子树汇总，纯读聚合不落表） | `requirement-readiness/` | — | server/{config,store,ops}.mjs（buildRequirementReadiness）+ 三入口 readiness |
+| **概要设计大纲 / 思维导图**（从需求树推导 mermaid 脑图 + 逐层小节，一键写入「概要设计」文档） | `design-outline/` | — | server/{store,ops}.mjs（buildDesignOutline / applyDesignOutline）+ 三入口 design outline/apply + NodeDrawer「概要设计」页签 |
 | **交付门禁**（需求就绪 / 测试验收+签收 / 上线治理的最终汇总，纯读聚合不落表） | `delivery-gate/` | — | server/{store,ops}.mjs（buildDeliveryGate）+ 三入口 delivery_gate + NodeDrawer「交付」页签 |
 | **验收签收**（测试证据 + 业务结论 + 证据指纹失效） | `acceptance-signoff/` | — | server/{db,store,ops}.mjs（acceptance_signoffs）+ 三入口 acceptance_status/sign |
 | **需求管理**（需求条目 / 受控状态流转 / 核心文档关联 + Web 需求管理页） | `requirement-management/` | — | server/{store,http,cli,mcp}.mjs（requirement_*）+ web/src/views/RequirementsView.vue |

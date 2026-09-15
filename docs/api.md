@@ -458,6 +458,34 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 > `release-checklist` / `delivery-gate` / `diffs` / `tracks` / `duplicates`。
 > 空态：子树内没有需求时返回 `ready=null`（`totals.units=0`），不是 400。
 
+## 概要设计大纲 / 思维导图（需求管理 → 概要设计 → 文档）
+
+```bash
+# 从需求树推导结构（JSON）：结构树 + 单元 / 节点计数
+curl -s http://127.0.0.1:3210/api/nodes/1/design-outline
+
+# markdown 骨架：含 mermaid 思维导图 + 逐层小节，可直接写入「概要设计」文档
+curl -s 'http://127.0.0.1:3210/api/nodes/1/design-outline?format=md'
+
+# 一键写入各需求的「概要设计」文档（默认不覆盖已有正文）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/design-outline/apply \
+  -H 'content-type: application/json' -d '{"scope":"self"}'
+
+# 预演：只回报将写哪些，不落库、不动 revision（与 overwrite 同传也只预演）
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/design-outline/apply \
+  -H 'content-type: application/json' -d '{"dryRun":true,"overwrite":true}'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js design outline "项目A/需求1" [--scope self|subtree] [--format json|md]
+# node bin/taskboard.js design apply   "项目A/需求1" [--scope self|subtree] [--overwrite] [--dry-run]
+# MCP: design_outline { node, scope?, format? } / design_outline_apply { node, scope?, overwrite?, dryRun? }
+```
+
+> 只对 `requirement` / `subreq` 推导；挂在项目上用 `scope=subtree` 逐需求各出一份。
+> 文档名取 `config.readiness.designDoc`，与需求就绪门禁判定的是同一份文档 —— 写入后
+> `design_doc` 门禁即通过。已有非空内容默认保留（`written:false / reason=already_filled`），
+> 需要覆盖时显式传 `overwrite:true`。推导本身是纯读，不写库、不动 revision。
+
 ## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
 
 ```bash

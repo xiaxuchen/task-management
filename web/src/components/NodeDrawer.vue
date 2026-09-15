@@ -44,6 +44,26 @@
         <DocPane :node-id="node.id" />
       </el-tab-pane>
 
+      <el-tab-pane v-if="node.type === 'requirement' || node.type === 'subreq' || node.type === 'project'" label="概要设计" name="design">
+        <div class="design-head">
+          <el-select v-model="designScope" size="small" style="width:120px" @change="loadDesignOutline">
+            <el-option label="仅本节点" value="self" />
+            <el-option label="含子树" value="subtree" />
+          </el-select>
+          <span class="design-count" v-if="designOutline.totals">可推导 {{ designOutline.totals.units }} 个需求 / {{ designOutline.totals.nodes }} 个节点</span>
+          <el-button size="small" :disabled="!designMd" @click="copyDesignMd">复制骨架</el-button>
+          <el-button size="small" type="primary" :disabled="!designMd" @click="applyDesign">写入概要设计</el-button>
+        </div>
+        <el-alert
+          v-if="designOutline.totals && designOutline.totals.nodes === 0"
+          type="info"
+          :closable="false"
+          title="当前范围没有可推导的节点结构（先补充子需求 / 任务组 / 子任务）"
+          style="margin-bottom:10px"
+        />
+        <div ref="designHostRef" v-show="designMd" class="design-host" />
+      </el-tab-pane>
+
       <el-tab-pane label="交付" name="delivery">
         <div class="delivery-head">
           <el-tag :type="deliveryTagType(gate.decision)" effect="dark" size="large">{{ deliveryDecisionLabel(gate.decision) }}</el-tag>
@@ -199,11 +219,22 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 import DocPane from './DocPane.vue'
 import DiffPane from './DiffPane.vue'
+import Vditor from 'vditor'
+import 'vditor/dist/index.css'
+
+// 与 DocPane 同源的自托管资源路径（mermaid / KaTeX 不依赖外网 CDN）
+const PREVIEW_OPTIONS = {
+  cdn: '/vditor',
+  lang: 'zh_CN',
+  theme: { current: 'light' },
+  hljs: { style: 'github', lineNumber: true },
+  markdown: { toc: true, mark: true, mermaid: true, math: { engine: 'KaTeX' } }
+}
 
 const props = defineProps({ node: Object, visible: Boolean, initialTab: { type: String, default: 'info' } })
 const emit = defineEmits(['close', 'updated'])
@@ -226,6 +257,11 @@ const gate = ref({ decision: 'unknown', sources: [], blockers: [] })
 const acceptance = ref({ state: 'not_applicable', report: { totals: { cases: 0, pass: 0 }, evidenceFingerprint: '' }, signoff: null })
 const acceptanceComment = ref('')
 const signingAcceptance = ref(false)
+const designScope = ref('self')
+const designOutline = ref({ totals: null, units: [] })
+const designMd = ref('')
+const designHostRef = ref(null)
+const DESIGN_NODE_TYPES = ['project', 'requirement', 'subreq']
 const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' }
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
 const deliveryDecisionLabel = (d) => ({ ready: '可交付', not_ready: '不可交付', unknown: '待判定' }[d] || d)
@@ -437,6 +473,8 @@ async function loadDetail() {
   repos.value = repoList
   deliveryScope.value = 'self'
   loadDeliveryGate()
+  designScope.value = 'self'
+  if (DESIGN_NODE_TYPES.includes(detail.type)) loadDesignOutline()
   loadTracks()
   loadDuplicates()
 }
@@ -471,6 +509,57 @@ async function signAcceptance(decision) {
     ElMessage.error(e.message || String(e))
   } finally {
     signingAcceptance.value = false
+  }
+}
+
+/** 概要设计大纲：拉 JSON（计数）与 markdown（渲染），两者同源、只读，不落库 */
+async function loadDesignOutline() {
+  try {
+    designOutline.value = await api.designOutline(props.node.id, designScope.value)
+  } catch {
+    designOutline.value = { totals: null, units: [] }
+    designMd.value = ''
+    return
+  }
+  try {
+    const r = await fetch(`/api/nodes/${props.node.id}/design-outline?scope=${designScope.value}&format=md`)
+    designMd.value = await r.text()
+  } catch {
+    designMd.value = ''
+  }
+  await nextTick()
+  const el = designHostRef.value
+  if (el && designMd.value) {
+    el.innerHTML = ''
+    await Vditor.preview(el, designMd.value, PREVIEW_OPTIONS)
+  }
+}
+
+async function copyDesignMd() {
+  try {
+    await navigator.clipboard.writeText(designMd.value)
+    ElMessage.success('已复制概要设计骨架')
+  } catch {
+    ElMessage.error('复制失败（浏览器未授权剪贴板）')
+  }
+}
+
+async function applyDesign() {
+  try {
+    await ElMessageBox.confirm(
+      '把推导出的骨架写入各需求的「概要设计」文档？已有内容默认不覆盖。',
+      '写入概要设计',
+      { type: 'info' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const out = await api.designOutlineApply(props.node.id, { scope: designScope.value })
+    ElMessage.success(`已写入 ${out.written} 份，跳过 ${out.skipped} 份（已有内容）`)
+    emit('updated')
+  } catch (e) {
+    ElMessage.error(e.message)
   }
 }
 
@@ -555,6 +644,24 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+}
+.design-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.design-count {
+  color: #909399;
+  font-size: 12px;
+  flex: 1;
+}
+.design-host {
+  height: calc(100% - 46px);
+  overflow: auto;
+}
+.design-host.vditor-reset {
+  padding: 8px 16px;
 }
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {
