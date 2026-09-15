@@ -89,6 +89,9 @@ test('CLI 需求管理：create / list / transition 全链路', async (t) => {
   assert.equal(list.items.length, 1)
   const moved = await cli(['requirement', 'transition', 'P/R', '--status', 'doing'])
   assert.equal(moved.status, 'doing')
+  const filtered = await cli(['requirement', 'list', '--project', 'P', '--status', 'doing'])
+  assert.equal(filtered.items.length, 1)
+  assert.equal(filtered.summary.total, 1)
 })
 
 test('MCP 需求管理：真实协议调用与 store 返回一致', async (t) => {
@@ -125,4 +128,141 @@ test('MCP 需求管理：真实协议调用与 store 返回一致', async (t) =>
   const list = JSON.parse(listOut.content[0].text)
   assert.equal(list.items.length, 1)
   assert.equal(list.summary.byStatus.todo, 1)
+})
+
+test('通用创建/更新、batch、upsert、MCP 枚举外状态值统一回归', async (t) => {
+  const ctx = await setup()
+  t.after(async () => {
+    await ctx.close()
+    ctx.tmp.cleanup()
+  })
+  const p = ctx.store.createNode({ type: 'project', name: 'P' })
+  const raw = (method, pth, body) =>
+    fetch(`${ctx.base}${pth}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    }).then(async (r) => ({ status: r.status, body: await r.json() }))
+
+  const genericCreate = await raw('POST', '/api/nodes', { parentId: p.id, type: 'requirement', name: '通用创建' })
+  assert.equal(genericCreate.status, 201)
+  const genericList = await fetch(`${ctx.base}/api/requirements?projectId=${p.id}`).then((r) => r.json())
+  assert.deepEqual(
+    genericList.items[0].docState.map((d) => [d.name, d.linked, d.filled]),
+    [
+      ['需求内容', true, false],
+      ['概要设计', true, false]
+    ]
+  )
+  assert.equal(genericList.items[0].status, 'todo')
+
+  const badCreate = await raw('POST', '/api/nodes', { parentId: p.id, type: 'requirement', name: '非法创建', status: 'DONE' })
+  assert.equal(badCreate.status, 400)
+  assert.equal(badCreate.body.error.code, 'VALIDATION_FAILED')
+  const badCreateDone = await raw('POST', '/api/nodes', { parentId: p.id, type: 'requirement', name: '非法创建 done', status: 'done' })
+  assert.equal(badCreateDone.status, 400)
+  assert.equal(badCreateDone.body.error.code, 'VALIDATION_FAILED')
+
+  const badUpdate = await raw('PATCH', `/api/nodes/${genericCreate.body.id}`, { status: 'DONE' })
+  assert.equal(badUpdate.status, 400)
+  assert.equal(badUpdate.body.error.code, 'VALIDATION_FAILED')
+  const badUpdateDone = await raw('PATCH', `/api/nodes/${genericCreate.body.id}`, { status: 'done' })
+  assert.equal(badUpdateDone.status, 400)
+  assert.equal(badUpdateDone.body.error.code, 'VALIDATION_FAILED')
+
+  const badTransition = await raw('POST', `/api/requirements/${genericCreate.body.id}/transition`, { status: 'done' })
+  assert.equal(badTransition.status, 400)
+  assert.equal(badTransition.body.error.code, 'VALIDATION_FAILED')
+
+  const viaUpsert = await raw('POST', '/api/nodes/upsert', { path: 'P/upsert需求', type: 'requirement' })
+  assert.equal(viaUpsert.status, 200)
+  const upsertList = await fetch(`${ctx.base}/api/requirements?projectId=${p.id}`).then((r) => r.json())
+  const upserted = upsertList.items.find((r) => r.name === 'upsert需求')
+  assert.deepEqual(
+    upserted.docState.map((d) => [d.name, d.linked, d.filled]),
+    [
+      ['需求内容', true, false],
+      ['概要设计', true, false]
+    ]
+  )
+
+  const viaBatch = await raw('POST', '/api/batch', {
+    ops: [{ op: 'node.create', parentId: p.id, type: 'requirement', name: 'batch需求' }]
+  })
+  assert.equal(viaBatch.status, 200)
+  assert.equal(viaBatch.body.failed, 0)
+  const batchList = await fetch(`${ctx.base}/api/requirements?projectId=${p.id}`).then((r) => r.json())
+  const batched = batchList.items.find((r) => r.name === 'batch需求')
+  assert.deepEqual(
+    batched.docState.map((d) => [d.name, d.linked, d.filled]),
+    [
+      ['需求内容', true, false],
+      ['概要设计', true, false]
+    ]
+  )
+  const badBatch = await raw('POST', '/api/batch', {
+    ops: [
+      { op: 'node.create', parentId: p.id, type: 'requirement', name: 'batch非法状态', status: 'DONE' },
+      { op: 'node.create', parentId: p.id, type: 'requirement', name: 'batch非法状态 done', status: 'done' },
+      { op: 'node.update', ref: String(batched.id), patch: { status: 'bogus' } }
+    ]
+  })
+  assert.equal(badBatch.body.failed, 3)
+  assert.ok(badBatch.body.results.every((r) => r.error?.code === 'VALIDATION_FAILED'))
+
+  const filtered = await fetch(`${ctx.base}/api/requirements?projectId=${p.id}&status=todo`).then((r) => r.json())
+  assert.equal(filtered.items.length, filtered.summary.total)
+  assert.equal(filtered.summary.byStatus.doing, 0)
+
+  for (const qs of ['projectId=abc', 'projectId=']) {
+    const bad = await raw('GET', `/api/requirements?${qs}`)
+    assert.equal(bad.status, 400, qs)
+    assert.equal(bad.body.error.code, 'VALIDATION_FAILED')
+  }
+
+  const { createMcpServer } = await import('../server/mcp.mjs')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js')
+  const server = createMcpServer({ store: ctx.store })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  const client = new Client({ name: 'taskboard-requirement-regression', version: '1.0.0' })
+  await client.connect(clientTransport)
+  t.after(async () => {
+    await client.close()
+    await server.close()
+  })
+  const badMcp = await client.callTool({ name: 'requirement_transition', arguments: { ref: String(genericCreate.body.id), status: 'bogus' } })
+  assert.equal(badMcp.isError, true)
+  assert.match(badMcp.content[0].text, /VALIDATION_FAILED/)
+  assert.ok(!/MCP error -32602/.test(badMcp.content[0].text))
+})
+
+test('CLI 枚举外状态值与通用更新统一拒绝', async (t) => {
+  const ctx = await setup()
+  t.after(() => ctx.tmp.cleanup())
+  await ctx.close()
+  const cli = (args) =>
+    execFileP('node', [CLI, ...args], { env: { ...process.env, TASKBOARD_HOME: ctx.home }, encoding: 'utf8' }).then((r) =>
+      JSON.parse(r.stdout)
+    )
+  const cliFail = async (args) => {
+    try {
+      await execFileP('node', [CLI, ...args], { env: { ...process.env, TASKBOARD_HOME: ctx.home }, encoding: 'utf8' })
+      return null
+    } catch (e) {
+      return String(e.stderr || '') + String(e.stdout || '')
+    }
+  }
+
+  await cli(['node', 'upsert', '--path', 'P'])
+  const created = await cli(['requirement', 'create', '--project', 'P', '--name', 'R'])
+  for (const args of [
+    ['requirement', 'transition', 'P/R', '--status', 'bogus'],
+    ['node', 'update', String(created.id), '--status', 'DONE']
+  ]) {
+    const out = await cliFail(args)
+    assert.ok(out, args.join(' '))
+    assert.match(out, /VALIDATION_FAILED/)
+  }
 })

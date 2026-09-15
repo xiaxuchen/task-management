@@ -230,7 +230,7 @@ export async function run(argv) {
 
   const cfg = loadConfig()
   const db = openDb()
-  const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness })
+  const store = createStore(db, { docPresets: cfg.docPresets, readiness: cfg.readiness, status: cfg.status })
   const by = values.actor || 'cli'
   const [group, action, ref] = positionals
   const json = (v) => console.log(JSON.stringify(v, null, 2))
@@ -292,7 +292,7 @@ export async function run(argv) {
       const projectId = values.project ? store.resolveRef(values.project).id : null
       json({
         revision: store.getRevision(),
-        summary: store.requirementSummary({ projectId }),
+        summary: store.requirementSummary({ projectId, status: values.status || null }),
         items: store.listRequirements({ projectId, status: values.status || null })
       })
       break

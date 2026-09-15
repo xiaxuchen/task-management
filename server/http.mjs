@@ -144,11 +144,20 @@ export function createApp({ store }) {
   app.get(
     '/api/requirements',
     wrap((req, res) => {
-      const projectId = req.query.projectId ? Number(req.query.projectId) : null
+      let projectId = null
+      if (req.query.projectId !== undefined) {
+        const rawProjectId = String(req.query.projectId).trim()
+        if (!/^\d+$/.test(rawProjectId)) {
+          throw new AppError(CODES.VALIDATION_FAILED, `projectId 必须是正整数，收到 ${req.query.projectId}`, {
+            projectId: req.query.projectId
+          })
+        }
+        projectId = Number(rawProjectId)
+      }
       const status = req.query.status || null
       res.json({
         revision: store.getRevision(),
-        summary: store.requirementSummary({ projectId }),
+        summary: store.requirementSummary({ projectId, status }),
         items: store.listRequirements({ projectId, status })
       })
     })

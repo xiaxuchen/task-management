@@ -18,14 +18,16 @@
 **R1 不建新表**：需求本身就是 `nodes.type = 'requirement'`，文档就是 `documents`。
 新增专属 API 只是为了把多条通用操作收敛成一条业务路径，避免 Web / AI 各自拼接步骤。
 
-**R2 创建即关联**：`createRequirement` 先调通用 `createNode`，再在同一个 `withoutBump`
-组合写入里按配置的 `readiness.requirementDoc` / `readiness.designDoc` upsert 两份空文档，
-最后只 `bumpRevision()` 一次。这样列表永远不会出现「像需求但没有文档槽位」的条目。
+**R2 创建即关联**：保证下沉到通用 `createNode`：只要 `type=requirement`，无论来自专属创建、
+通用 `POST /api/nodes`、`node_upsert` 还是 `batch.node.create`，都会按配置的
+`readiness.requirementDoc` / `readiness.designDoc` 在同一组合写入里 upsert 两份空文档。
+这样列表永远不会出现「像需求但没有文档槽位」的条目。
 文档名沿用 `config.readiness`，团队改「详细设计」等命名时无需改本功能。
 
-**R3 状态机在 store 强制**：入口层不能自己判断状态；`transitionRequirement` 和通用
-`updateNode` 都校验 `REQUIREMENT_TRANSITIONS`。允许 `cancelled → todo` 是刻意保留的恢复通道，
-但 `done → *` 为空，确保完成后的需求不会被静默改回。
+**R3 状态机在 store 强制**：入口层不能自己判断状态；`createNode` 只允许需求以 `todo` 起始，
+`updateNode` / `transitionRequirement` 对枚举外状态统一拒绝，通用 `updateNode` 还校验
+`REQUIREMENT_TRANSITIONS`。允许 `cancelled → todo` 是刻意保留的恢复通道，但 `done → *` 为空，
+确保完成后的需求不会被静默改回。
 
 **R4 文档「关联」与「已填写」分开**：`docState` 同时返回 `linked` 与 `filled`。
 创建需求会自动产生空白文档，如果只报关联状态，列表会把空壳需求误报成完整；
@@ -33,6 +35,10 @@
 
 **R5 就绪结论复用现有门禁**：列表里的 `readiness` 直接调用 `buildRequirementReadiness(..., { scope: 'self' })`，
 不在新视图里复制一套判断，保证需求管理页和 readiness / delivery-gate 的口径一致。
+
+**R6 筛选必须同时作用于 items 与 summary**：HTTP 的 `status` 会同时透传给
+`listRequirements` 与 `requirementSummary`，避免「表格只有 doing、KPI 却算全项目」的口径分裂。
+非法 `projectId`（非数字 / 空串）显式 `VALIDATION_FAILED`，不静默扩大成全项目查询。
 
 ## 3. 接口语义
 
