@@ -532,7 +532,7 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/readiness?format=md'
 
 > `scope` 只接受 `self` / `subtree`（缺省 = `self`）；其它取值（含 `Subtree` / 空串）返回
 > `400 VALIDATION_FAILED`，**不会静默降级成 `self`**。同一规则适用于 `acceptance-report` /
-> `release-checklist` / `release-sql-audit` / `delivery-gate` / `diffs` / `tracks` / `duplicates`。
+> `release-checklist` / `release-sql-audit` / `delivery-gate` / `push-gate` / `diffs` / `tracks` / `duplicates`。
 > 空态：子树内没有需求时返回 `ready=null`（`totals.units=0`），不是 400。
 
 ## 概要设计大纲 / 思维导图（需求管理 → 概要设计 → 文档）
@@ -637,10 +637,10 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/secret-scan?format=md'
 > 所有证据只返回脱敏值与 `[REDACTED:<rule>]` 上下文；JSON / MCP / markdown 都不会回显凭据原文。
 > 只读接口：不写库、不动 revision。
 
-## 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
+## 交付门禁（需求就绪 / 测试验收 / 上线治理 / 代码推送的最终汇总）
 
 ```bash
-# 单节点最终交付结论：来源为 readiness / acceptance / release 三段既有结论
+# 单节点最终交付结论：来源为 readiness / acceptance / release / push 四段既有结论
 curl -s http://127.0.0.1:3210/api/nodes/1/delivery-gate
 
 # 连子树一起判定（挂在项目 / 需求上）
@@ -710,6 +710,36 @@ curl -s 'http://127.0.0.1:3210/api/delivery-snapshots/1?format=md'
 
 > `drifted` **不会改写冻结结论**：它只表示当时的证据已与现状不同。
 > 验收 / 上线审计应同时看「冻结结论」与「当前核对」，不能拿快照冒充实时门禁。
+
+## 代码推送门禁（登记提交是否真的到了远程）
+
+```bash
+# 逐条判定节点下已登记提交是否已 push 到远程
+curl -s http://127.0.0.1:3210/api/nodes/1/push-gate
+
+# 连子树一起判定（挂在项目 / 需求上）
+curl -s 'http://127.0.0.1:3210/api/nodes/1/push-gate?scope=subtree'
+
+# markdown 可直接贴进 issue / 评审记录
+curl -s 'http://127.0.0.1:3210/api/nodes/1/push-gate?format=md'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js push gate "项目A/需求1" [--scope self|subtree] [--format json|md]
+# MCP: commit_push_gate { ref, scope?, format? }
+```
+
+> 单条提交三态：`pushed`（有远程跟踪分支包含它）/ `not_pushed`（本地有、远程没有）/
+> `unknown`（未登记仓库、无远程、或本机解析不出该 sha）。
+> `unknown` **同样阻塞**但不算通过——最危险的失败模式是把「没配仓库」当成「已推送」。
+> 只读本机已有 ref，**不自动 fetch**：若同事已 push 而本机没 fetch，会读成 `not_pushed`
+> （保守方向的误报，提示先 `git fetch`）。没有已登记提交时 `ready=null`。
+>
+> 阻塞项 `reason` 是稳定且可行动的枚举，每个值对应一个修复动作：
+> `no-remote-ref-contains`（先 `git push`）/ `repo-not-registered`（`repo add`）/
+> `repo-path-unset`（`repo update` 补 `local_path`）/ `repo-path-missing`（修正路径）/
+> `git-unavailable`（本机装 git）/ `no-remote`（`git remote add`）/
+> `sha-not-found`（核对 sha 或 `git fetch`）/ `git-error`（看 `detail` 的真实 stderr）。
+> `detail` 优先带真实错误信息，而不是笼统分类文案。
 
 ## 错误码速查
 

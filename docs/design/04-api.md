@@ -36,6 +36,7 @@
 | DELETE | `/api/commits/:cid` | 删除登记 |
 | GET | `/api/commits/:cid/diff` | 单 commit 预览：文件列表 + 每文件 old / new 与 patch |
 | GET | `/api/nodes/:id/diffs?scope=self\|subtree` | 节点（含子树）聚合预览，按 commit / 仓库分组 |
+| GET | `/api/nodes/:id/push-gate` | 代码推送门禁：`?scope=self\|subtree`，`?format=json\|md`。逐条判定**已登记提交是否到了远程**（`pushed` / `not_pushed` / `unknown`）；`unknown` 同样阻塞但**不冒充通过**；只读本机 ref，**不 fetch / 不 push / 不写库、不动 revision**；无已登记提交时 `ready=null`。阻塞项 `reason` 为稳定可行动枚举：`no-remote-ref-contains` / `repo-not-registered` / `repo-path-unset`（未登记本地路径）/ `repo-path-missing`（路径无效）/ `git-unavailable`（本机无 git）/ `no-remote` / `sha-not-found` / `git-error`；`detail` 优先带真实错误信息 |
 | POST | `/api/nodes/:id/merges/precheck` | 合并预检（merge-tree，不落库、不合并） |
 | POST | `/api/nodes/:id/merges` | 显式合并：`{units?, repo?, dryRun?}`，逐仓库预检并合并，返回 `{merged[], conflicts[]}` |
 | GET | `/api/merges?nodeId=&state=` | 合并记录列表（含待处理冲突） |
@@ -115,11 +116,11 @@
 |---|---|---|
 | GET | `/api/nodes/:id/secret-scan` | 文档敏感信息扫描：`?scope=self\|subtree`，`?format=json\|md`。只读扫描节点（含子树）的非空文档，命中 PEM 私钥 / AWS / GitHub / Slack / JWT / 显式密钥赋值等模式时给稳定规则名、脱敏证据与处置建议；高危命中 `ready=false`，仅提示或未命中 `ready=true`，没有非空文档 `ready=null`；**命中原值绝不回显，只读不写库、不动 revision** |
 
-### 交付门禁（需求就绪 / 测试验收 / 上线治理的最终汇总）
+### 交付门禁（需求就绪 / 测试验收 / 上线治理 / 代码推送的最终汇总）
 
 | Method | Path | 说明 |
 |---|---|---|
-| GET | `/api/nodes/:id/delivery-gate` | 交付门禁：`?scope=self\|subtree`，`?format=json\|md`。汇总 `readiness` / `acceptance` / `release` 三个来源，每个来源为 `pass` / `fail` / `not_applicable`；验收来源要求测试全过且验收签收有效（`accepted`），`pending/rejected/stale` 都会阻塞；最终 `decision` 为 `ready` / `not_ready` / `unknown`；**纯读聚合，不写库、不动 revision** |
+| GET | `/api/nodes/:id/delivery-gate` | 交付门禁：`?scope=self\|subtree`，`?format=json\|md`。汇总 `readiness` / `acceptance` / `release` / `push` 四个来源，每个来源为 `pass` / `fail` / `not_applicable`；验收来源要求测试全过且验收签收有效（`accepted`），`pending/rejected/stale` 都会阻塞；`push` 的 `not_pushed` / `unknown` 同样阻塞；最终 `decision` 为 `ready` / `not_ready` / `unknown`；**纯读聚合，不写库、不动 revision** |
 | POST | `/api/nodes/:id/delivery-snapshots` | 冻结当前交付证据快照：`{scope?, note?}`；保存完整门禁 JSON + SHA-256 指纹，返回快照（含 `drift.status=current`）；显式写入，只递增一次 revision |
 | GET | `/api/nodes/:id/delivery-snapshots` | 交付快照列表（倒序）：`?scope=self\|subtree`、`?limit=`；每条实时核对并返回 `drift.status=current\|drifted` |
 | GET | `/api/delivery-snapshots/:sid` | 单条快照：`?format=json\|md`；冻结结论原样返回，核对状态与时点结论分开展示 |
@@ -173,11 +174,11 @@
 `details.allowed = ["self","subtree"]`。**不做静默降级**——早期实现把非 `subtree` 的值吞成 `self`，
 会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
 适用接口：`/readiness`、`/mindmap`、`/acceptance-report`、`/release-checklist`、`/release-sql-audit`、`/delivery-gate`、
-`/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
+`/push-gate`、`/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
 
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
 这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `mindmap` / `code_audit` / `business_gate` / `secret_scan` / `acceptance_report` / `delivery_gate` /
-`release_checklist` / `release_sql_audit` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
+`release_checklist` / `release_sql_audit` / `commit_push_gate` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
 概要设计大纲（`design_outline` / `design_outline_apply`）同样吃这套 `scope` / `format` 校验。

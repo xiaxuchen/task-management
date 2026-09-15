@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderSecretScanMd, renderDeliveryGateMd, renderDeliverySnapshotMd, renderDesignOutlineMd, applyDesignOutline, parseMaxParallelCli } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, renderTestReportMd, runReleaseChecks, renderReleaseChecklistMd, renderReleaseSqlAuditMd, renderBusinessGateMd, renderReadinessMd, renderMindmapMd, renderCodeAuditMd, getNodeCodeAudit, renderSecretScanMd, renderDeliveryGateMd, renderDeliverySnapshotMd, renderPushGateMd, buildDeliveryGateFull, renderDesignOutlineMd, applyDesignOutline, parseMaxParallelCli } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 import { saveUpload } from './uploads.mjs'
 
@@ -110,6 +110,7 @@ const HELP = `task-board <命令>
   commit list <ref> [--subtree]
   commit diff <cid>                  单个 commit 的 diff（文件列表 + patch）
   commit track <cid>                 检测提交是否已合入测试/预发/上线分支
+  push gate <ref> [--scope self|subtree] [--format json|md]   代码推送门禁（登记提交是否已到远程）
   node diffs <ref> [--scope self|subtree]   节点（含子树）聚合 diff（含来源节点）
   node tracks <ref> [--scope self|subtree]  节点（含子树）分支合并状态聚合
   repo list
@@ -155,6 +156,7 @@ const HELP = `task-board <命令>
   delivery snapshot <ref> [--scope self|subtree] [--note <备注>]    冻结当前交付证据快照
   delivery snapshots <ref> [--scope self|subtree] [--limit N]       交付快照列表（含当前 / 已偏离核对）
   delivery snapshot-get <sid> [--format json|md]                    读取单条交付快照
+  push gate <ref> [--scope self|subtree] [--format json|md]        代码推送门禁（登记提交是否已在远程）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
   release item upsert <ref> --name <名> [--kind config|sql|check] [--content <内容>|--file <path>] [--rollback <回滚>] [--status s] [--optional]
   release item update <rid> [--name n] [--kind k] [--content c] [--rollback r] [--status s] [--required|--optional]
@@ -607,9 +609,7 @@ export async function run(argv) {
     // ---------- 交付门禁（`delivery gate <ref>`） ----------
     case 'delivery gate': {
       const node = store.resolveRef(ref)
-      const gate = store.buildDeliveryGate(node.id, {
-        scope: values.scope
-      })
+      const gate = await buildDeliveryGateFull(store, node.id, { scope: values.scope })
       if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderDeliveryGateMd(gate) + '\n')
       else json(gate)
       break
@@ -848,6 +848,12 @@ export async function run(argv) {
     case 'node tracks':
       json(await getNodeTracks(store, ref, { scope: values.scope, branches: !!values.branches }))
       break
+    case 'push gate': {
+      const gate = await getNodePushGate(store, ref, { scope: values.scope })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderPushGateMd(gate) + '\n')
+      else json(gate)
+      break
+    }
     case 'repo list':
       json(store.listRepos())
       break
