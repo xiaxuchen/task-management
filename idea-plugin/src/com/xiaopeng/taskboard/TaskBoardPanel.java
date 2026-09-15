@@ -1772,7 +1772,11 @@ public class TaskBoardPanel extends JPanel {
             return MarkdownRenderer.toPage(markdown, dark);
         } catch (Throwable t) {
             diag("Markdown 渲染失败，降级纯文本：" + t);
-            return MarkdownRenderer.toPage("（Markdown 渲染失败，已降级）\n\n```\n" + markdown + "\n```", dark);
+            // 最后一道兜底：不再调用渲染器，直接转义成 <pre>，保证自己不会二次抛异常
+            return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>"
+                    + "<pre style=\"white-space:pre-wrap;font-family:Menlo,monospace;font-size:12px;padding:12px\">"
+                    + MarkdownRenderer.escapeHtml(markdown)
+                    + "</pre></body></html>";
         }
     }
 
