@@ -139,6 +139,38 @@ export function createApp({ store }) {
     })
   )
 
+  // ---------- 需求管理（需求条目 / 状态流转 / 文档关联） ----------
+
+  app.get(
+    '/api/requirements',
+    wrap((req, res) => {
+      const projectId = req.query.projectId ? Number(req.query.projectId) : null
+      const status = req.query.status || null
+      res.json({
+        revision: store.getRevision(),
+        summary: store.requirementSummary({ projectId }),
+        items: store.listRequirements({ projectId, status })
+      })
+    })
+  )
+
+  app.post(
+    '/api/requirements',
+    wrap((req, res) => {
+      const { projectId, projectPath = null, name, attrs } = req.body || {}
+      const pid = projectPath ? store.resolveRef(projectPath).id : projectId
+      res.status(201).json(store.createRequirement({ projectId: pid, name, attrs, actor: actorOf(req) }))
+    })
+  )
+
+  app.post(
+    '/api/requirements/:id/transition',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(store.transitionRequirement(node.id, { status: (req.body || {}).status, actor: actorOf(req) }))
+    })
+  )
+
   app.post(
     '/api/nodes/upsert',
     wrap((req, res) => {

@@ -120,6 +120,50 @@ export function createMcpServer({ store }) {
     }
   )
 
+  // ---------- 需求管理（需求条目 / 状态流转 / 文档关联） ----------
+
+  server.tool(
+    'requirement_list',
+    '需求条目列表：含项目、属性、文档关联状态、就绪结论与可流转状态',
+    { project: z.string().optional(), status: z.enum(['todo', 'doing', 'testing', 'done', 'cancelled']).optional() },
+    mcpValidate(async ({ project, status }) => {
+      const projectId = project ? store.resolveRef(project).id : null
+      const data = {
+        revision: store.getRevision(),
+        summary: store.requirementSummary({ projectId }),
+        items: store.listRequirements({ projectId, status: status || null })
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+    })
+  )
+
+  server.tool(
+    'requirement_create',
+    '新建需求条目并关联「需求内容 / 概要设计」两份文档',
+    { project: z.string(), name: z.string(), attrs: z.record(z.string()).optional() },
+    mcpValidate(async ({ project, name, attrs }) => {
+      const projectId = store.resolveRef(project).id
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(store.createRequirement({ projectId, name, attrs, actor: 'ai' }), null, 2)
+          }
+        ]
+      }
+    })
+  )
+
+  server.tool(
+    'requirement_transition',
+    '需求状态流转（todo→doing→testing→done；未完成前可 cancelled；cancelled→todo 可恢复）',
+    { ref: z.string(), status: z.enum(['todo', 'doing', 'testing', 'done', 'cancelled']) },
+    mcpValidate(async ({ ref, status }) => {
+      const node = store.resolveRef(ref)
+      return { content: [{ type: 'text', text: JSON.stringify(store.transitionRequirement(node.id, { status, actor: 'ai' }), null, 2) }] }
+    })
+  )
+
   // ---------- 属性 ----------
 
   server.tool(
