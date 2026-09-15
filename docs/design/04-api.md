@@ -99,6 +99,7 @@
 | PATCH | `/api/release-items/:rid` | 更新上线项 `{name?, kind?, content?, rollback?, status?, required?}` |
 | DELETE | `/api/release-items/:rid` | 删除上线项 |
 | GET | `/api/nodes/:id/release-checklist` | 上线检查清单：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴上线单）|
+| GET | `/api/nodes/:id/release-sql-audit` | 上线 SQL 风险审查：`?scope=self\|subtree`，`?format=json\|md`。静态扫描 `kind=sql` 上线项正文：`DROP TABLE/DATABASE` / `TRUNCATE` / 无 `WHERE` 的 `UPDATE` / `DELETE` 为高危（`ready=false`），`DROP COLUMN` / 缺回滚为提示（不阻塞）；无 SQL 项时 `ready=null`；**纯读聚合，不写库、不动 revision** |
 | POST | `/api/nodes/:id/release-checks` | 派单上线前置检查：`{caseIds?, scope?, prompt?, agent?, model?, cwd?, dryRun?}`；按 scope（`self`/`subtree`）挑 `code_check`/`biz_check`/`release_check` 用例，为每条开 `running` 报告（dryRun 只回清单与提示词） |
 
 ### agent 运行时 / 会话 / 任务
@@ -132,10 +133,10 @@
 `details.allowed = ["self","subtree"]`。**不做静默降级**——早期实现把非 `subtree` 的值吞成 `self`，
 会在「本节点就绪、子树未就绪」时把放行门禁的结论从「未就绪」翻成「就绪」。
 适用接口：`/readiness`、`/acceptance-report`、`/release-checklist`、`/delivery-gate`、
-`/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
+`/release-sql-audit`、`/diffs`、`/tracks`、`/duplicates`，以及 `release-checks` 请求体的 `scope`。
 
 **`format` 参数值域（带 md 渲染的读接口）**：只接受 `json` / `md`，缺省（不传）等价于 `json`；
 其余取值（如 `xml`、空串）一律 `400 VALIDATION_FAILED`，`details.allowed = ["json","md"]`。
 MCP 工具同样返回 `isError` + `VALIDATION_FAILED` 文本，不泄漏 SDK 的 `-32602` 协议错误。
 这条口径横切所有吃 `scope` 的 MCP 工具：`requirement_readiness` / `acceptance_report` / `delivery_gate` /
-`release_checklist` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。
+`release_checklist` / `release_sql_audit` / `node_diffs` / `node_tracks` / `commit_duplicates` / `release_check`。

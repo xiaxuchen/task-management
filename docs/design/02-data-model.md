@@ -188,6 +188,7 @@ v1 中所有属性值均由用户编辑；系统自动写入的数据只有 MR �
   "gitlab": { "base_url": "", "token": "" },
   "docPresets": { "project": ["描述"], "requirement": ["需求内容"], "subreq": ["需求内容"], "group": [], "task": [], "defect": ["描述", "复现步骤"] },
   "readiness": { "requirementDoc": "需求内容", "designDoc": "概要设计", "caseKinds": ["regression", "acceptance"] },
+  "releaseSqlAudit": { "rules": [ { "key": "drop_table", "severity": "danger" } ], "requireRollback": true },
   "worktreeRoot": "",
   "branchTemplate": "{base_branch}-{slug}",
   "status": {
@@ -201,6 +202,10 @@ v1 中所有属性值均由用户编辑；系统自动写入的数据只有 MR �
 
 `readiness` 是**需求就绪门禁**的口径（见 §4.16）：文档名与「视为可回归」的用例类型都是值域，
 团队改用「详细设计」等命名时只改配置、不改代码。
+
+`releaseSqlAudit` 是**上线 SQL 风险审查**的规则集（见 §4.17）：每条规则含 `key` / `severity`（`danger` 阻塞、
+`warn` 仅提示）/ `pattern`（正则，大小写不敏感），`requireRollback` 控制「缺回滚脚本是否记提示」。
+团队可按需增删规则，不改代码。
 
 ### 4.11 merges（合并尝试与冲突）
 
@@ -424,3 +429,24 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 判定单元只有 `requirement` / `subreq` 两类（项目不承载需求正文，任务组 / 子任务 / 缺陷是拆分产物）；
 `scope=subtree` 在子树里挑出这两类逐单元判定。结论口径：全部单元就绪 → `ready=true`，
 任一未就绪 → `false`，**无待判定需求 → `null`**（不用 `false` 冒充未就绪）。
+
+### 4.17 上线 SQL 风险审查（上线检查的静态前置判定，不落表）
+
+上线治理的 `release_items`（§4.15）能回答「上线项做完了没有」，但不回答 `kind=sql` 的**内容本身**
+有没有风险。本节补这层静态判定：把节点（含子树）下的 SQL 上线项正文扫一遍，给出「有没有高危写法」的结论。
+
+审查**不建表**：它从既有 `release_items.content` 推导结论，落库会造成两处真相。
+由 `buildReleaseSqlAudit(nodeId, { scope })` 纯读聚合，**不写库、不动 revision**。
+
+**规则命中分两级严重度**（规则集来自 `config.releaseSqlAudit.rules`）：
+
+| 严重度 | 规则（默认） | 对结论的影响 |
+|---|---|---|
+| `danger` | `drop_table`（DROP TABLE/DATABASE）、`truncate`、`delete_without_where`、`update_without_where` | 阻塞：任一命中 → `ready=false`，进 `blockers` |
+| `warn` | `drop_column`、`sql_no_rollback`（缺回滚脚本） | 仅提示：进 `warnings`，不改变 `ready` |
+
+无 `WHERE` 判定按**语句边界**（按 `;` 切分）在单条语句内进行，避免同段带 `WHERE` 的语句洗白无条件的 `UPDATE` / `DELETE`；
+匹配前先剥离行注释与块注释，避免注释里的关键字误伤。大小写不敏感。
+
+结论口径：范围内**无 `kind=sql` 上线项 → `ready=null`**（不用 `false` 冒充未通过，也不当绿灯）；
+有 SQL 项且无 `danger` → `true`；任一 `danger` → `false`。

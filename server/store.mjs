@@ -70,6 +70,21 @@ const DEFAULT_READINESS = {
 }
 
 /**
+ * 上线 SQL 风险审查规则（与 config.releaseSqlAudit 默认值一致）。
+ * `danger` 阻塞上线；`warn` 只提示。`requireNoWhere` 表示「语句内出现该模式且整条语句无 WHERE」才命中。
+ */
+const DEFAULT_RELEASE_SQL_AUDIT = {
+  rules: [
+    { key: 'drop_table', severity: 'danger', pattern: '\\bdrop\\s+(table|database)\\b', label: 'DROP TABLE / DROP DATABASE（不可逆）' },
+    { key: 'truncate', severity: 'danger', pattern: '\\btruncate\\b', label: 'TRUNCATE（清空表数据）' },
+    { key: 'delete_without_where', severity: 'danger', pattern: '\\bdelete\\s+from\\b', requireNoWhere: true, label: 'DELETE 缺少 WHERE 限定' },
+    { key: 'update_without_where', severity: 'danger', pattern: '\\bupdate\\b', requireNoWhere: true, label: 'UPDATE 缺少 WHERE 限定' },
+    { key: 'drop_column', severity: 'warn', pattern: '\\bdrop\\s+column\\b', label: 'DROP COLUMN（结构不可逆）' }
+  ],
+  requireRollback: true
+}
+
+/**
  * 解析 agent 输出里的逐条测试结论。
  * 契约来自 ops.composeTestPrompt / composeReleaseCheckPrompt：
  *   `<用例名>: PASS|FAIL|BLOCKED - <依据>`
@@ -110,6 +125,7 @@ function parseRunVerdicts(text) {
 export function createStore(db, options = {}) {
   const docPresets = options.docPresets || DEFAULT_DOC_PRESETS
   const readiness = options.readiness || DEFAULT_READINESS
+  const releaseSqlAudit = options.releaseSqlAudit || DEFAULT_RELEASE_SQL_AUDIT
   const stmt = (sql) => db.prepare(sql)
 
   let bumpDepth = 0
@@ -1608,6 +1624,144 @@ export function createStore(db, options = {}) {
     }
   }
 
+  // ---------- 上线 SQL 风险审查（上线检查的静态前置判定） ----------
+  //
+  // 上线治理能回答「上线项做完了没有」，但不回答 kind=sql 的内容本身有没有风险。
+  // 这里把节点（含子树）下的 SQL 上线项正文做**静态规则扫描**，给出「有没有高危写法」的结论。
+  // 与 acceptance_report / readiness / release_checklist 同一条「只读聚合」原则：
+  // 纯读、不落表、不 bump revision——结论从已登记内容实时推导，避免第二份真相。
+
+  /** 剥离行注释与块注释，避免注释里的关键字误伤（见 design R4）。 */
+  function stripSqlComments(sql) {
+    return String(sql ?? '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/--[^\n\r]*/g, ' ')
+  }
+
+  /** 按 `;` 切分语句；无分号的脚本作为单条语句处理。 */
+  function splitSqlStatements(sql) {
+    return stripSqlComments(sql)
+      .split(';')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+
+  /**
+   * 单条语句命中哪些规则。
+   * `requireNoWhere` 的规则只在**整条语句内**没有 WHERE 时命中——不能全表搜 where，
+   * 否则同一段里带了 WHERE 的 UPDATE 会把无条件的 DELETE 洗白（见 design R3）。
+   */
+  function auditSqlStatement(statement, rules) {
+    const lower = statement.toLowerCase()
+    const hasWhere = /\bwhere\b/.test(lower)
+    const hits = []
+    for (const rule of rules) {
+      let re
+      try {
+        re = new RegExp(rule.pattern, 'i')
+      } catch {
+        continue
+      }
+      if (!re.test(lower)) continue
+      if (rule.requireNoWhere && hasWhere) continue
+      hits.push({
+        key: rule.key,
+        severity: rule.severity === 'warn' ? 'warn' : 'danger',
+        label: rule.label || rule.key,
+        statement
+      })
+    }
+    return hits
+  }
+
+  /**
+   * 上线 SQL 风险审查：按节点（self / subtree）扫 kind=sql 上线项，给出「能否继续」的确定结论。
+   * 纯读聚合。danger 命中 → ready=false；仅 warn → ready=true；范围内无 SQL 项 → ready=null。
+   */
+  function buildReleaseSqlAudit(nodeId, { scope = 'self' } = {}) {
+    const root = rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    const ids = effectiveScope === 'subtree' ? subtreeIds(nodeId) : [nodeId]
+    const rules =
+      Array.isArray(releaseSqlAudit.rules) && releaseSqlAudit.rules.length
+        ? releaseSqlAudit.rules
+        : DEFAULT_RELEASE_SQL_AUDIT.rules
+    const requireRollback = releaseSqlAudit.requireRollback !== false
+
+    const sqlItems = ids.flatMap((id) => listReleaseItems(id, { kind: 'sql' }))
+
+    const items = sqlItems.map((item) => {
+      const hits = []
+      for (const statement of splitSqlStatements(item.content)) {
+        hits.push(...auditSqlStatement(statement, rules))
+      }
+      if (requireRollback && !String(item.rollback ?? '').trim()) {
+        hits.push({ key: 'sql_no_rollback', severity: 'warn', label: '缺少回滚脚本', statement: '' })
+      }
+      const dangerHits = hits.filter((h) => h.severity === 'danger')
+      const warnHits = hits.filter((h) => h.severity === 'warn')
+      return {
+        id: item.id,
+        nodeId: item.nodeId,
+        name: item.name,
+        status: item.status,
+        required: item.required,
+        content: item.content,
+        rollback: item.rollback,
+        ok: dangerHits.length === 0,
+        dangerCount: dangerHits.length,
+        warnCount: warnHits.length,
+        hits
+      }
+    })
+
+    const dangerItems = items.filter((i) => i.dangerCount > 0)
+    const warnItems = items.filter((i) => i.warnCount > 0)
+    const riskCount = items.reduce((n, i) => n + i.dangerCount, 0)
+    const warningCount = items.reduce((n, i) => n + i.warnCount, 0)
+
+    const blockers = dangerItems.flatMap((i) =>
+      i.hits
+        .filter((h) => h.severity === 'danger')
+        .map((h) => ({
+          id: i.id,
+          nodeId: i.nodeId,
+          name: i.name,
+          key: h.key,
+          label: h.label,
+          statement: h.statement
+        }))
+    )
+    const warnings = warnItems.flatMap((i) =>
+      i.hits
+        .filter((h) => h.severity === 'warn')
+        .map((h) => ({
+          id: i.id,
+          nodeId: i.nodeId,
+          name: i.name,
+          key: h.key,
+          label: h.label,
+          statement: h.statement
+        }))
+    )
+
+    return {
+      node: { id: root.id, name: root.name, type: root.type },
+      scope: effectiveScope,
+      ready: items.length === 0 ? null : dangerItems.length === 0,
+      totals: {
+        sqlItems: items.length,
+        danger: dangerItems.length,
+        risky: riskCount,
+        warned: warnItems.length,
+        warnings: warningCount
+      },
+      items,
+      blockers,
+      warnings
+    }
+  }
+
   // ---------- 交付门禁（汇总需求就绪 / 验收 / 上线三段结论） ----------
   //
   // 前三个功能各自回答一段问题：需求就绪门禁=能不能进测试，验收报告=测试过没过，
@@ -2566,6 +2720,8 @@ export function createStore(db, options = {}) {
     deleteReleaseItem,
     reorderReleaseItems,
     buildReleaseChecklist,
+    // 上线 SQL 风险审查（上线检查的静态前置判定）
+    buildReleaseSqlAudit,
     // 交付门禁（汇总需求就绪 / 验收 / 上线结论）
     buildDeliveryGate,
     // agent 运行时管理
