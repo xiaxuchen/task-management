@@ -57,6 +57,41 @@ const q = (home, sql) => {
   }
 }
 
+/**
+ * 逐行关系断言用的稳定键映射：把「子 → 父」按业务键（名称/标题）而不是 id 表达，
+ * 这样即使导入重建了 id，也能逐行比对关系有没有丢。
+ */
+const relationMap = (home, sql) => {
+  const db = new DatabaseSync(path.join(home, 'data.db'))
+  try {
+    return db
+      .prepare(sql)
+      .all()
+      .map((r) => `${r.child}=>${r.parent ?? 'NULL'}`)
+      .sort()
+  } finally {
+    db.close()
+  }
+}
+
+/** nodes 的「子名称 → 父名称」关系（按名称稳定，不依赖 id） */
+const nodeRelations = (home) =>
+  relationMap(
+    home,
+    `SELECT c.name AS child, p.name AS parent
+       FROM nodes c LEFT JOIN nodes p ON p.id = c.parent_id
+      ORDER BY c.name`
+  )
+
+/** agent_runs 的重试链关系：用 prompt 作为稳定键（parent_run_id 指向父 run） */
+const runRelations = (home) =>
+  relationMap(
+    home,
+    `SELECT c.prompt AS child, p.prompt AS parent
+       FROM agent_runs c LEFT JOIN agent_runs p ON p.id = c.parent_run_id
+      ORDER BY c.prompt`
+  )
+
 // ---------- 表清单登记（回归：新增表不再静默丢） ----------
 
 test('snapshot-tables：被排除的表都必须写明理由', () => {
@@ -180,6 +215,8 @@ test('快照往返：父子关系与外键在重映射后仍然完整', async (t
   await run('scripts/export-snapshot.mjs', [snapPath], src)
   await run('scripts/import-snapshot.mjs', [snapPath], dst)
 
+  // 逐行关系断言（不能只看行数 / 孤儿数：parent_id 被写成 NULL 时两者都发现不了）
+  assert.deepEqual(nodeRelations(dst), nodeRelations(src), 'nodes.parent_id 关系在导入后发生变化')
   assert.equal(
     q(dst, 'SELECT COUNT(*) c FROM nodes WHERE parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM nodes)')[0].c,
     0,
@@ -191,6 +228,110 @@ test('快照往返：父子关系与外键在重映射后仍然完整', async (t
   assert.ok(rep.case_id != null, 'test_reports.case_id 在重映射后丢失')
   assert.ok(rep.run_id != null, 'test_reports.run_id 在重映射后丢失')
   assert.equal(q(dst, 'SELECT COUNT(*) c FROM agent_run_messages m JOIN agent_runs r ON r.id = m.run_id')[0].c, 1)
+})
+
+// ---------- 自引用表：这两条是高级测试复验退回的缺陷回归 ----------
+
+test('自引用回归：子节点 id 小于父节点 id 时 parent_id 不得被置空（原缺陷：7 条关系丢失）', async (t) => {
+  const src = makeHome(t)
+  const dst = makeHome(t)
+  await initHome(src)
+  await initHome(dst)
+
+  // 先建子节点、后建父节点 → 子 id 必然小于父 id。
+  // 旧实现按 id 升序插入，插子节点时映射表里还没有父 id，parent_id 会被静默写成 NULL。
+  await seed(
+    src,
+    `
+    import { openDb } from './server/db.mjs'
+    import { createStore } from './server/store.mjs'
+    const db = openDb(); const s = createStore(db)
+    const project = s.createNode({ type: 'project', name: 'P' })
+    const req = s.createNode({ parentId: project.id, type: 'requirement', name: 'R' })
+    // 子节点先创建：id 更小（subreq 可直接挂 requirement）
+    const childA = s.createNode({ parentId: req.id, type: 'subreq', name: 'childA' })
+    const childB = s.createNode({ parentId: req.id, type: 'subreq', name: 'childB' })
+    // 父节点后创建：id 更大（group 也可挂 requirement）；把两个早创建的子节点挂到它上面
+    const lateParent = s.createNode({ parentId: req.id, type: 'group', name: 'lateParent' })
+    s.updateNode(childA.id, { parentId: lateParent.id })
+    s.updateNode(childB.id, { parentId: lateParent.id })
+    `
+  )
+
+  // 前置断言：源库里确实是「子 id < 父 id」，否则用例没测到目标场景
+  const srcRows = q(
+    src,
+    "SELECT c.id cid, p.id pid FROM nodes c JOIN nodes p ON p.id = c.parent_id WHERE c.name LIKE 'child%'"
+  )
+  assert.equal(srcRows.length, 2)
+  for (const r of srcRows) assert.ok(r.cid < r.pid, `前置条件不成立：child ${r.cid} 应小于 parent ${r.pid}`)
+
+  const snapPath = path.join(src, 'snap.json')
+  await run('scripts/export-snapshot.mjs', [snapPath], src)
+  await run('scripts/import-snapshot.mjs', [snapPath], dst)
+
+  // 逐行关系断言：这是本缺陷的核心，旧实现会在这里挂掉
+  assert.deepEqual(
+    nodeRelations(dst),
+    nodeRelations(src),
+    '子 id 小于父 id 时 parent_id 被置空（关系丢失）'
+  )
+  assert.equal(
+    q(dst, "SELECT COUNT(*) c FROM nodes WHERE name LIKE 'child%' AND parent_id IS NULL")[0].c,
+    0,
+    '子节点的 parent_id 被静默写成 NULL'
+  )
+})
+
+test('自引用回归：agent_runs.parent_run_id 在「父 run 后创建 / 子 id 更小」时不得被置空', async (t) => {
+  const src = makeHome(t)
+  const dst = makeHome(t)
+  await initHome(src)
+  await initHome(dst)
+
+  // 直接构造重试链：先插子 run（id 小、parent_run_id 指向还不存在的 id），再插父 run。
+  // 这样即使按 id 升序插入，子 run 也被先插入，旧实现会把 parent_run_id 写成 NULL。
+  await seed(
+    src,
+    `
+    import { openDb } from './server/db.mjs'
+    import { createStore } from './server/store.mjs'
+    const db = openDb(); const s = createStore(db)
+    const p = s.createNode({ type: 'project', name: 'P' })
+    const now = new Date().toISOString()
+    // 造「父 run 后创建」的合法数据形态：现实里这种链来自 id 复用 / 跨库合并，
+    // 插入顺序上父 run 还不存在，所以这里临时关掉外键校验来构造源库状态。
+    db.exec('PRAGMA foreign_keys = OFF')
+    // 子 run：id=100，parent_run_id 先指向未来才会创建的父 run id=101
+    db.prepare(
+      'INSERT INTO agent_runs (id,node_id,agent,model,prompt,status,attempt,parent_run_id,started_at) VALUES (?,?,?,?,?,?,?,?,?)'
+    ).run(100, p.id, 'echo', 'm', 'retry-child', 'running', 2, 101, now)
+    // 父 run：id=101（后创建，id 更大）
+    db.prepare(
+      'INSERT INTO agent_runs (id,node_id,agent,model,prompt,status,attempt,started_at) VALUES (?,?,?,?,?,?,?,?)'
+    ).run(101, p.id, 'echo', 'm', 'retry-parent', 'success', 1, now)
+    db.exec('PRAGMA foreign_keys = ON')
+    `
+  )
+
+  const srcRows = q(src, 'SELECT c.id cid, p.id pid FROM agent_runs c JOIN agent_runs p ON p.id = c.parent_run_id')
+  assert.equal(srcRows.length, 1)
+  assert.ok(srcRows[0].cid < srcRows[0].pid, '前置条件：子 run 的 id 应小于父 run')
+
+  const snapPath = path.join(src, 'snap.json')
+  await run('scripts/export-snapshot.mjs', [snapPath], src)
+  await run('scripts/import-snapshot.mjs', [snapPath], dst)
+
+  assert.deepEqual(
+    runRelations(dst),
+    runRelations(src),
+    'agent_runs.parent_run_id 重试链在导入后发生变化'
+  )
+  assert.equal(
+    q(dst, "SELECT COUNT(*) c FROM agent_runs WHERE prompt = 'retry-child' AND parent_run_id IS NULL")[0].c,
+    0,
+    '子 run 的 parent_run_id 被静默写成 NULL'
+  )
 })
 
 test('快照往返：revision 与文档正文按原值恢复', async (t) => {

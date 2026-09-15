@@ -192,6 +192,7 @@ release check "项目A/需求1" [--scope subtree] [--dry-run] [--no-wait]   # �
 | **Vditor 自动保存不触发** | Vditor 的 `input` 回调**触发时机不可靠**（实测输入后数秒仍未回调）。`DocPane.vue` 用 900ms **轮询** `getValue()` 与已存内容比对来驱动保存；轮询必须在 `after` 回调里启动（构造后立即 `getValue()` 会静默失效）；防抖定时器只能在「内容真正变化」时重置，否则会被轮询无限推迟 |
 | **Vditor 资源 404** | 路径规则是 `${cdn}/dist/js/...`，物理目录必须落在 `web/public/vditor/dist`（配 `cdn='/vditor'`）；`npm install` / `npm run build` 会自动同步 |
 | **快照悄悄丢表** | `snapshot:export` 曾只导最早 9 张表，新增的 `test_cases` / `release_items` / `comments` / `agent_*` 等被静默丢掉（导出/导入都不报错）。现在表集合从 schema 推导、新增表自动纳入，无需人工登记；加表后跑 `npm test`（`test/snapshot.test.mjs` 断言覆盖与往返）。别再加手工清单 |
+| **快照导入把关系写成 NULL** | 自引用列（`nodes.parent_id` / `agent_runs.parent_run_id`）**不能边插边解析**：父行 id 不保证小于子行（真实库就有 7 条「子 id < 父 id」），先插入的子行找不到父 id，合法外键被静默写成 `NULL`。**`NULL` 是合法外键值，行数守恒与 `IS NOT NULL` 孤儿检查都测不出来**——必须「先插入全部行、同一事务内再统一回填」，并用逐行关系断言（`test/snapshot.test.mjs`）验证。外键/关系类数据别用行数代替关系断言 |
 | **Express 5 通配符** | 不支持 `app.get('*')`；SPA 回退用 `app.use` 中间件判断 `req.path` 前缀 |
 | **revision 语义** | 一次操作只递增 1；组合写入（建节点 + 写属性 + 预置文档）用 `withoutBump` 包裹 |
 | **路径引用歧义** | 同级存在同名节点时用路径会 409 `PATH_AMBIGUOUS`，改用 `id` |

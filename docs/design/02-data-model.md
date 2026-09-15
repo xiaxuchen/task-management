@@ -439,7 +439,15 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 | 外键映射 | 直接读 `PRAGMA foreign_key_list`，统一按旧 id → 新 id 重建 |
 | 有意排除 | `EXCLUDED_TABLES` + 必须写明的理由（目前只有 `meta`：`revision` 单独对齐，其余键打开库时重建）|
 | 快照版本 | `version: 2`，自带 `plan`；导入 v1 老快照时缺表显式告警（列出将被清空的表）|
-| 自引用表 | `nodes.parent_id` / `agent_runs.parent_run_id` 标 `selfReferencing`，按 id 升序插入保证映射命中 |
+| 自引用表 | `nodes.parent_id` / `agent_runs.parent_run_id` 由 `selfReferencing` 标出；导入**分两阶段**——插入时先留空，全部行插完再统一回填（不依赖 id 顺序，见下）|
+
+**自引用列必须「先插入、后回填」**：`nodes.parent_id` / `agent_runs.parent_run_id` 指向本表，
+父行的 id 不保证小于子行——父节点可能后创建（真实库里就有 7 条「子 id < 父 id」的记录）。
+若边插边解析映射（哪怕按 id 升序排序），先插入的子行在映射表里还找不到父 id，
+会把合法外键**静默写成 `NULL`**：行数守恒、`IS NOT NULL` 孤儿检查都发现不了，
+只有逐行关系断言才能测出。因此导入分两阶段：第一阶段插入全部行（自引用列留空），
+第二阶段统一回填。关联 UT：`test/snapshot.test.mjs` 的「子节点 id 小于父节点 id」与
+「父 run 后创建」两条回归用例。
 
 历史缺陷（XPX-151）：清单曾硬编码在两处且停在新库最早的 9 张表，
 新增的 `test_cases` / `test_reports` / `release_items` / `comments` / `agent_*` 等

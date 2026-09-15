@@ -85,18 +85,55 @@ try {
   }
 
   // 按计划顺序（外键依赖在前）逐表重建。表集合与外键都来自 schema，新增表无需改这里。
-  for (const { name, fks, selfReferencing } of PLAN) {
-    // 自引用表（nodes.parent_id / agent_runs.parent_run_id）按 id 升序插入，
-    // 保证被引用行先于引用行，映射才能命中。
-    const rows = [...(snap.tables[name] || [])]
-    if (selfReferencing) rows.sort((a, b) => a.id - b.id)
+  //
+  // 自引用列（nodes.parent_id / agent_runs.parent_run_id）**不能边插边解析**：
+  // 父节点可能比子节点晚插入（例如「父节点后创建」或导入后重新分配 id），
+  // 按 id 升序也修不了——「子 id < 父 id」时先插子节点，映射表里还没有父 id，
+  // 会把合法外键静默写成 NULL（行数守恒、孤儿检查都发现不了）。
+  // 因此分两阶段：先按计划插入全部行，把这些列留空，全部插完后再统一回填。
+  const deferred = []
 
-    for (const r of rows) {
+  for (const { name, fks } of PLAN) {
+    const selfCols = new Set(fks.filter((f) => f.table === name).map((f) => f.column))
+
+    for (const r of [...(snap.tables[name] || [])]) {
       const row = { ...r }
-      for (const fk of fks) row[fk.column] = mapId(fk.table, r[fk.column])
+      for (const fk of fks) {
+        // 自引用列先留空，全部行插入完成后再回填（见下）
+        row[fk.column] = selfCols.has(fk.column) ? null : mapId(fk.table, r[fk.column])
+      }
       const info = insert(name, row)
-      idMaps[name].set(r.id, Number(info.lastInsertRowid))
+      const newId = Number(info.lastInsertRowid)
+      idMaps[name].set(r.id, newId)
+
+      // 记下「新行 → 原本的自引用旧 id」，回填阶段再翻译成新 id
+      if (selfCols.size) {
+        const pending = {}
+        for (const col of selfCols) {
+          if (r[col] != null) pending[col] = r[col]
+        }
+        if (Object.keys(pending).length) deferred.push({ table: name, newId, cols: pending })
+      }
     }
+  }
+
+  // 统一回填自引用列：此时所有行都已插入，映射表完整，父子顺序不再影响结果。
+  const unresolved = []
+  for (const { table, newId, cols } of deferred) {
+    const sets = Object.keys(cols)
+    const sql = `UPDATE ${table} SET ${sets.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`
+    const values = sets.map((c) => {
+      const mapped = mapId(table, cols[c])
+      // 引用在快照里找不到（跨 schema / 数据被裁过）：不能像过去那样静默写 NULL
+      if (mapped == null) unresolved.push(`${table}.${c} 旧 id ${cols[c]}`)
+      return mapped
+    })
+    db.prepare(sql).run(...values, newId)
+  }
+  if (unresolved.length) {
+    console.warn(
+      `[import] 警告：以下自引用关系在快照里找不到目标行，已置空（非静默处理）：${unresolved.join(', ')}。`
+    )
   }
 
   // revision 对齐快照（前端轮询据此刷新）

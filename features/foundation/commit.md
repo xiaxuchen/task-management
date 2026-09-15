@@ -47,3 +47,18 @@
     变异验证：改回旧的 9 张硬编码清单会挂 5 条；`npm test` 252 全绿
   - 文档：`features/foundation/{prd,design}.md`、`docs/design/{02-data-model,08-testing,09-decisions}.md`、
     `AGENTS.md`、`README.md`、`features/README.md`
+- fix(foundation): 修复快照导入的自引用关系丢失——自引用列改为「先插入、后回填」
+  - 缺陷（独立验收退回）：自引用表按 id 升序插入、边插边解析外键，隐含假设父 id 必然小于子 id。
+    真实库有 7 条「子 id < 父 id」（`98/109/119 → 158`、`130/141/148 → 159`、`153 → 160`），
+    先插入子行时映射表里还没有父 id，`parent_id` 被**静默写成 `NULL`**；
+    行数守恒、`IS NOT NULL` 孤儿检查都发现不了（`NULL` 是合法外键值）
+  - 修法：导入改两阶段——第一阶段按计划插入全部行、自引用列先留空；
+    第二阶段在**同一事务内**统一回填（旧 id → 新 id）。不依赖 id 顺序、不做单表特判，
+    `nodes.parent_id` 与 `agent_runs.parent_run_id` 走同一条 schema 驱动的路径
+  - 测试：新增「子节点 id 小于父节点 id」「父 run 后创建」两条回归用例；
+    对 `nodes.parent_id` / `agent_runs.parent_run_id` 改为**逐行关系断言**
+    （按名称/标题映射比对，不依赖 id），不再只看行数与孤儿数
+  - 变异验证：导入端改回「按 id 升序 + 边插边解析」→ 这 2 条挂；修复后 11/11 全绿；
+    真实库导出 → 空库恢复：167 条非空 `parent_id` 与 3 条 agent_runs 引用逐行零差异（含原 7 条）
+  - `npm test` 254 全绿
+  - 文档：`features/foundation/{prd,design}.md`、`docs/design/{02-data-model,08-testing,09-decisions}.md`

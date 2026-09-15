@@ -20,6 +20,9 @@
   （`scripts/snapshot-tables.mjs` 的 `importPlan`，export / import 共用），
   **新增表自动进快照、无需改代码**；被排除的表必须显式写明理由；
   v1 老快照缺表时导入必须显式告警，不得静默清空目标库对应数据。
+- R8 自引用列（`nodes.parent_id` / `agent_runs.parent_run_id`）**恢复后必须与源库逐行一致**：
+  父行 id 不保证小于子行，导入必须「先插入全部行、再统一回填自引用列」，不得依赖 id 顺序；
+  `NULL` 是合法外键值，因此不得只看行数或孤儿计数，必须做逐行关系断言。
 
 ## 3. 验收标准
 
@@ -29,4 +32,6 @@
 - `test/snapshot.test.mjs`：业务表集合 = 真实表 − 显式排除，新增表自动纳入（防未来加表回归）；
   导出 → 导入往返后 `test_cases` / `test_reports` / `release_items` / `comments` / `agent_runs` /
   `agent_run_messages` / `branch_configs` 等此前丢失的表都被保留；父子与外键在旧 id → 新 id 重映射后无孤儿；
-  revision 与文档正文按原值恢复；导入顺序满足外键依赖；v1 快照导入给出缺表告警。
+  对 `nodes.parent_id` / `agent_runs.parent_run_id` 做**逐行关系断言**；单列「子 id < 父 id」
+  与「父节点 / 父 run 后创建」两条自引用回归用例；revision 与文档正文按原值恢复；
+  导入顺序满足外键依赖；v1 快照导入给出缺表告警。
