@@ -1,6 +1,6 @@
 import express from 'express'
 import { AppError, CODES } from './errors.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, approveAndMerge, getMergeStatus, previewMerges, mergeUpstream, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
@@ -542,6 +542,31 @@ export function createApp({ store }) {
         return
       }
       res.json(report)
+    })
+  )
+  app.get(
+    '/api/nodes/:id/acceptance-status',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const status = store.buildAcceptanceStatus(node.id, { scope: req.query.scope })
+      if (store.normalizeFormat(req.query.format) === 'md') {
+        res.type('text/markdown').send(renderAcceptanceStatusMd(status))
+        return
+      }
+      res.json(status)
+    })
+  )
+  app.post(
+    '/api/nodes/:id/acceptance-signoff',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      const b = req.body || {}
+      const signoff = store.upsertAcceptanceSignoff(
+        node.id,
+        { scope: b.scope, decision: b.decision, comment: b.comment ?? null },
+        actorOf(req)
+      )
+      res.json(signoff)
     })
   )
 

@@ -46,6 +46,8 @@ export const TOOLS = [
   'test_report_get',
   'test_report_finish',
   'acceptance_report',
+  'acceptance_status',
+  'acceptance_sign',
   'requirement_readiness',
   'delivery_gate',
   'release_item_list',
@@ -920,6 +922,34 @@ export function renderAcceptanceMd(report) {
   ]
   for (const i of report.items) {
     lines.push(`| ${i.name} | ${i.kind} | ${i.latestStatus} | ${i.latestReportId ?? '—'} |`)
+  }
+  return lines.join('\n')
+}
+
+/** 验收签收状态导出：把测试证据与业务签收放在同一份可贴进 issue / 验收记录的记录里。 */
+export function renderAcceptanceStatusMd(status) {
+  const t = status.report.totals
+  const stateLabels = {
+    not_applicable: '不适用（没有可验收用例）',
+    pending: '待签收',
+    accepted: '已验收',
+    rejected: '已驳回',
+    stale: '签收已失效'
+  }
+  const lines = [
+    `# 验收签收：${status.node.name}`,
+    '',
+    `- 范围：${status.scope === 'subtree' ? '含子树' : '仅本节点'}`,
+    `- 用例：${t.cases} · 已完结：${t.settled} · 通过：${t.pass} · 未通过：${t.fail + t.blocked + t.error + t.cancelled + t.running + t.notRun}`,
+    `- 签收状态：${stateLabels[status.state] || status.state}`,
+    `- 证据指纹：${status.report.evidenceFingerprint}`
+  ]
+  if (status.signoff) {
+    lines.push(
+      `- 签收人：${status.signoff.signedBy}`,
+      `- 签收时间：${status.signoff.signedAt}`,
+      `- 验收意见：${status.signoff.comment || '—'}`
+    )
   }
   return lines.join('\n')
 }

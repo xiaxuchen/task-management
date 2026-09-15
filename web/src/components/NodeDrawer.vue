@@ -52,6 +52,26 @@
             <el-option label="含子树" value="subtree" />
           </el-select>
         </div>
+        <el-divider content-position="left">验收签收</el-divider>
+        <div class="delivery-head" style="margin-bottom:8px">
+          <el-tag :type="acceptanceTagType(acceptance.state)" effect="plain">{{ acceptanceStateLabel(acceptance.state) }}</el-tag>
+          <span v-if="acceptance.signoff" class="acceptance-meta">
+            {{ acceptance.signoff.signedBy }} · {{ acceptance.signoff.signedAt }}
+          </span>
+        </div>
+        <div v-if="acceptance.signoff && acceptance.signoff.comment" class="acceptance-comment">
+          {{ acceptance.signoff.comment }}
+        </div>
+        <div v-if="acceptance.state === 'not_applicable'" class="acceptance-hint">当前范围没有可验收的测试用例。</div>
+        <div v-else class="acceptance-actions">
+          <el-input v-model="acceptanceComment" size="small" placeholder="验收意见（驳回时建议填写）" style="max-width:320px" />
+          <el-button size="small" type="success" :loading="signingAcceptance" @click="signAcceptance('accepted')">通过验收</el-button>
+          <el-button size="small" type="danger" plain :loading="signingAcceptance" @click="signAcceptance('rejected')">驳回</el-button>
+        </div>
+        <div class="acceptance-evidence">
+          证据：{{ acceptance.report.totals.pass }} 通过 / {{ acceptance.report.totals.cases }} 用例 ·
+          指纹 {{ shortFingerprint(acceptance.report.evidenceFingerprint) }}
+        </div>
         <el-alert
           v-if="gate.decision === 'unknown'"
           type="info"
@@ -203,11 +223,23 @@ const commits = ref([])
 const repos = ref([])
 const deliveryScope = ref('self')
 const gate = ref({ decision: 'unknown', sources: [], blockers: [] })
+const acceptance = ref({ state: 'not_applicable', report: { totals: { cases: 0, pass: 0 }, evidenceFingerprint: '' }, signoff: null })
+const acceptanceComment = ref('')
+const signingAcceptance = ref(false)
 const statusLabels = { todo: '待开始', doing: '进行中', testing: '提测中', done: '已完成', cancelled: '已取消' }
 const typeLabel = (t) => ({ project: '项目', requirement: '需求', subreq: '子需求', group: '任务组', task: '子任务', defect: '缺陷' }[t] || t)
 const deliveryDecisionLabel = (d) => ({ ready: '可交付', not_ready: '不可交付', unknown: '待判定' }[d] || d)
 const deliveryStatusLabel = (s) => ({ pass: '通过', fail: '未通过', not_applicable: '不适用' }[s] || s)
 const deliveryTagType = (s) => ({ ready: 'success', pass: 'success', not_ready: 'danger', fail: 'danger' }[s] || 'info')
+const acceptanceStateLabel = (s) => ({
+  not_applicable: '无验收对象',
+  pending: '待签收',
+  accepted: '已验收',
+  rejected: '已驳回',
+  stale: '签收已失效'
+}[s] || s)
+const acceptanceTagType = (s) => ({ accepted: 'success', rejected: 'danger', stale: 'warning', pending: 'info' }[s] || 'info')
+const shortFingerprint = (v) => (v ? String(v).slice(0, 8) : '—')
 
 const commitForm = ref({ sha: '', repo: '', note: '' })
 const diffVisible = ref(false)
@@ -411,9 +443,34 @@ async function loadDetail() {
 
 async function loadDeliveryGate() {
   try {
-    gate.value = await api.deliveryGate(props.node.id, deliveryScope.value)
+    const [g, a] = await Promise.all([
+      api.deliveryGate(props.node.id, deliveryScope.value),
+      api.acceptanceStatus(props.node.id, deliveryScope.value)
+    ])
+    gate.value = g
+    acceptance.value = a
+    acceptanceComment.value = ''
   } catch {
     gate.value = { decision: 'unknown', sources: [], blockers: [] }
+    acceptance.value = { state: 'not_applicable', report: { totals: { cases: 0, pass: 0 }, evidenceFingerprint: '' }, signoff: null }
+  }
+}
+
+async function signAcceptance(decision) {
+  signingAcceptance.value = true
+  try {
+    await api.acceptanceSign(props.node.id, {
+      decision,
+      scope: deliveryScope.value,
+      comment: acceptanceComment.value || null
+    })
+    ElMessage.success(decision === 'accepted' ? '已完成验收签收' : '已驳回验收')
+    await loadDeliveryGate()
+    emit('updated')
+  } catch (e) {
+    ElMessage.error(e.message || String(e))
+  } finally {
+    signingAcceptance.value = false
   }
 }
 
@@ -476,6 +533,28 @@ watch(() => props.node?.id, loadDetail, { immediate: true })
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+}
+.acceptance-meta {
+  color: #909399;
+  font-size: 12px;
+}
+.acceptance-comment {
+  margin: 0 0 8px;
+  color: #606266;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.acceptance-hint,
+.acceptance-evidence {
+  color: #909399;
+  font-size: 12px;
+}
+.acceptance-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 /* 让 tab 内容撑满抽屉高度，使 DocPane 里的 Vditor 拿到确定高度（否则渲染高度塌陷） */
 :deep(.el-drawer__body) {

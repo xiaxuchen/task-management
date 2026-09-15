@@ -828,6 +828,7 @@ test('交付门禁：全链路（需求就绪 → 测试未跑不可交付 → �
   // 报告回写 pass 后，全链路可交付
   const report = store.createTestReport(r.id, { caseId: testCase.id })
   await patch(`/api/test-reports/${report.id}`, { status: 'pass', summary: '全绿' })
+  await post(`/api/nodes/${r.id}/acceptance-signoff`, { decision: 'accepted', comment: '业务确认通过' })
   gate = await get(`/api/nodes/${r.id}/delivery-gate`)
   assert.equal(gate.decision, 'ready')
   assert.equal(gate.ready, true)

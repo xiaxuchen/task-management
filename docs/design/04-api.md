@@ -73,6 +73,8 @@
 | GET | `/api/test-reports/:rid` | 单条报告详情 |
 | PATCH | `/api/test-reports/:rid` | 回写报告 `{status, summary?, detail?, runId?, overwrite?}`；`running → 终态` 单向，终态同状态幂等；终态互转默认拒绝 `REPORT_STATUS_IMMUTABLE`（409），`overwrite:true` 才覆盖；**自动收尾（`autoFinalized=true`）的终态可无需 `overwrite` 直接改正**；非法 `status` → 400 `VALIDATION_FAILED` |
 | GET | `/api/nodes/:id/acceptance-report` | 验收报告聚合：`?scope=self\|subtree`，`?format=json\|md`（md 直接贴 issue/MR）。分桶总数守恒（`pass+fail+blocked+error+cancelled+running+notRun=cases`）；`running`/`notRun` 不计入通过率分母 |
+| GET | `/api/nodes/:id/acceptance-status` | 验收签收状态：`?scope=self\|subtree`，`?format=json\|md`。返回测试证据、签收结论与 `pending/accepted/rejected/stale`；证据变化让签收自动失效 |
+| POST | `/api/nodes/:id/acceptance-signoff` | 签收 / 驳回验收：`{decision: accepted\|rejected, scope?, comment?}`；绑定当前证据指纹 |
 
 ### 需求就绪门禁（需求管理闭环的前置判定）
 
@@ -84,7 +86,7 @@
 
 | Method | Path | 说明 |
 |---|---|---|
-| GET | `/api/nodes/:id/delivery-gate` | 交付门禁：`?scope=self\|subtree`，`?format=json\|md`。汇总 `readiness` / `acceptance` / `release` 三个来源，每个来源为 `pass` / `fail` / `not_applicable`；最终 `decision` 为 `ready` / `not_ready` / `unknown`（全不适用时 `ready=null`，不伪造成绿灯）；`acceptance` 中 `running`/`notRun` 也视为未取得交付证据；**纯读聚合，不写库、不动 revision** |
+| GET | `/api/nodes/:id/delivery-gate` | 交付门禁：`?scope=self\|subtree`，`?format=json\|md`。汇总 `readiness` / `acceptance` / `release` 三个来源，每个来源为 `pass` / `fail` / `not_applicable`；验收来源要求测试全过且验收签收有效（`accepted`），`pending/rejected/stale` 都会阻塞；最终 `decision` 为 `ready` / `not_ready` / `unknown`；**纯读聚合，不写库、不动 revision** |
 
 聚合类接口的 `scope` / `format` 均为枚举参数：`scope=self|subtree`（缺省 `self`）、`format=json|md`（缺省 `json`）；
 其它取值一律 `400 VALIDATION_FAILED`，三入口不做静默降级。交付门禁的验收来源只聚合**启用中**的测试用例：

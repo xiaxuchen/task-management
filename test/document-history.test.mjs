@@ -276,11 +276,16 @@ test('文档历史快照：导出→导入按新 document id 重映射历史并�
 
   const source = tmp.store.createStore(tmp.openDb(path.join(sourceHome, 'data.db')))
   const p = seedProject(source)
+  const signoffProject = source.createNode({ type: 'project', name: '签收项目' })
   const a = source.createDocument(p.id, 'Alpha', 'a1')
   source.updateDocument(a.id, { content: 'alpha-v2' })
   source.updateDocument(a.id, { content: 'alpha-v3' })
   const b = source.createDocument(p.id, 'Beta', 'b1')
   source.upsertDocument(p.id, '需求内容', 'r1')
+  const signoffCase = source.upsertTestCase(signoffProject.id, { name: '验收用例', prompt: 'p' })
+  const signoffReport = source.createTestReport(signoffProject.id, { caseId: signoffCase.id, status: 'running' })
+  source.finishTestReport(signoffReport.id, { status: 'pass' })
+  source.upsertAcceptanceSignoff(signoffProject.id, { decision: 'accepted', comment: '快照签收' }, 'cli')
   const expected = new Map(source.listDocuments(p.id).map((d) => [d.name, source.listDocumentVersions(d.id).map((v) => v.content)]))
   source.db.close()
 
@@ -303,6 +308,11 @@ test('文档历史快照：导出→导入按新 document id 重映射历史并�
     restored.listDocumentVersions(docs.find((d) => d.name === 'Beta').id).map((v) => v.documentId),
     [docs.find((d) => d.name === 'Beta').id]
   )
+  const restoredProject = restored.resolveRef('签收项目')
+  const restoredSignoff = restored.getAcceptanceSignoff(restoredProject.id)
+  assert.equal(restoredSignoff.decision, 'accepted')
+  assert.equal(restoredSignoff.comment, '快照签收')
+  assert.equal(restored.buildAcceptanceStatus(restoredProject.id).state, 'accepted')
   restored.db.close()
 })
 

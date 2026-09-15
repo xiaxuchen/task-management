@@ -45,6 +45,9 @@ const IMPORT_ORDER = [
   'attr_values',
   'documents',
   'document_versions',
+  'test_cases',
+  'test_reports',
+  'acceptance_signoffs',
   'commits',
   'mrs',
   'merges',
@@ -66,7 +69,7 @@ try {
   for (const t of DELETE_ORDER) db.prepare(`DELETE FROM ${t}`).run()
 
   // 主键重映射：旧 id → 新 id（父子/外键关系靠它重建，不依赖旧 id）
-  const idMaps = { attr_defs: new Map(), repos: new Map(), nodes: new Map(), documents: new Map() }
+  const idMaps = { attr_defs: new Map(), repos: new Map(), nodes: new Map(), documents: new Map(), test_cases: new Map() }
 
   // 1) attr_defs（无外键依赖）
   for (const r of snap.tables.attr_defs || []) {
@@ -108,20 +111,39 @@ try {
     insert('document_versions', { ...r, document_id: documentId })
   }
 
-  // 7) commits / mrs（依赖 nodes）
+  // 7) 回归测试闭环（依赖 nodes；test_reports.case_id 重映射，run_id 不重建）
+  for (const r of snap.tables.test_cases || []) {
+    const info = insert('test_cases', { ...r, node_id: mapNode(r.node_id) })
+    idMaps.test_cases.set(r.id, Number(info.lastInsertRowid))
+  }
+  for (const r of snap.tables.test_reports || []) {
+    insert('test_reports', {
+      ...r,
+      node_id: mapNode(r.node_id),
+      case_id: r.case_id == null ? null : idMaps.test_cases.get(r.case_id) ?? null,
+      run_id: null
+    })
+  }
+
+  // 8) acceptance_signoffs（依赖 nodes；签收随节点重映射）
+  for (const r of snap.tables.acceptance_signoffs || []) {
+    insert('acceptance_signoffs', { ...r, node_id: mapNode(r.node_id) })
+  }
+
+  // 9) commits / mrs（依赖 nodes）
   for (const t of ['commits', 'mrs']) {
     for (const r of snap.tables[t] || []) insert(t, { ...r, node_id: mapNode(r.node_id) })
   }
 
-  // 8) merges（依赖 nodes；repo 存的是仓库名，无需映射）
+  // 10) merges（依赖 nodes；repo 存的是仓库名，无需映射）
   for (const r of snap.tables.merges || []) insert('merges', { ...r, node_id: mapNode(r.node_id) })
 
-  // 9) unit_repos（依赖 nodes + repos）
+  // 11) unit_repos（依赖 nodes + repos）
   for (const r of snap.tables.unit_repos || []) {
     insert('unit_repos', { ...r, node_id: mapNode(r.node_id), repo_id: idMaps.repos.get(r.repo_id) ?? null })
   }
 
-  // 10) revision 对齐快照（前端轮询据此刷新）
+  // 12) revision 对齐快照（前端轮询据此刷新）
   db.prepare("UPDATE meta SET value = ? WHERE key = 'revision'").run(String(snap.revision ?? 0))
 
   db.exec('COMMIT')

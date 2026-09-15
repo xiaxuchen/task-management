@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch } from './agent.mjs'
 import { resolveRepoDir, pickBranchForCommit } from './git.mjs'
 
@@ -762,6 +762,34 @@ export function createMcpServer({ store }) {
       const report = store.buildAcceptanceReport(n.id, { scope })
       const text = store.normalizeFormat(format) === 'md' ? renderAcceptanceMd(report) : JSON.stringify(report, null, 2)
       return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'acceptance_status',
+    '验收签收状态：同时返回测试证据、签收结论、签收人与证据是否已失效；format=md 返回可贴进 issue 的 markdown',
+    { node: z.union([z.number(), z.string()]), scope: z.string().optional(), format: z.string().optional() },
+    mcpValidate(async ({ node, scope, format }) => {
+      const n = store.resolveRef(String(node))
+      const status = store.buildAcceptanceStatus(n.id, { scope })
+      const text = store.normalizeFormat(format) === 'md' ? renderAcceptanceStatusMd(status) : JSON.stringify(status, null, 2)
+      return { content: [{ type: 'text', text }] }
+    })
+  )
+
+  server.tool(
+    'acceptance_sign',
+    '签收 / 驳回验收：绑定当前测试证据指纹；后续用例或报告变化会让签收自动失效',
+    {
+      node: z.union([z.number(), z.string()]),
+      decision: z.enum(['accepted', 'rejected']),
+      scope: z.string().optional(),
+      comment: z.string().optional()
+    },
+    mcpValidate(async ({ node, decision, scope, comment }) => {
+      const n = store.resolveRef(String(node))
+      const signoff = store.upsertAcceptanceSignoff(n.id, { decision, scope, comment: comment ?? null }, 'mcp')
+      return { content: [{ type: 'text', text: JSON.stringify(signoff, null, 2) }] }
     })
   )
 

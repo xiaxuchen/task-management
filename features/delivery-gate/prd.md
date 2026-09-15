@@ -20,7 +20,7 @@ TaskBoard 已经有三个独立结论：
 - R1 门禁挂在任意节点上；`scope=self` 只判定本节点，`scope=subtree` 纳入子树。
 - R2 汇总三个来源：
   - `readiness`：复用 `buildRequirementReadiness`；
-  - `acceptance`：复用 `buildAcceptanceReport`；
+  - `acceptance`：复用 `buildAcceptanceStatus`（测试证据 + 验收签收有效性）；
   - `release`：复用 `buildReleaseChecklist`。
 - R3 每个来源使用三态：`pass` / `fail` / `not_applicable`。不适用不等于通过，也不阻塞。
 - R4 最终结论使用三态：

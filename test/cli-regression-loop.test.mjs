@@ -180,6 +180,7 @@ test('交付门禁：CLI delivery gate 全链路（unknown → not_ready → rea
     const node = store.resolveRef('P/R')
     const report = store.createTestReport(node.id, { caseId: testCase.id })
     store.finishTestReport(report.id, { status: 'pass', summary: '全绿' })
+    store.upsertAcceptanceSignoff(node.id, { decision: 'accepted', comment: '业务确认通过' })
     store.db.close()
     gate = await cli(home, ['delivery', 'gate', 'P/R'])
     assert.equal(gate.decision, 'ready')

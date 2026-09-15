@@ -39,4 +39,5 @@
 | 32 | 门禁空态用 `ready=null` 表示「没有可判定对象」 | 只有「节点本身不是需求类型且 `scope=self`」才拒绝（提示改用 `subtree`）；子树内没有需求属于**空态**，返回 `ready=null` 而非 400。原实现提前抛错，让 `units.length===0 ? null` 成为不可达死代码——选择兑现文档承诺，与上线清单「无必做项 `ready=null`」、验收报告 `passRate=null` 同口径 |
 | 33 | 交付门禁复用三段既有聚合，不落表 | 交付结论 = 需求就绪 + 测试验收 + 上线治理的**只读汇总**；每个来源是三态（`pass` / `fail` / `not_applicable`），最终为 `ready` / `not_ready` / `unknown`。不适用不等于通过，全部不适用时 `ready=null` 而非绿灯；`acceptance` 的 `running` / `notRun` 也不算交付证据。落表会产生第二份真相，因此与 `acceptance_report` / `readiness` 同样纯读、不 bump revision |
 | 34 | 停用用例不参与交付门禁 | `buildAcceptanceReport` / `buildDeliveryGate` 只聚合 `enabled=1` 的用例，与 readiness 口径一致；否则停用历史用例会永远以 `notRun` 阻塞交付，而执行链默认不会选它。删除停用用例不得改变门禁结论 |
+| 39 | 验收签收落表并绑定证据指纹 | 测试通过 ≠ 业务验收。`acceptance_signoffs` 单独记录 `accepted/rejected`、签收人、意见与当时的 sha256 证据指纹；指纹按稳定 `caseId` 排序构造 canonical 集合并纳入 prompt / expectation / latestReportId，用例内容或最近报告结论变化后签收自动 `stale`，仅 reorder 不失效，交付门禁重新阻塞。避免“测试全绿即交付”绕过验收，也避免旧签收在测试变化后继续假绿 |
 | 35 | `format` 参数禁止静默降级 | 与 `scope` 同一条纪律：`json\|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；三入口统一由 `store.normalizeFormat` 校验，MCP 将业务错误转为 `isError` 文本而不是泄漏 SDK `-32602`。markdown 渲染器必须转义表格单元格中的 `\|` 与换行 |
