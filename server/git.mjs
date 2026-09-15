@@ -578,38 +578,59 @@ function samePath(a, b) {
 }
 
 /**
- * 创建工作区（分支 + worktree）。
- * ① 路径已存在且就是本分支 → 幂等跳过（alreadyExists）
- * ② 路径被其他分支占用，或存在同名普通目录 → path-occupied（调用方映射 409 WORKTREE_PATH_EXISTS）
- * ③ 分支不存在 → 从 baseBranch 的**当前最新提交**派生（这正是「以创建时刻为基」的语义）
- * ④ 分支已存在 → 复用并回报 branchSha，由调用方与 baseBranch 比对判 BRANCH_EXISTS_DIFFERENT_BASE
+ * 只读探查「创建工作区」会发生什么，不做任何 git 写操作。
+ * 真实路径（addWorktree）与 dryRun 共用这一份判定，保证「预演」与「真跑」结论一致（D4）。
+ * 返回：
+ *   { ok:true, alreadyExists:true }        路径已是本分支的 worktree（幂等）
+ *   { ok:true, branchExists, branchSha }   可以创建（branchExists=false）或复用
+ *   { ok:false, reason:'base-not-found' }  基线分支不存在
+ *   { ok:false, reason:'base-mismatch' }   同名分支已存在但 tip ≠ 基线（拒绝且零副作用）
+ *   { ok:false, reason:'path-occupied' }   路径被其他分支或普通目录占用
  */
-export async function addWorktree(dir, { worktreePath, branch, baseBranch }) {
+export async function checkWorktreePlan(dir, { worktreePath, branch, baseBranch }) {
+  const baseSha = await revParse(dir, baseBranch)
+  if (!baseSha) return { ok: false, reason: 'base-not-found', baseBranch, worktreePath, branch }
+
   const occupied = await worktreeOccupancy(dir, worktreePath, branch)
-  if (occupied === 'same') {
-    return { ok: true, alreadyExists: true, worktreePath, branch, reason: 'already_exists' }
-  }
-  if (occupied === 'other') {
-    return { ok: false, reason: 'path-occupied', worktreePath, branch }
-  }
+  if (occupied === 'same') return { ok: true, alreadyExists: true, baseSha, worktreePath, branch }
+  if (occupied === 'other') return { ok: false, reason: 'path-occupied', worktreePath, branch }
   if (fs.existsSync(worktreePath)) {
     // 路径存在但不是本仓库登记的 worktree（普通目录）→ 一律视为占用，避免误用/误删
     return { ok: false, reason: 'path-occupied', worktreePath, branch, message: '路径已存在但不是本仓库的 worktree' }
   }
 
-  const existing = await localBranchSha(dir, branch)
-  if (existing) {
-    const r = await gitTry(dir, ['worktree', 'add', worktreePath, branch])
-    if (!r.ok) return { ok: false, reason: 'worktree-add-failed', message: String(r.stderr || '').slice(0, 1000) }
-    return { ok: true, branchReused: true, branchSha: existing, worktreePath, branch, reason: 'reused_branch' }
+  const branchSha = await localBranchSha(dir, branch)
+  // 基线一致性必须在**动手之前**判定：否则首次拒绝会留下 worktree，
+  // 重试时 occupancy 变成 same 直接 alreadyExists，把「不静默复用」绕过（D1 回归点）。
+  if (branchSha && branchSha !== baseSha) {
+    return { ok: false, reason: 'base-mismatch', branch, branchSha, baseSha, baseBranch, worktreePath }
+  }
+  return { ok: true, branchExists: !!branchSha, branchSha, baseSha, worktreePath, branch }
+}
+
+/**
+ * 创建工作区（分支 + worktree）。
+ * ① 路径已存在且就是本分支 → 幂等跳过（alreadyExists）
+ * ② 路径被其他分支占用，或存在同名普通目录 → path-occupied（调用方映射 409 WORKTREE_PATH_EXISTS）
+ * ③ 分支不存在 → 从 baseBranch 的**当前最新提交**派生（这正是「以创建时刻为基」的语义）
+ * ④ 分支已存在但 tip ≠ 基线 → base-mismatch，**在任何 git 写操作之前**返回，拒绝时零副作用
+ */
+export async function addWorktree(dir, { worktreePath, branch, baseBranch }) {
+  const plan = await checkWorktreePlan(dir, { worktreePath, branch, baseBranch })
+  if (!plan.ok) return { ...plan, worktreePath, branch }
+  if (plan.alreadyExists) {
+    return { ok: true, alreadyExists: true, worktreePath, branch, reason: 'already_exists' }
   }
 
-  // 基线不存在时提前给出可行动判定，避免把 git 的模糊报错透给调用方
-  const baseSha = await revParse(dir, baseBranch)
-  if (!baseSha) return { ok: false, reason: 'base-not-found', baseBranch, worktreePath, branch }
+  if (plan.branchExists) {
+    const r = await gitTry(dir, ['worktree', 'add', worktreePath, branch])
+    if (!r.ok) return { ok: false, reason: 'worktree-add-failed', message: String(r.stderr || '').slice(0, 1000) }
+    return { ok: true, branchReused: true, branchSha: plan.branchSha, worktreePath, branch, reason: 'reused_branch' }
+  }
+
   const r = await gitTry(dir, ['worktree', 'add', '-b', branch, worktreePath, baseBranch])
   if (!r.ok) return { ok: false, reason: 'worktree-add-failed', message: String(r.stderr || '').slice(0, 1000) }
-  return { ok: true, created: true, branchSha: baseSha, baseSha, worktreePath, branch, reason: 'created' }
+  return { ok: true, created: true, branchSha: plan.baseSha, baseSha: plan.baseSha, worktreePath, branch, reason: 'created' }
 }
 
 /** 移除 worktree（不删分支）；未登记为 worktree 时按「已不存在」处理（幂等） */
@@ -624,14 +645,30 @@ export async function removeWorktree(dir, worktreePath) {
 }
 
 /**
- * 删除本地分支。默认 `-d` 交给 git 自带的「是否已并入上游」检查，
- * 未并入时返回 reason='branch-not-merged' 由调用方决定是否放行，
- * 避免清理动作悄悄丢掉尚未合并的开发分支。
+ * 删除本地分支，**相对声明的基线**判定是否已合并。
+ *
+ * 不能用 `git branch -d`：它比较的是「是否已并入当前 HEAD」，而清理时 HEAD 往往是
+ * `main` 之类，与声明的基线分支无关。结果会**删掉未并入基线的开发分支**（真实数据丢失）——
+ * 反过来「已并入基线但基线领先 HEAD」又会被保守拒绝。两种误判都源自这个隐式比较。
+ * 因此这里显式用 `merge-base --is-ancestor <branch> <baseBranch>`，
+ * 未并入基线一律不删（reason='branch-not-merged'），交由人工决定。
  */
-export async function deleteLocalBranch(dir, branch) {
+export async function deleteLocalBranch(dir, branch, { baseBranch = null } = {}) {
   const exists = await localBranchSha(dir, branch)
   if (!exists) return { ok: true, alreadyRemoved: true, branch }
-  const r = await gitTry(dir, ['branch', '-d', branch])
-  if (!r.ok) return { ok: false, reason: 'branch-not-merged', message: String(r.stderr || '').slice(0, 1000) }
-  return { ok: true, removed: true, branch }
+  if (!baseBranch) return { ok: false, reason: 'base-not-configured', branch }
+  const merged = await gitTry(dir, ['merge-base', '--is-ancestor', branch, baseBranch])
+  if (!merged.ok) {
+    return {
+      ok: false,
+      reason: 'branch-not-merged',
+      branch,
+      baseBranch,
+      message: String(merged.stderr || '').slice(0, 1000)
+    }
+  }
+  // 已并入基线 → 用 -D 直接删（-d 在这里会拿 HEAD 再判一次，重新引入同一个坑）
+  const r = await gitTry(dir, ['branch', '-D', branch])
+  if (!r.ok) return { ok: false, reason: 'branch-delete-failed', message: String(r.stderr || '').slice(0, 1000) }
+  return { ok: true, removed: true, branch, baseBranch }
 }

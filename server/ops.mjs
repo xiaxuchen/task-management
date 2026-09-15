@@ -3,8 +3,7 @@ import { CHILD_TYPES } from './db.mjs'
 import path from 'node:path'
 import { startAgentRun } from './agent.mjs'
 import { resolveRepoDir, commitDiff as gitCommitDiff, commitStat as gitCommitStat, commitTrack as gitCommitTrack, commitTime as gitCommitTime, commitMeta as gitCommitMeta, showFileAt as gitShowFileAt, commitParents as gitCommitParents, patchId as gitPatchId, mergedInCommits as gitMergedInCommits, branchesContaining as gitBranchesContaining, branchContains as gitBranchContains, mergeBranch as gitMergeBranch, previewMerge as gitPreviewMerge, branchLogShas as gitBranchLogShas, commitMetasBatch as gitCommitMetasBatch } from './git.mjs'
-import { addWorktree as gitAddWorktree, removeWorktree as gitRemoveWorktree, deleteLocalBranch as gitDeleteLocalBranch } from './git.mjs'
-import { revParse as gitRevParse } from './git.mjs'
+import { addWorktree as gitAddWorktree, removeWorktree as gitRemoveWorktree, deleteLocalBranch as gitDeleteLocalBranch, checkWorktreePlan as gitCheckWorktreePlan } from './git.mjs'
 import { loadConfig } from './config.mjs'
 
 /** 能力清单：MCP 工具 / CLI 命令 / REST 路由 三者 1:1 对应 */
@@ -1316,7 +1315,35 @@ export async function setupWorkspace(store, nodeRef, { repoIds = null, branch = 
     }
     const worktreePath = ur.worktreePath || renderWorktreePath(dir, config.worktreeRoot, attrs.slug, node.id)
     if (dryRun) {
-      repos.push({ repoId: repoRow.id, repo: repoRow.name, repoDir: dir, worktreePath, branch: branchName, baseBranch: base, ok: true, planned: true })
+      // 复用与真跑同一份只读探查，让「预演」真的能报出占用/基线冲突（D4）
+      const plan = await gitCheckWorktreePlan(dir, { worktreePath, branch: branchName, baseBranch: base })
+      if (!plan.ok) {
+        repos.push({
+          repoId: repoRow.id,
+          repo: repoRow.name,
+          repoDir: dir,
+          worktreePath,
+          branch: branchName,
+          baseBranch: base,
+          ok: false,
+          planned: true,
+          reason: plan.reason,
+          message: plan.message || null
+        })
+        continue
+      }
+      repos.push({
+        repoId: repoRow.id,
+        repo: repoRow.name,
+        repoDir: dir,
+        worktreePath,
+        branch: branchName,
+        baseBranch: base,
+        ok: true,
+        planned: true,
+        alreadyExists: !!plan.alreadyExists,
+        branchExists: !!plan.branchExists
+      })
       continue
     }
     const r = await gitAddWorktree(dir, { worktreePath, branch: branchName, baseBranch: base })
@@ -1331,24 +1358,15 @@ export async function setupWorkspace(store, nodeRef, { repoIds = null, branch = 
       if (r.reason === 'base-not-found') {
         throw new AppError(CODES.BRANCH_NOT_FOUND, `基线分支不存在：${base}`, { repo: repoRow.name, baseBranch: base })
       }
-      throw new AppError(CODES.GIT_FAILED, `创建 worktree 失败：${repoRow.name}`, { repo: repoRow.name, stderr: r.message })
-    }
-    // 分支已存在但基线不同 → 拒绝静默复用（否则开发分支挂在错误的基线上）
-    if (r.branchReused) {
-      const baseSha = await gitRevParse(dir, base)
-      const sameTip = !!baseSha && baseSha === r.branchSha
-      // 只认「分支 tip 恰好等于基线当前 tip」。
-      // 分支是基线的祖先（更旧）同样属于基线不一致：复用会让开发者从过期代码开工，
-      // 而「分支已领先基线」更是有未合并成果——两者都应显式报错让人确认，
-      // 与 prd「分支已存在但基线不同 → BRANCH_EXISTS_DIFFERENT_BASE」一致。
-      // 幂等场景不走这里：创建过工作区后 path 已存在且同分支，会在 addWorktree 里直接 alreadyExists。
-      if (!sameTip) {
+      if (r.reason === 'base-mismatch') {
+        // 由 checkWorktreePlan 在**任何 git 写操作之前**判定，拒绝时不会留下 worktree（D1）
         throw new AppError(
           CODES.BRANCH_EXISTS_DIFFERENT_BASE,
           `分支 ${branchName} 已存在但基线不是 ${base}（如需复用请显式确认）`,
           { repo: repoRow.name, branch: branchName, baseBranch: base, branchSha: r.branchSha }
         )
       }
+      throw new AppError(CODES.GIT_FAILED, `创建 worktree 失败：${repoRow.name}`, { repo: repoRow.name, stderr: r.message })
     }
     repos.push({
       repoId: repoRow.id,
@@ -1382,17 +1400,29 @@ export async function setupWorkspace(store, nodeRef, { repoIds = null, branch = 
     }
   }
 
-  // 回填 unit_repos 与节点属性（组合写入 = 一次 revision）
-  store.withoutBump(() => {
-    for (const r of repos) {
-      if (r.ok === false) continue
-      const ur = store.listUnitRepos(node.id).find((u) => u.repoId === r.repoId)
-      if (ur) store.updateUnitRepo(ur.id, { branch: branchName, worktreePath: r.worktreePath })
+  // 回填 unit_repos 与节点属性（组合写入 = 一次 revision）。
+  // 先算「是否真的有变化」：纯 no-op 重复调用不 bump，避免制造无意义的 revision 噪声（D5）。
+  const pending = []
+  for (const r of repos) {
+    if (r.ok === false) continue
+    const ur = store.listUnitRepos(node.id).find((u) => u.repoId === r.repoId)
+    if (ur && (ur.branch !== branchName || ur.worktreePath !== r.worktreePath)) {
+      pending.push({ id: ur.id, worktreePath: r.worktreePath })
     }
-    if (attrs.branch !== branchName) store.setAttrs(node.id, { branch: branchName }, by)
-    if (!attrs.base_branch) store.setAttrs(node.id, { base_branch: base }, by)
-  })
-  store.bumpRevision()
+  }
+  const branchChanged = attrs.branch !== branchName
+  const baseChanged = !attrs.base_branch
+  const changed = pending.length > 0 || branchChanged || baseChanged
+  if (changed) {
+    store.withoutBump(() => {
+      for (const p of pending) {
+        store.updateUnitRepo(p.id, { branch: branchName, worktreePath: p.worktreePath })
+      }
+      if (branchChanged) store.setAttrs(node.id, { branch: branchName }, by)
+      if (baseChanged) store.setAttrs(node.id, { base_branch: base }, by)
+    })
+    store.bumpRevision()
+  }
 
   return {
     dryRun: false,
@@ -1469,9 +1499,14 @@ export async function cleanupWorkspace(store, nodeRef, { confirm = false, remove
       out.worktreeAlreadyRemoved = true
     }
     if (removeBranch && branchName && base) {
-      const del = await gitDeleteLocalBranch(dir, branchName)
+      // 传入声明基线：删除判定必须相对基线，而不是当前 HEAD（D2）
+      const del = await gitDeleteLocalBranch(dir, branchName, { baseBranch: base })
       out.branchRemoved = !!del.ok && !!del.removed
       if (!del.ok) out.branchNote = del.reason
+    } else if (!removeBranch) {
+      // 显式保留分支：如实回报「没删」，避免调用方把 undefined 当成未知
+      out.branchRemoved = false
+      out.branchNote = 'kept_by_request'
     }
     results.push({ ...out, ok: true })
   }

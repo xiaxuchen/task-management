@@ -89,7 +89,10 @@ const OPTIONS = {
   'repo-ids': { type: 'string' },
   'worktree-path': { type: 'string' },
   'base-branch': { type: 'string' },
-  'remove-branch': { type: 'boolean' },
+  // 用 --keep-branch 而不是 --remove-branch false：
+  // parseArgs 的 boolean 选项无法表达「显式 false」（`--x false` 会把 false 当位置参数、
+  // `--x=false` 直接抛错），会导致开关形同虚设、与 HTTP/MCP 的 removeBranch:false 不一致（D3）。
+  'keep-branch': { type: 'boolean' },
   'test-branch': { type: 'string' },
   'pre-branch': { type: 'string' },
   'release-branch': { type: 'string' },
@@ -184,7 +187,7 @@ const HELP = `task-board <命令>
   unit repo remove <urid>
   unit setup <ref> [--repo-ids "1,2"] [--branch b] [--base-branch b] [--dry-run]
                                     创建工作区（分支 + worktree）并返回开发提示词
-  unit cleanup <ref> --confirm [--remove-branch false]   清理工作区（移除 worktree / 删除已并入分支）
+  unit cleanup <ref> --confirm [--keep-branch]   清理工作区（移除 worktree / 删除已并入基线的分支）
   branch-config list                 标签级追踪目标列表（测试/预发/上线）
   branch-config set <标签> [--test-branch b] [--pre-branch b] [--release-branch b]
   branch-config remove <标签>
@@ -834,7 +837,8 @@ export async function run(argv) {
     case 'unit cleanup':
       json(await cleanupWorkspace(store, ref, {
         confirm: !!values.confirm,
-        removeBranch: values['remove-branch'] !== false,
+        // --keep-branch 表示「保留分支」；缺省是删除已并入基线的分支
+        removeBranch: !values['keep-branch'],
         by
       }))
       break

@@ -136,7 +136,7 @@ upload ./shot.png                                      # 上传文档图片 → 
 unit repo add "项目A/需求1/任务1" --repo-id 1          # 登记工作单元涉及仓库
 unit setup "项目A/需求1/任务1" [--dry-run]              # 建分支 + worktree，返回开发提示词
 unit prompt "项目A/需求1/任务1"                         # 生成 / 刷新开发提示词（纯读）
-unit cleanup "项目A/需求1/任务1" --confirm              # 清理工作区（未并入的分支会保留）
+unit cleanup "项目A/需求1/任务1" --confirm [--keep-branch]   # 清理工作区（未并入「声明基线」的分支会保留）
 import --file outline.md --dry-run     # 大纲导入，先预演
 batch --file ops.json                  # 多步一次调用
 node delete <ref> --confirm            # 破坏性操作必须 --confirm
