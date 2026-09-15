@@ -323,6 +323,23 @@ CREATE TABLE IF NOT EXISTS test_reports (
 CREATE INDEX IF NOT EXISTS idx_test_reports_node ON test_reports(node_id, id);
 CREATE INDEX IF NOT EXISTS idx_test_reports_case ON test_reports(case_id, id);
 
+-- 验收签收：把「测试报告已通过」与「业务/需求方确认验收」分开落库。
+-- evidence_fingerprint 绑定签收时的验收证据；后续用例或报告变化会让签收自动失效。
+CREATE TABLE IF NOT EXISTS acceptance_signoffs (
+  id INTEGER PRIMARY KEY,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL DEFAULT 'self' CHECK (scope IN ('self','subtree')),
+  decision TEXT NOT NULL CHECK (decision IN ('accepted','rejected')),
+  comment TEXT,
+  evidence_fingerprint TEXT NOT NULL,
+  signed_by TEXT NOT NULL,
+  signed_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(node_id, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_acceptance_signoffs_node ON acceptance_signoffs(node_id, scope);
+
 -- 上线清单：挂在节点上的上线配置 / 上线 SQL / 上线检查项（结构化登记）。
 -- 「代码检查 / 业务检查 / 上线检查」的执行语义复用 test_cases 的 kind 扩展轴，本表只补结构化的上线项。
 CREATE TABLE IF NOT EXISTS release_items (
@@ -539,6 +556,24 @@ function migrate(db) {
       UNIQUE(node_id, name)
     );
     CREATE INDEX IF NOT EXISTS idx_release_items_node ON release_items(node_id, sort, id);
+  `)
+
+  // 验收签收（v7）：老库补表；SCHEMA 只对新库生效
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS acceptance_signoffs (
+      id INTEGER PRIMARY KEY,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL DEFAULT 'self' CHECK (scope IN ('self','subtree')),
+      decision TEXT NOT NULL CHECK (decision IN ('accepted','rejected')),
+      comment TEXT,
+      evidence_fingerprint TEXT NOT NULL,
+      signed_by TEXT NOT NULL,
+      signed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(node_id, scope)
+    );
+    CREATE INDEX IF NOT EXISTS idx_acceptance_signoffs_node ON acceptance_signoffs(node_id, scope);
   `)
 
   // 文档历史（v6）：SCHEMA 会为新老库建表；老库中已有文档在首次打开时各回填一份当前快照。

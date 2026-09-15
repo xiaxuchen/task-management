@@ -388,6 +388,22 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 
 **验收报告**不落表，由 `buildAcceptanceReport` 按节点（`self` / `subtree`）聚合每个用例的**最近一次**结果。
 只聚合 `enabled=1` 的用例；停用用例不进入门禁（与需求就绪门禁「启用中的可回归用例」口径一致）。
+
+**acceptance_signoffs（验收签收）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| node_id | INTEGER NOT NULL | FK → nodes(id) ON DELETE CASCADE |
+| scope | TEXT NOT NULL | `self` / `subtree` |
+| decision | TEXT NOT NULL | `accepted` / `rejected` |
+| comment | TEXT | 验收意见 / 驳回原因 |
+| evidence_fingerprint | TEXT NOT NULL | 签收时验收报告的 sha256 指纹 |
+| signed_by / signed_at | TEXT | 签收人 / 时间 |
+| created_at / updated_at | TEXT | |
+
+约束：`UNIQUE(node_id, scope)`；index：`idx_acceptance_signoffs_node(node_id, scope)`。
+签收绑定证据指纹：用例、期望或最近报告结论一旦变化，既有签收自动视为 `stale`，交付门禁重新阻塞。
 分桶总数守恒：`pass + fail + blocked + error + cancelled + running + notRun = cases`；
 `running`（已派单未回写）与 `notRun`（从未派单）都不计入通过率分母，
 通过率 = `pass / settled`（`settled` = 五种终态之和），无完结时 `passRate = null`。

@@ -334,6 +334,16 @@ curl -s http://127.0.0.1:3210/api/test-reports/3
 # 验收报告：聚合最近结果与通过率；分桶守恒，running/notRun 不计入分母；format=md 可直接贴 issue / MR
 curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?scope=subtree'
 curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-report?format=md'
+
+# 验收签收：先看状态，再显式签收 / 驳回；签收绑定当前证据指纹，证据变化自动 stale
+curl -s 'http://127.0.0.1:3210/api/nodes/1/acceptance-status?scope=subtree'
+curl -s -X POST http://127.0.0.1:3210/api/nodes/1/acceptance-signoff \
+  -H 'content-type: application/json' -d '{"decision":"accepted","comment":"业务确认通过"}'
+
+# CLI / MCP 等价入口
+# node bin/taskboard.js test acceptance-status "项目A/需求1" [--scope self|subtree]
+# node bin/taskboard.js test acceptance-sign "项目A/需求1" --decision accepted --comment "业务确认通过"
+# MCP: acceptance_status { node, scope?, format? } / acceptance_sign { node, decision, scope?, comment? }
 ```
 
 ## 上线治理（上线配置 / 上线 SQL / 上线检查清单）
@@ -419,6 +429,7 @@ curl -s 'http://127.0.0.1:3210/api/nodes/1/delivery-gate?format=md'
 > `not_applicable` 既不阻塞也不算通过。
 > `scope` / `format` 都是枚举：非法值返回 `400 VALIDATION_FAILED`，不会静默降级。
 > 验收来源只聚合**启用中**的用例；停用用例不算 `notRun`、也不阻塞交付。
+> 测试全部通过后仍需有效验收签收：`pending` / `rejected` / `stale` 都会阻塞交付，避免把测试绿灯冒充业务验收。
 
 ## 错误码速查
 

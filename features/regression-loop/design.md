@@ -7,6 +7,7 @@
   - 用例：`createTestCase` / `listTestCases` / `getTestCase` / `upsertTestCase` / `updateTestCase` / `deleteTestCase` / `reorderTestCases`
   - 报告：`createTestReport` / `listTestReports` / `getTestReport` / `finishTestReport`
   - 聚合：`buildAcceptanceReport`（按节点或子树汇总最近结果与通过率）
+  - 签收：`buildAcceptanceStatus` / `upsertAcceptanceSignoff`（业务签收 + 证据指纹失效）
 - `server/ops.mjs`：跨 store 的编排，不绑定入口。
   - `runTestCases`：选用例 → 拼提示词 → `startAgentRun` 派单 → 开 running 报告；`dryRun` 走纯预演分支。
   - `composeTestPrompt`：把用例拼成给 agent 的回归指令（显式要求 `PASS|FAIL|BLOCKED` 逐条结论）。
@@ -73,6 +74,11 @@ pass + fail + blocked + error + cancelled + running + notRun = cases
 
 **R9 三入口 1:1**：REST / CLI / MCP 暴露的字段集必须一致——
 CLI `test case upsert|update --enabled true|false`、`test report finish --run-id N --overwrite` 与 HTTP body / MCP schema 对齐。
+
+**R10 测试通过 ≠ 验收通过**：`buildAcceptanceReport` 是客观测试证据，业务结论另存
+`acceptance_signoffs`。签收时把报告里的用例、期望、最近报告与分桶结果折算成 sha256 指纹；
+后续任何测试证据变化都会让签收变 `stale`。交付门禁只在「测试无阻塞 + 签收 accepted」时通过，
+`pending/rejected/stale` 一律阻塞。
 
 ## 3. 踩坑 / 约束
 

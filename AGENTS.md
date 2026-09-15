@@ -105,6 +105,7 @@ docs/design.md    ← 主设计文档权威副本
 门禁  requirement_readiness · delivery_gate
 回归  test_case_list · test_case_upsert · test_case_update · test_case_remove · test_case_reorder
       test_run · test_report_list · test_report_get · test_report_finish · acceptance_report
+      acceptance_status · acceptance_sign
 上线  release_item_list · release_item_upsert · release_item_update · release_item_remove · release_item_reorder
       release_checklist · release_check
 agent 运行时  runtime_list · runtime_register · runtime_heartbeat · runtime_status · runtime_remove
@@ -143,6 +144,8 @@ test case upsert "项目A/需求1" --name 登录回归 --prompt "跑登录单测
 test run "项目A/需求1" --kind regression [--dry-run]        # 派单执行 + 自动开报告
 test report finish <rid> --status pass --summary 全绿 [--run-id N] [--overwrite]   # 回写报告终态（终态互转需 --overwrite）
 test acceptance "项目A/需求1" [--scope subtree] [--format md]  # 验收报告
+test acceptance-status "项目A/需求1" [--scope subtree] [--format md]  # 验收签收状态（测试证据 + 业务签收）
+test acceptance-sign "项目A/需求1" --decision accepted|rejected [--comment "验收意见"]  # 签收 / 驳回
 readiness check "项目A/需求1" [--scope subtree] [--format md]  # 需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
 delivery gate "项目A/需求1" [--scope subtree] [--format md]    # 交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
 

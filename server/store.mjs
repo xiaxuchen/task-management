@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto'
 import { AppError, CODES } from './errors.mjs'
 import { CHILD_TYPES, LEAF_TYPES } from './db.mjs'
 
-const ACTORS = new Set(['user', 'ai', 'cli', 'import'])
+const ACTORS = new Set(['user', 'ai', 'cli', 'import', 'mcp'])
 const now = () => new Date().toISOString()
 const REVIEW_STATUSES = ['pending', 'approved', 'issue']
 
@@ -1308,7 +1309,7 @@ export function createStore(db, options = {}) {
     const notRun = count('not_run')
     // 已完结（有终态结论）= 通过率分母；running / notRun 都不计
     const settled = pass + fail + blocked + error + cancelled
-    return {
+    const report = {
       node: { id: root.id, name: root.name, type: root.type },
       scope: effectiveScope,
       totals: {
@@ -1325,6 +1326,115 @@ export function createStore(db, options = {}) {
       passRate: settled ? Math.round((pass / settled) * 1000) / 1000 : null,
       items,
       reports: reports.slice(0, 20)
+    }
+    // 证据指纹只绑定验收结论本身（用例集、期望、最近一次报告及其结论），
+    // 不包含聚合时的展示排序等易噪声字段。任何一处变化都会让既有签收失效。
+    const fingerprintInput = {
+      scope: effectiveScope,
+      totals: report.totals,
+      passRate: report.passRate,
+      items: report.items.map((i) => ({
+        name: i.name,
+        kind: i.kind,
+        expectation: i.expectation,
+        latestStatus: i.latestStatus,
+        latestAt: i.latestAt
+      }))
+    }
+    report.evidenceFingerprint = createHash('sha256').update(JSON.stringify(fingerprintInput)).digest('hex')
+    return report
+  }
+
+  // ---------- 验收签收（业务确认，与测试结论分离） ----------
+
+  const ACCEPTANCE_DECISIONS = new Set(['accepted', 'rejected'])
+
+  function acceptanceSignoffVO(r, currentFingerprint = null) {
+    if (!r) return null
+    return {
+      id: r.id,
+      nodeId: r.node_id,
+      scope: r.scope,
+      decision: r.decision,
+      comment: r.comment,
+      evidenceFingerprint: r.evidence_fingerprint,
+      signedBy: r.signed_by,
+      signedAt: r.signed_at,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      stale: currentFingerprint != null && r.evidence_fingerprint !== currentFingerprint
+    }
+  }
+
+  function assertAcceptanceDecision(decision) {
+    if (!ACCEPTANCE_DECISIONS.has(decision)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知验收结论 ${decision}`, {
+        decision,
+        allowed: [...ACCEPTANCE_DECISIONS]
+      })
+    }
+  }
+
+  function getAcceptanceSignoff(nodeId, { scope = 'self' } = {}) {
+    rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    const row = db
+      .prepare('SELECT * FROM acceptance_signoffs WHERE node_id = ? AND scope = ?')
+      .get(nodeId, effectiveScope)
+    return acceptanceSignoffVO(row)
+  }
+
+  function upsertAcceptanceSignoff(nodeId, { scope = 'self', decision, comment = null } = {}, by = 'user') {
+    rawNode(nodeId)
+    const effectiveScope = normalizeScope(scope)
+    assertAcceptanceDecision(decision)
+    const report = buildAcceptanceReport(nodeId, { scope: effectiveScope })
+    if (report.totals.cases === 0) {
+      throw new AppError(CODES.VALIDATION_FAILED, '当前范围没有可验收的测试用例，不能签收', {
+        nodeId,
+        scope: effectiveScope
+      })
+    }
+    const ts = now()
+    const signer = actor(by)
+    const cur = db
+      .prepare('SELECT id FROM acceptance_signoffs WHERE node_id = ? AND scope = ?')
+      .get(nodeId, effectiveScope)
+    if (cur) {
+      db.prepare(
+        'UPDATE acceptance_signoffs SET decision = ?, comment = ?, evidence_fingerprint = ?, signed_by = ?, signed_at = ?, updated_at = ? WHERE id = ?'
+      ).run(decision, comment, report.evidenceFingerprint, signer, ts, ts, cur.id)
+    } else {
+      db.prepare(
+        'INSERT INTO acceptance_signoffs (node_id,scope,decision,comment,evidence_fingerprint,signed_by,signed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)'
+      ).run(nodeId, effectiveScope, decision, comment, report.evidenceFingerprint, signer, ts, ts, ts)
+    }
+    bumpRevision()
+    return acceptanceSignoffVO(
+      db.prepare('SELECT * FROM acceptance_signoffs WHERE node_id = ? AND scope = ?').get(nodeId, effectiveScope),
+      report.evidenceFingerprint
+    )
+  }
+
+  function buildAcceptanceStatus(nodeId, { scope = 'self' } = {}) {
+    const report = buildAcceptanceReport(nodeId, { scope })
+    const signoff = getAcceptanceSignoff(nodeId, { scope: report.scope })
+    const signed = signoff ? { ...signoff, stale: signoff.evidenceFingerprint !== report.evidenceFingerprint } : null
+    const state =
+      !signoff
+        ? report.totals.cases === 0
+          ? 'not_applicable'
+          : 'pending'
+        : signed.stale
+          ? 'stale'
+          : signoff.decision
+    return {
+      node: report.node,
+      scope: report.scope,
+      state,
+      accepted: state === 'accepted',
+      report,
+      signoff: signed
     }
   }
 
@@ -1738,22 +1848,32 @@ export function createStore(db, options = {}) {
       })
     }
 
-    // 2. 测试验收：没有用例时是 not_applicable；有用例但存在未执行、执行中或未通过时不可交付。
-    const acceptance = buildAcceptanceReport(root.id, { scope: effectiveScope })
+    // 2. 测试验收：没有用例时是 not_applicable；有用例时还必须有当前证据对应的验收签收。
+    const acceptanceStatus = buildAcceptanceStatus(root.id, { scope: effectiveScope })
+    const acceptance = acceptanceStatus.report
     const at = acceptance.totals
     const acceptanceProblem = at.fail + at.blocked + at.error + at.cancelled + at.running + at.notRun
+    const acceptanceApplicable = at.cases > 0
+    const acceptancePassed = acceptanceProblem === 0 && acceptanceStatus.state === 'accepted'
+    const acceptanceDetail =
+      !acceptanceApplicable
+        ? '暂无可回归测试用例'
+        : acceptanceProblem > 0
+          ? `${acceptanceProblem}/${at.cases} 条用例未通过或尚无终态结论`
+          : acceptanceStatus.state === 'accepted'
+            ? `${at.pass}/${at.cases} 条用例已通过，且验收签收有效`
+            : acceptanceStatus.state === 'stale'
+              ? '测试结论已变化，原验收签收已失效，需重新签收'
+              : acceptanceStatus.state === 'rejected'
+                ? '验收已驳回，需处理验收意见后重新签收'
+                : '测试已通过，但尚未完成验收签收'
     sources.push({
       key: 'acceptance',
       label: DELIVERY_SOURCE_LABELS.acceptance,
-      status: at.cases === 0 ? 'not_applicable' : acceptanceProblem === 0 ? 'pass' : 'fail',
-      applicable: at.cases > 0,
-      detail:
-        at.cases === 0
-          ? '暂无可回归测试用例'
-          : acceptanceProblem === 0
-            ? `${at.pass}/${at.cases} 条用例已通过`
-            : `${acceptanceProblem}/${at.cases} 条用例未通过或尚无终态结论`,
-      evidence: acceptance
+      status: !acceptanceApplicable ? 'not_applicable' : acceptancePassed ? 'pass' : 'fail',
+      applicable: acceptanceApplicable,
+      detail: acceptanceDetail,
+      evidence: { ...acceptance, signoff: acceptanceStatus.signoff, signoffState: acceptanceStatus.state }
     })
 
     // 3. 上线治理：无必做项不代表阻塞（not_applicable）；有任何必做项未 done/skipped 时不可交付。
@@ -1780,12 +1900,27 @@ export function createStore(db, options = {}) {
           blockers.push({ source: source.key, label: source.label, name: `${b.name} · ${b.label}`, detail: b.detail })
         }
       } else if (source.key === 'acceptance' && source.evidence) {
-        for (const item of source.evidence.items.filter((i) => i.latestStatus !== 'pass')) {
+        const nonPass = source.evidence.items.filter((i) => i.latestStatus !== 'pass')
+        for (const item of nonPass) {
           blockers.push({
             source: source.key,
             label: source.label,
             name: item.name,
             detail: `最近结果：${item.latestStatus}`
+          })
+        }
+        if (nonPass.length === 0 && source.status === 'fail') {
+          const state = source.evidence.signoffState
+          blockers.push({
+            source: source.key,
+            label: source.label,
+            name: source.evidence.node.name,
+            detail:
+              state === 'stale'
+                ? '验收签收已失效（测试证据已变化）'
+                : state === 'rejected'
+                  ? '验收已驳回'
+                  : '尚未完成验收签收'
           })
         }
       } else if (source.key === 'release' && source.evidence) {
@@ -2631,6 +2766,10 @@ export function createStore(db, options = {}) {
     finishTestReport,
     finalizeReportsForRun,
     buildAcceptanceReport,
+    ACCEPTANCE_DECISIONS,
+    getAcceptanceSignoff,
+    upsertAcceptanceSignoff,
+    buildAcceptanceStatus,
     // 需求就绪门禁（需求管理闭环的前置判定）
     SCOPE_VALUES,
     normalizeScope,

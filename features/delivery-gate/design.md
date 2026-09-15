@@ -3,7 +3,7 @@
 ## 1. 模块职责
 
 - `server/store.mjs`：新增纯读聚合 `buildDeliveryGate(nodeId, { scope })`。
-  - 调用既有 `buildRequirementReadiness` / `buildAcceptanceReport` / `buildReleaseChecklist`；
+  - 调用既有 `buildRequirementReadiness` / `buildAcceptanceStatus` / `buildReleaseChecklist`；
   - 不直接查明细表，避免和三个来源的口径漂移；
   - 不写库、不 bump revision。
 - `server/ops.mjs`：新增 `renderDeliveryGateMd(gate)`，并把 `delivery_gate` 登记进 `TOOLS`。
@@ -40,6 +40,10 @@ UI 只做标签映射，不复制判定逻辑。
 **R7 停用用例不参与门禁**：`buildAcceptanceReport` 只聚合 `enabled=1` 的用例，与 readiness 的
 「启用中的可回归用例」一致。否则一条被停用的历史用例会永远以 `not_run` 阻塞交付，而 `runTestCases`
 默认根本不会选它。删除停用用例后结论不应发生翻转。
+
+**R8 验收来源包含业务签收**：测试全绿只说明客观证据齐备，交付门禁还必须看到当前证据对应的
+`accepted` 签收。`pending`（未签收）/ `rejected`（驳回）/ `stale`（签收后证据变化）都算 `fail`，
+并在 blockers 中给出可行动原因。
 
 **R8 `format` 同 `scope` 一样禁止静默降级**：`json|md` 缺省 `json`，其它值一律 `VALIDATION_FAILED`；
 MCP 工具在 handler 内调用同一 `store.normalizeFormat`，把业务错误转成 `isError` 文本，避免泄漏 SDK 的 `-32602`。

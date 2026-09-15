@@ -25,6 +25,7 @@ function makeReadinessPass(store, nodeId) {
 function makeAcceptancePass(store, nodeId, caseId) {
   const report = store.createTestReport(nodeId, { caseId, status: 'running', kind: 'regression' })
   store.finishTestReport(report.id, { status: 'pass', summary: '全绿' })
+  store.upsertAcceptanceSignoff(nodeId, { decision: 'accepted', comment: '验收通过' })
 }
 
 test('delivery_gate：没有任何证据时返回 unknown（不伪造成可交付）', async (t) => {

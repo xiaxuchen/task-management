@@ -14,7 +14,7 @@
 - **HOME 在模块 import 时确定**：`const HOME = process.env.TASKBOARD_HOME || path.join(os.homedir(), '.taskboard')`。ESM 模块只求值一次，所以同一测试文件内改 `TASKBOARD_HOME` 不会换目录；用例隔离靠 `openDb(file)` 显式指向本次临时目录下的 `data.db`。
 - **错误码写进 `err.name`**：`String(err)` 输出 `PARENT_TYPE_INVALID: <人话>`；`err.message` 不重复码值（HTTP 层的 `message` 保持干净）。
 - **建表 + 预置幂等**：`CREATE TABLE IF NOT EXISTS`；以「`attr_defs` 计数为 0」作为播种条件；后续 schema 变更在 `db.mjs` 内追加幂等迁移块。
-- **快照主键重映射**：文本快照导入统一清空后按依赖顺序重建；除 nodes/attrs/repos 外，documents 也建立旧→新 id 映射，供 `document_versions` 重写外键；找不到父文档的版本行丢弃。
+- **快照主键重映射**：文本快照导入统一清空后按依赖顺序重建；除 nodes/attrs/repos 外，documents 也建立旧→新 id 映射，供 `document_versions` 重写外键；test_cases 建立映射供 `test_reports.case_id` 重写（`run_id` 指向的 agent 运行日志不随快照迁移，导入置 null）；`acceptance_signoffs` 随 nodes 重映射。
 - **父子类型单一事实来源**：`CHILD_TYPES`（父 → 允许的子类型数组），空数组即叶子；store 的类型校验只读它，不在别处重复定义。
 
 ## 3. 对外接口

@@ -7,3 +7,4 @@
 - docs(regression-loop): 收口 design.md 两处陈述矛盾并补 overwrite 的 finished_at 规则——① REPORT_STATUS_IMMUTABLE 统一为 409（删掉旧的 400/409）② 删除「finishTestReport 允许改回 running」旧表述，改为按 R5 表格陈述（默认拒绝，仅显式 overwrite 或 auto_finalized 改正通道可放行）③ 新增 R5.0：overwrite 只改判定不改完成时刻——终态→另一终态保留 finished_at，终态→running 清空，running→终态才写入，同状态幂等不重置。仅文档改动，不改实现语义
 - fix(regression-loop): `acceptance-report` 的 `scope` 收口为枚举校验（D2 连带修复）——此前 `scope === 'subtree' ? 'subtree' : 'self'` 把非法值静默吞成 `self`，在子树有未通过用例时会把验收结论判轻；现由 `store.normalizeScope` 统一校验（非法 → 400 `VALIDATION_FAILED`），HTTP/CLI/MCP 三入口透传原始值，与 readiness / release-checklist / delivery-gate 口径一致；test/http.test.mjs 补非法 scope 断言
 - fix(regression-loop): `buildAcceptanceReport` 只聚合启用中用例——此前停用用例也被计入 `notRun`，会在交付门禁里永久阻塞；现与 readiness「启用中的可回归用例」口径一致，停用用例不参与分桶/通过率/门禁
+- feat(acceptance-signoff): 验收签收闭环——测试通过后仍需业务显式 accepted/rejected，签收绑定证据指纹并自动 stale；交付门禁要求有效签收，三入口与 NodeDrawer 同步支持（详细记录见 features/acceptance-signoff/commit.md）

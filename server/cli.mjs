@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, renderAcceptanceStatusMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -38,6 +38,8 @@ const OPTIONS = {
   limit: { type: 'string' },
   summary: { type: 'string' },
   detail: { type: 'string' },
+  decision: { type: 'string' },
+  comment: { type: 'string' },
   prompt: { type: 'string' },
   model: { type: 'string' },
   cwd: { type: 'string' },
@@ -129,6 +131,8 @@ const HELP = `task-board <命令>
   test report list <ref> [--kind k] [--case-id <id>]      测试报告列表
   test report get <rid> / test report finish <rid> --status pass|fail|blocked|error|cancelled [--summary s] [--detail d] [--run-id N] [--overwrite]
   test acceptance <ref> [--scope self|subtree] [--format json|md]   验收报告（聚合最近结果）
+  test acceptance-status <ref> [--scope self|subtree] [--format json|md]   验收签收状态（测试证据 + 业务签收）
+  test acceptance-sign <ref> --decision accepted|rejected [--scope self|subtree] [--comment "验收意见"]   签收 / 驳回
   readiness check <ref> [--scope self|subtree] [--format json|md]   需求就绪门禁（需求内容 + 概要设计 + 可回归用例）
   delivery gate <ref> [--scope self|subtree] [--format json|md]     交付门禁（需求就绪 + 测试验收 + 上线治理的最终汇总）
   release item list <ref> [--kind config|sql|check] [--status pending|ready|done|blocked|skipped]
@@ -440,6 +444,24 @@ export async function run(argv) {
       const report = store.buildAcceptanceReport(node.id, { scope: values.scope })
       if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderAcceptanceMd(report) + '\n')
       else json(report)
+      break
+    }
+    case 'test acceptance-status': {
+      const node = store.resolveRef(ref)
+      const status = store.buildAcceptanceStatus(node.id, { scope: values.scope })
+      if (store.normalizeFormat(values.format) === 'md') process.stdout.write(renderAcceptanceStatusMd(status) + '\n')
+      else json(status)
+      break
+    }
+    case 'test acceptance-sign': {
+      const node = store.resolveRef(ref)
+      json(
+        store.upsertAcceptanceSignoff(
+          node.id,
+          { scope: values.scope, decision: values.decision, comment: values.comment ?? null },
+          by
+        )
+      )
       break
     }
     // ---------- 需求就绪门禁（`readiness check <ref>`） ----------
