@@ -82,6 +82,7 @@ const REQUIREMENT_TRANSITIONS = {
   cancelled: ['todo']
 }
 const DEFAULT_REQUIREMENT_STATUSES = Object.keys(REQUIREMENT_TRANSITIONS)
+const DOCUMENT_FILL_VALUES = ['filled', 'empty']
 
 /**
  * 解析 agent 输出里的逐条测试结论。
@@ -432,6 +433,96 @@ export function createStore(db, options = {}) {
       unknownStatusCount,
       missingRequirementDoc,
       missingDesignDoc
+    }
+  }
+
+  function documentOverview({ projectId = null, status = null, q = null, docName = null, fill = null } = {}) {
+    const fillValue = fill === null || fill === undefined || fill === '' ? null : String(fill)
+    if (fillValue !== null && !DOCUMENT_FILL_VALUES.includes(fillValue)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知文档填充筛选 ${fill}`, {
+        fill,
+        allowed: DOCUMENT_FILL_VALUES
+      })
+    }
+    const requirements = listRequirements({ projectId, status })
+    const expectedNames = requirementDocNames()
+    const query = q === null || q === undefined ? '' : String(q).trim().toLowerCase()
+    const nameFilter = docName === null || docName === undefined ? '' : String(docName).trim()
+    const allDocuments = []
+    const gaps = []
+    const matchesText = (...values) =>
+      !query || values.some((v) => String(v || '').toLowerCase().includes(query))
+
+    for (const req of requirements) {
+      for (const doc of req.documents) {
+        const content = String(doc.content || '')
+        allDocuments.push({
+          ...doc,
+          contentPreview: content.replace(/\s+/g, ' ').trim().slice(0, 160),
+          contentLength: content.trim().length,
+          filled: content.trim() !== '',
+          isRequired: expectedNames.includes(doc.name),
+          nodeName: req.name,
+          nodeType: req.type,
+          nodeStatus: req.status,
+          path: req.path,
+          projectId: req.projectId,
+          projectName: req.projectName
+        })
+      }
+      for (const expected of expectedNames) {
+        const doc = req.documents.find((d) => d.name === expected) || null
+        if (doc && String(doc.content || '').trim() !== '') continue
+        gaps.push({
+          nodeId: req.id,
+          nodeName: req.name,
+          nodeType: req.type,
+          nodeStatus: req.status,
+          path: req.path,
+          projectId: req.projectId,
+          projectName: req.projectName,
+          docName: expected,
+          documentId: doc ? doc.id : null,
+          linked: !!doc,
+          filled: false,
+          gapType: doc ? 'empty' : 'missing'
+        })
+      }
+    }
+
+    let items = allDocuments
+    if (nameFilter) items = items.filter((d) => d.name === nameFilter)
+    if (fillValue === 'filled') items = items.filter((d) => d.filled)
+    if (fillValue === 'empty') items = items.filter((d) => !d.filled)
+    if (query) items = items.filter((d) => matchesText(d.name, d.content, d.nodeName, d.path, d.projectName))
+
+    let filteredGaps = gaps
+    if (nameFilter) filteredGaps = filteredGaps.filter((g) => g.docName === nameFilter)
+    if (fillValue === 'filled') filteredGaps = []
+    if (query) filteredGaps = filteredGaps.filter((g) => matchesText(g.nodeName, g.path, g.projectName, g.docName))
+
+    const linkedRequired = allDocuments.filter((d) => d.isRequired).length
+    const filledRequired = allDocuments.filter((d) => d.isRequired && d.filled).length
+    const requiredSlots = requirements.length * expectedNames.length
+
+    return {
+      scope: { projectId, status: status || null },
+      expectedDocNames: expectedNames,
+      summary: {
+        requirementCount: requirements.length,
+        documentCount: allDocuments.length,
+        requiredSlotCount: requiredSlots,
+        linkedRequiredSlotCount: linkedRequired,
+        filledRequiredSlotCount: filledRequired,
+        emptyRequiredSlotCount: linkedRequired - filledRequired,
+        unlinkedRequiredSlotCount: requiredSlots - linkedRequired,
+        missingRequiredSlotCount: requiredSlots - filledRequired,
+        gapRequirementCount: new Set(gaps.map((g) => g.nodeId)).size,
+        filteredDocumentCount: items.length,
+        filteredGapCount: filteredGaps.length
+      },
+      items,
+      gaps: filteredGaps
     }
   }
 
@@ -2722,6 +2813,7 @@ export function createStore(db, options = {}) {
     createRequirement,
     transitionRequirement,
     requirementSummary,
+    documentOverview,
     REQUIREMENT_TRANSITIONS,
     getNode: (id) => nodeVO(rawNode(id)),
     resolveRef,

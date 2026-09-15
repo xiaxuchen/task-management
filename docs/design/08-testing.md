@@ -23,6 +23,8 @@
   - `scope-validation`：`scope` 值域校验的三入口一致性（D2 回归）——`normalizeScope` 的缺省 / 合法 / 非法取值；四个聚合构建器（readiness / acceptance / release-checklist / delivery-gate）拒绝非法 `scope`；非法 `scope` 不再把「本节点就绪、子树未就绪」翻成 `ready=true`；MCP 由 `z.enum` 在协议层拒绝并返回 `isError`
   - `delivery-gate`：交付门禁汇总三段既有结论——空证据 `unknown`（不伪造成可交付）、需求就绪但测试未执行 `not_ready`、`not_run`/`running` 显式分桶与 blocker 明细、三段通过 / 不适用不阻塞 `ready`、必做上线项未完成覆盖测试通过结论、停用用例不参与门禁；`scope=subtree` 联动；阻塞项展平到条目级；`scope`/`format` 非法值三入口统一 `VALIDATION_FAILED`；markdown 单元格转义；**纯读聚合不产生 revision**；能力清单登记
   - `delivery-gate-mcp`：MCP 真实协议调用 `delivery_gate`（JSON / md / subtree）、非法 `scope`/`format` 返回 `isError + VALIDATION_FAILED`、与 store / HTTP / CLI 逐字段一致
+  - `document-overview`：需求文档集中检索与缺口对账——核心槽位统计、关键词/文档名/fill 筛选、
+    非法 fill、空项目范围；HTTP / CLI / MCP 与 store 逐字段一致；纯读不产生 revision
   - `requirement-management`：需求条目创建时自动关联核心文档、列表筛选与 KPI、文档缺口统计、
     受控状态流转（合法路径 / 非法跳转 / 取消恢复）、通用 `node.update` 不能绕过状态机；
     HTTP / CLI / MCP 三入口一致
