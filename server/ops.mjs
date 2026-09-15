@@ -1003,7 +1003,7 @@ export function renderDeliverySnapshotMd(snapshot) {
       .replace(/\\/g, '\\\\')
       .replace(/\|/g, '\\|')
       .replace(/#/g, '\\#')
-      .replace(/\r?\n/g, ' ')
+      .replace(/\r\n|\r|\n/g, ' ')
   const decisionText = {
     ready: '可交付',
     not_ready: '不可交付',

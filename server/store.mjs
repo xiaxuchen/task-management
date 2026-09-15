@@ -1759,13 +1759,21 @@ export function createStore(db, options = {}) {
    * name / path / label 是可改名、可翻译的呈现字段；把它们纳入指纹会让改错别字也触发 drifted。
    * id / status / totals / checks / reports / content 等证据字段仍完整保留。
    */
-  const DELIVERY_FINGERPRINT_DISPLAY_KEYS = new Set(['name', 'path', 'label'])
+  const DELIVERY_FINGERPRINT_NON_SEMANTIC_KEYS = new Set([
+    'name',
+    'path',
+    'label',
+    'createdAt',
+    'updatedAt',
+    'createdBy',
+    'updatedBy'
+  ])
   function deliveryEvidence(value) {
     if (Array.isArray(value)) return value.map((v) => deliveryEvidence(v))
     if (value && typeof value === 'object') {
       const out = {}
       for (const [key, child] of Object.entries(value)) {
-        if (DELIVERY_FINGERPRINT_DISPLAY_KEYS.has(key)) continue
+        if (DELIVERY_FINGERPRINT_NON_SEMANTIC_KEYS.has(key)) continue
         out[key] = deliveryEvidence(child)
       }
       return out

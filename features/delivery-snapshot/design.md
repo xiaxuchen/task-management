@@ -19,8 +19,9 @@
 
 **R2 指纹是稳定 JSON 的 SHA-256，且漂移只认证据集合**：对象 key 顺序不能影响等值判断。
 写入时对完整门禁做键排序后哈希；读取时用同一算法重算当前门禁，指纹相同为 `current`，不同为 `drifted`。
-指纹前会递归剔除展示字段 `name` / `path` / `label`：节点改名、路径调整、文案翻译不属于证据变化，不应触发漂移；
-`id` / `status` / `totals` / `checks` / `reports` / `content` 等证据字段仍完整参与指纹。
+指纹前会递归剔除两列非语义字段：展示字段 `name` / `path` / `label`（改名、路径调整、文案翻译不触发漂移），
+以及审计元数据 `createdAt` / `updatedAt` / `createdBy` / `updatedBy`（no-op 重存或仅改备注人的时间戳不触发漂移）。
+`id` / `kind` / `status` / `required` / `content` / `rollback` / `totals` / `checks` / `reports` 等证据字段仍完整参与指纹。
 
 **R3 历史不可变、现状实时核对**：`delivery_snapshots` 只插入不更新。读取时在内存中重建当前门禁；
 `drift.currentDecision` 是现状，`snapshot.decision` 是冻结结论，两者绝不混成一个字段。
@@ -32,8 +33,9 @@
 MCP 工具回写 `created_by=mcp`，避免审计记录被错误记成 `user`。
 
 **R6 快照可导出**：`renderDeliverySnapshotMd` 同时输出冻结结论、当前核对、指纹与冻结依据，
-可直接贴进验收 / 上线记录；标题、备注和 markdown 表格单元格统一沿用反斜杠 / 竖线 / 换行转义纪律，
-并对 `#` 做标题标记转义，用户可写文本不得凭空生成新章节或伪造证据表格。
+可直接贴进验收 / 上线记录；标题、备注和 markdown 表格单元格统一沿用反斜杠 / 竖线转义纪律，
+按 CommonMark 行结束符口径把 `CRLF / CR / LF` 统一压成单行，并对 `#` 做标题标记转义；
+用户可写文本不得凭空生成新章节、围栏或伪造证据表格。
 
 ## 3. 接口语义
 

@@ -70,6 +70,23 @@ test('delivery snapshot：漂移只认证据集合——节点改名不误报 dr
   assert.equal(store.buildDeliveryGate(r.id).node.name, 'R-改名')
 })
 
+test('delivery snapshot：漂移只认证据集合——上线项改名 / no-op 重存 current，status 变化 drifted', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const item = store.createReleaseItem(r.id, { name: '上线项', kind: 'sql', content: 'ALTER TABLE x', status: 'done' })
+  const snapshot = store.captureDeliverySnapshot(r.id)
+  assert.equal(snapshot.drift.status, 'current')
+
+  store.updateReleaseItem(item.id, { name: '上线项改名' })
+  assert.equal(store.getDeliverySnapshot(snapshot.id).drift.status, 'current')
+
+  store.updateReleaseItem(item.id, { name: '上线项改名', kind: 'sql', content: 'ALTER TABLE x', status: 'done' })
+  assert.equal(store.getDeliverySnapshot(snapshot.id).drift.status, 'current')
+
+  store.updateReleaseItem(item.id, { status: 'pending' })
+  assert.equal(store.getDeliverySnapshot(snapshot.id).drift.status, 'drifted')
+})
+
 test('delivery snapshot：scope=subtree 冻结子树证据，并按 scope 列表隔离', async (t) => {
   const { tmp, store, p, r } = await setup()
   t.after(() => tmp.cleanup())
@@ -160,6 +177,28 @@ test('delivery snapshot：Markdown 导出转义标题与备注，不能注入章
   assert.ok(!/^## 注入标题$/m.test(md))
   assert.ok(!md.includes('\n| 伪造来源 | pass | 伪造通过 |'))
   assert.ok(md.includes('备注：正常备注  \\#\\# 注入标题 \\| 伪造来源 \\| pass \\| 伪造通过 \\|'))
+})
+
+test('delivery snapshot：单独 CR 被归一化，Markdown 渲染后冻结依据表仍在', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const snapshot = store.captureDeliverySnapshot(r.id, { note: '正常\r```\r> 注入\r- 列表\r1. 列表' })
+  const { renderDeliverySnapshotMd } = await import('../server/ops.mjs')
+  const md = renderDeliverySnapshotMd(store.getDeliverySnapshot(snapshot.id))
+  assert.ok(!md.includes('\r'))
+  assert.ok(!md.includes('\n```'))
+
+  const { execFileSync } = await import('node:child_process')
+  const rendered = execFileSync('python3', ['-c', 'import sys; from markdown_it import MarkdownIt; print(MarkdownIt("commonmark").render(sys.stdin.read()))'], {
+    input: md,
+    encoding: 'utf8'
+  })
+  assert.ok(!rendered.includes('<pre>'))
+  assert.ok(!rendered.includes('<code>'))
+  assert.ok(!rendered.includes('<blockquote>'))
+  assert.ok(rendered.includes('冻结依据'))
+  assert.ok(rendered.includes('需求就绪'))
+  assert.ok(rendered.includes('测试验收'))
 })
 
 test('delivery snapshot：CLI capture / list / get 全链路', async (t) => {
@@ -286,6 +325,62 @@ test('delivery snapshot：HTTP / CLI / MCP 的 markdown 输出逐字一致且保
   assert.ok(expected.includes('R \\|标题\\'))
   assert.ok(expected.includes('备注：A\\|B\\\\C D'))
   assert.ok(!expected.includes('\n## 注入标题'))
+})
+
+test('delivery snapshot：HTTP / CLI / MCP 的上线项漂移矩阵一致', async (t) => {
+  const tmp = await tempHome()
+  const home = tmp.dir
+  const store = tmp.store.createStore(tmp.openDb())
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  store.upsertDocument(r.id, '需求内容', '需求正文')
+  store.upsertDocument(r.id, '概要设计', '设计正文')
+  const c = store.upsertTestCase(r.id, { name: '回归用例', prompt: '跑单测' })
+  const report = store.createTestReport(r.id, { caseId: c.id, status: 'running', kind: 'regression' })
+  store.finishTestReport(report.id, { status: 'pass' })
+  const item = store.createReleaseItem(r.id, { name: '上线项', kind: 'sql', content: 'ALTER TABLE x', status: 'done' })
+  const snapshot = store.captureDeliverySnapshot(r.id)
+
+  const { createApp } = await import('../server/http.mjs')
+  const app = createApp({ store })
+  const server = await new Promise((resolve, reject) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s))
+    s.once('error', reject)
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  const { createMcpServer } = await import('../server/mcp.mjs')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js')
+  const mcp = createMcpServer({ store })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await mcp.connect(serverTransport)
+  const client = new Client({ name: 'taskboard-snapshot-drift-consistency', version: '1.0.0' })
+  await client.connect(clientTransport)
+  t.after(async () => {
+    await client.close()
+    await mcp.close()
+    await new Promise((resolve) => server.close(resolve))
+    tmp.cleanup()
+  })
+
+  const read = async () => {
+    const http = await fetch(`${base}/api/delivery-snapshots/${snapshot.id}`).then((x) => x.json())
+    const { stdout } = await execFileP('node', [CLI, 'delivery', 'snapshot-get', String(snapshot.id)], {
+      env: { ...process.env, TASKBOARD_HOME: home },
+      encoding: 'utf8'
+    })
+    const cli = JSON.parse(stdout)
+    const mcp = JSON.parse((await client.callTool({ name: 'delivery_snapshot_get', arguments: { id: snapshot.id } })).content[0].text)
+    return [http.drift.status, cli.drift.status, mcp.drift.status]
+  }
+
+  assert.deepEqual(await read(), ['current', 'current', 'current'])
+  store.updateReleaseItem(item.id, { name: '上线项改名' })
+  assert.deepEqual(await read(), ['current', 'current', 'current'])
+  store.updateReleaseItem(item.id, { name: '上线项改名', kind: 'sql', content: 'ALTER TABLE x', status: 'done' })
+  assert.deepEqual(await read(), ['current', 'current', 'current'])
+  store.updateReleaseItem(item.id, { status: 'pending' })
+  assert.deepEqual(await read(), ['drifted', 'drifted', 'drifted'])
 })
 
 test('delivery snapshot：能力清单登记三入口 1:1', async () => {
