@@ -23,9 +23,12 @@
 
 - **只追加**：`saveDocumentVersion` 只 `INSERT`，不更新或删除既有快照。
 - **保存时机**：`createDocument` 落 `create`；`updateDocument` 落 `update`；恢复落 `restore`；老库回填落 `migrated`。
+- **无差异不落**：`updateDocument({})`、只改空白名称且 trim 后同名、或正文完全未变化时直接返回当前文档，不写 `documents`、不追加快照、不递增 revision。
 - **恢复语义**：先读取目标版本并检查同节点是否已有其它文档占用该名称，无冲突才更新 `documents`，随后保存 `restore` 新快照。
+- **名称口径**：恢复前对快照名执行 `trim`，空名报 `VALIDATION_FAILED`；查重与写回都使用 trim 后的名称。
 - **revision**：查询历史是纯读；恢复是一次写入，只 `bumpRevision()` 一次。
 - **迁移**：`db.migrate()` 幂等建表，并对没有历史的文档按当前名称 / 正文 / `updated_by` / `updated_at` 回填 `migrated`。
+- **数据快照**：文本快照的导出 / 导入顺序把 `document_versions` 紧跟在 `documents` 后；导入建立 `documents` 旧 id→新 id 映射后重写 `document_id`，找不到新文档的孤儿版本直接丢弃。
 
 ## 3. 对外接口
 

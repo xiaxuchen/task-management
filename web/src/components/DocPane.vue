@@ -245,14 +245,18 @@ async function restore(version) {
   } catch {
     return
   }
-  const out = await api.docRestore(activeDoc.value.id, version.id)
-  const idx = docs.value.findIndex((d) => d.id === out.document.id)
-  if (idx >= 0) docs.value[idx] = { ...docs.value[idx], ...out.document }
-  versions.value = await api.docVersions(out.document.id)
-  destroyEditor()
-  await nextTick()
-  await render()
-  ElMessage.success('已恢复')
+  try {
+    const out = await api.docRestore(activeDoc.value.id, version.id)
+    const idx = docs.value.findIndex((d) => d.id === out.document.id)
+    if (idx >= 0) docs.value[idx] = { ...docs.value[idx], ...out.document }
+    versions.value = await api.docVersions(out.document.id)
+    destroyEditor()
+    await nextTick()
+    await render()
+    ElMessage.success('已恢复')
+  } catch (e) {
+    ElMessage.error(e?.message || String(e))
+  }
 }
 
 async function doCreate() {

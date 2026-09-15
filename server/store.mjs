@@ -618,19 +618,21 @@ export function createStore(db, options = {}) {
     if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
     const version = db.prepare('SELECT * FROM document_versions WHERE id = ? AND document_id = ?').get(versionId, docId)
     if (!version) throw new AppError(CODES.NOT_FOUND, `文档版本 ${versionId} 不存在`, { id: versionId, documentId: docId })
+    const targetName = String(version.name || '').trim()
+    if (!targetName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
     const duplicate = db
       .prepare('SELECT id FROM documents WHERE node_id = ? AND name = ? AND id <> ?')
-      .get(cur.node_id, version.name, docId)
+      .get(cur.node_id, targetName, docId)
     if (duplicate) {
-      throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${version.name}」`, {
+      throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${targetName}」`, {
         nodeId: cur.node_id,
-        name: version.name
+        name: targetName
       })
     }
     const ts = now()
     const byActor = actor(by)
     db.prepare('UPDATE documents SET name = ?, content = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(
-      version.name,
+      targetName,
       version.content ?? '',
       ts,
       byActor,
@@ -669,21 +671,27 @@ export function createStore(db, options = {}) {
   function updateDocument(docId, patch, by = 'user') {
     const cur = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
     if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
+    const nextName = patch.name !== undefined ? String(patch.name || '').trim() : null
+    const nextContent = patch.content !== undefined ? String(patch.content ?? '') : null
+    if (patch.name !== undefined && !nextName) {
+      throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    }
+    const nameChanged = patch.name !== undefined && nextName !== cur.name
+    const contentChanged = patch.content !== undefined && nextContent !== cur.content
+    if (!nameChanged && !contentChanged) return docVO(cur)
     const fields = []
     const args = []
-    if (patch.name !== undefined) {
-      const docName = String(patch.name || '').trim()
-      if (!docName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    if (nameChanged) {
       const dup = db
         .prepare('SELECT id FROM documents WHERE node_id = ? AND name = ? AND id <> ?')
-        .get(cur.node_id, docName, docId)
-      if (dup) throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${docName}」`, { name: docName })
+        .get(cur.node_id, nextName, docId)
+      if (dup) throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${nextName}」`, { name: nextName })
       fields.push('name = ?')
-      args.push(docName)
+      args.push(nextName)
     }
-    if (patch.content !== undefined) {
+    if (contentChanged) {
       fields.push('content = ?')
-      args.push(String(patch.content ?? ''))
+      args.push(nextContent)
     }
     fields.push('updated_at = ?', 'updated_by = ?')
     args.push(now(), actor(by), docId)

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { execFile } from 'node:child_process'
@@ -8,6 +9,8 @@ import { tempHome } from './helpers.mjs'
 
 const execFileP = promisify(execFile)
 const CLI = path.resolve(import.meta.dirname, '../bin/taskboard.js')
+const EXPORT_SNAPSHOT = path.resolve(import.meta.dirname, '../scripts/export-snapshot.mjs')
+const IMPORT_SNAPSHOT = path.resolve(import.meta.dirname, '../scripts/import-snapshot.mjs')
 
 async function httpServer() {
   const tmp = await tempHome()
@@ -64,6 +67,14 @@ async function cli(home, args) {
   return JSON.parse(stdout)
 }
 
+async function snapshotCmd(script, home, args) {
+  const { stdout, stderr } = await execFileP('node', [script, ...args], {
+    env: { ...process.env, TASKBOARD_HOME: home },
+    encoding: 'utf8'
+  })
+  return { stdout, stderr }
+}
+
 function seedProject(store) {
   return store.createNode({ type: 'project', name: 'P' })
 }
@@ -110,6 +121,46 @@ test('文档历史：恢复旧名称撞到现存文档时报 DOC_NAME_EXISTS，�
   assert.throws(() => store.restoreDocumentVersion(target.id, versionId), /DOC_NAME_EXISTS/)
   assert.equal(store.listDocuments(p.id).find((d) => d.id === target.id).content, 'v1')
   assert.equal(store.listDocuments(p.id).find((d) => d.name === '旧名' && d.id !== target.id).content, '另一份文档')
+})
+
+test('文档历史：空 patch 与同内容 upsert 不留无差异快照', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const store = tmp.store.createStore(tmp.openDb())
+  const p = seedProject(store)
+  const doc = store.createDocument(p.id, '设计', 'v1')
+
+  const beforeRevision = store.getRevision()
+  const same = store.updateDocument(doc.id, {})
+  assert.equal(same.content, 'v1')
+  assert.equal(store.getRevision(), beforeRevision)
+  assert.equal(store.listDocumentVersions(doc.id).length, 1)
+
+  const up = store.upsertDocument(p.id, '设计', 'v1')
+  assert.equal(up.created, false)
+  assert.equal(store.getRevision(), beforeRevision)
+  assert.equal(store.listDocumentVersions(doc.id).length, 1)
+
+  store.updateDocument(doc.id, { name: '  设计  ' })
+  assert.equal(store.getRevision(), beforeRevision)
+  assert.equal(store.listDocumentVersions(doc.id).length, 1)
+})
+
+test('文档历史：恢复时快照名 trim 后查重并写入，空名拒绝', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const store = tmp.store.createStore(tmp.openDb())
+  const p = seedProject(store)
+  const doc = store.createDocument(p.id, '设计', 'v1')
+
+  store.db.prepare('UPDATE document_versions SET name = ? WHERE document_id = ?').run('  设计  ', doc.id)
+  store.updateDocument(doc.id, { name: '新版' })
+  store.createDocument(p.id, '设计', '占位')
+  const trimmed = store.listDocumentVersions(doc.id).find((v) => v.name === '  设计  ')
+  assert.throws(() => store.restoreDocumentVersion(doc.id, trimmed.id), /DOC_NAME_EXISTS/)
+
+  store.db.prepare('UPDATE document_versions SET name = ? WHERE id = ?').run('   ', trimmed.id)
+  assert.throws(() => store.restoreDocumentVersion(doc.id, trimmed.id), /VALIDATION_FAILED/)
 })
 
 test('文档历史（HTTP）：列表、恢复与 revision 递增', async (t) => {
@@ -212,4 +263,91 @@ test('文档历史迁移：老库已有文档首次打开回填 migrated 快照�
   const again = tmp.openDb(file)
   assert.equal(again.prepare('SELECT COUNT(*) c FROM document_versions WHERE document_id = 4').get().c, 1)
   again.close()
+})
+
+test('文档历史快照：导出→导入按新 document id 重映射历史并保留顺序', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const sourceHome = path.join(tmp.dir, 'source')
+  const targetHome = path.join(tmp.dir, 'target')
+  const snapPath = path.join(tmp.dir, 'snapshot.json')
+  fs.mkdirSync(sourceHome, { recursive: true })
+  fs.mkdirSync(targetHome, { recursive: true })
+
+  const source = tmp.store.createStore(tmp.openDb(path.join(sourceHome, 'data.db')))
+  const p = seedProject(source)
+  const a = source.createDocument(p.id, 'Alpha', 'a1')
+  source.updateDocument(a.id, { content: 'alpha-v2' })
+  source.updateDocument(a.id, { content: 'alpha-v3' })
+  const b = source.createDocument(p.id, 'Beta', 'b1')
+  source.upsertDocument(p.id, '需求内容', 'r1')
+  const expected = new Map(source.listDocuments(p.id).map((d) => [d.name, source.listDocumentVersions(d.id).map((v) => v.content)]))
+  source.db.close()
+
+  // 目标库先有一篇文档，确保导入会重映射主键而不是碰巧沿用旧 id 后看起来正确。
+  const target = tmp.store.createStore(tmp.openDb(path.join(targetHome, 'data.db')))
+  target.createNode({ type: 'project', name: 'Old' })
+  target.createDocument(1, 'N', 'n1')
+  target.db.close()
+
+  await snapshotCmd(EXPORT_SNAPSHOT, sourceHome, [snapPath])
+  await snapshotCmd(IMPORT_SNAPSHOT, targetHome, [snapPath])
+
+  const restored = tmp.store.createStore(tmp.openDb(path.join(targetHome, 'data.db')))
+  const docs = restored.listDocuments(restored.resolveRef('P').id)
+  assert.equal(docs.length, expected.size)
+  for (const d of docs) {
+    assert.deepEqual(restored.listDocumentVersions(d.id).map((v) => v.content), expected.get(d.name))
+  }
+  assert.deepEqual(
+    restored.listDocumentVersions(docs.find((d) => d.name === 'Beta').id).map((v) => v.documentId),
+    [docs.find((d) => d.name === 'Beta').id]
+  )
+  restored.db.close()
+})
+
+test('文档历史快照：导入孤儿版本行被丢弃且不串到现存文档', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const sourceHome = path.join(tmp.dir, 'source')
+  const targetHome = path.join(tmp.dir, 'target')
+  const snapPath = path.join(tmp.dir, 'snapshot.json')
+  fs.mkdirSync(sourceHome, { recursive: true })
+  fs.mkdirSync(targetHome, { recursive: true })
+
+  const source = tmp.store.createStore(tmp.openDb(path.join(sourceHome, 'data.db')))
+  const p = seedProject(source)
+  source.createDocument(p.id, 'Alpha', 'a1')
+  source.db.close()
+  await snapshotCmd(EXPORT_SNAPSHOT, sourceHome, [snapPath])
+
+  const bad = JSON.parse(fs.readFileSync(snapPath, 'utf8'))
+  const alpha = bad.tables.documents.find((d) => d.name === 'Alpha')
+  const orphan = bad.tables.document_versions.find((v) => v.document_id === alpha.id)
+  assert.ok(orphan)
+  orphan.document_id = 999999
+  orphan.name = '孤儿'
+  fs.writeFileSync(snapPath, JSON.stringify(bad, null, 2) + '\n')
+
+  const target = tmp.store.createStore(tmp.openDb(path.join(targetHome, 'data.db')))
+  target.createNode({ type: 'project', name: 'Old' })
+  const victim = target.createDocument(1, 'N', 'n1')
+  target.db.close()
+
+  await snapshotCmd(IMPORT_SNAPSHOT, targetHome, [snapPath])
+
+  const restored = tmp.store.createStore(tmp.openDb(path.join(targetHome, 'data.db')))
+  const imported = restored.listDocuments(restored.resolveRef('P').id).find((d) => d.name === 'Alpha')
+  assert.deepEqual(
+    restored.listDocumentVersions(imported.id).map((v) => [v.name, v.content, v.reason]),
+    [['Alpha', 'a1', 'migrated']]
+  )
+  const orphans = restored.db
+    .prepare('SELECT COUNT(*) c FROM document_versions v WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v.document_id)')
+    .get().c
+  assert.equal(orphans, 0)
+  assert.equal(restored.db.prepare("SELECT COUNT(*) c FROM document_versions WHERE name = '孤儿'").get().c, 0)
+  const description = restored.listDocuments(restored.resolveRef('P').id).find((d) => d.name === '描述')
+  assert.equal(restored.listDocumentVersions(description.id)[0].content, '')
+  restored.db.close()
 })
