@@ -23,6 +23,8 @@ export const TOOLS = [
   'doc_update',
   'doc_remove',
   'doc_reorder',
+  'doc_version_list',
+  'doc_version_restore',
   'commit_list',
   'commit_diff',
   'commit_track',

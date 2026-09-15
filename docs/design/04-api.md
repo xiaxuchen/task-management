@@ -25,6 +25,8 @@
 | POST | `/api/nodes/:id/documents` | 新增文档 `{name, content?}` |
 | POST | `/api/nodes/:id/documents/upsert` | 按文档名 get-or-create 并写内容（幂等）：`{name, content}` |
 | PATCH | `/api/documents/:docId` | 更新文档 `{name?, content?}` |
+| GET | `/api/documents/:docId/versions` | 文档历史版本（新→旧）：名称 / 正文 / 变更原因 / 操作者 / 时间 |
+| POST | `/api/documents/:docId/versions/:versionId/restore` | 恢复文档到指定历史版本，追加新快照，不改写旧历史 |
 | DELETE | `/api/documents/:docId` | 删除文档 |
 | POST | `/api/nodes/:id/documents/reorder` | `{orderedIds[]}` 写入文档顺序 |
 | POST | `/api/nodes/:id/commits` | `{repo?, sha, note?}` 登记 commit |

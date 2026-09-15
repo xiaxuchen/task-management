@@ -118,6 +118,22 @@ v1 中所有属性值均由用户编辑；系统自动写入的数据只有 MR �
 
 文档重名返回 409 `DOC_NAME_EXISTS`；UI 新增文档时自动加序号规避（新文档 / 新文档2…）。
 
+### 4.6.1 document_versions（文档历史，不可变快照）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| document_id | INTEGER NOT NULL | FK → documents(id) ON DELETE CASCADE |
+| name | TEXT NOT NULL | 当时的文档名 |
+| content | TEXT NOT NULL | 当时的 markdown 正文 |
+| reason | TEXT NOT NULL | `create` / `update` / `restore` / `migrated` |
+| created_at | TEXT NOT NULL | 快照时间 |
+| created_by | TEXT NOT NULL | 操作者 |
+
+索引：`idx_document_versions_doc(document_id, id)`。
+
+规则：创建 / 更新 / 恢复自动追加快照；恢复不改写历史，而是再追加一条 `restore`；老库首次打开为已有文档回填一条 `migrated` 基线。恢复旧名称撞到现存文档时仍返回 `DOC_NAME_EXISTS`。
+
 ### 4.7 repos（仓库登记）
 
 | 字段 | 类型 | 说明 |

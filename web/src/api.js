@@ -38,6 +38,8 @@ export default {
   docCreate: (nodeId, data) => api(`/nodes/${nodeId}/documents`, { method: 'POST', body: JSON.stringify(data) }),
   docUpsert: (nodeId, data) => api(`/nodes/${nodeId}/documents/upsert`, { method: 'POST', body: JSON.stringify(data) }),
   docUpdate: (docId, data) => api(`/documents/${docId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  docVersions: (docId) => api(`/documents/${docId}/versions`),
+  docRestore: (docId, versionId) => api(`/documents/${docId}/versions/${versionId}/restore`, { method: 'POST', body: '{}' }),
   docDelete: (docId) => api(`/documents/${docId}`, { method: 'DELETE' }),
   docReorder: (nodeId, data) => api(`/nodes/${nodeId}/documents/reorder`, { method: 'POST', body: JSON.stringify(data) }),
 

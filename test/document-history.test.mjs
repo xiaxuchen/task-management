@@ -1,0 +1,215 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { tempHome } from './helpers.mjs'
+
+const execFileP = promisify(execFile)
+const CLI = path.resolve(import.meta.dirname, '../bin/taskboard.js')
+
+async function httpServer() {
+  const tmp = await tempHome()
+  const store = tmp.store.createStore(tmp.openDb())
+  const { createApp } = await import('../server/http.mjs')
+  const server = await new Promise((resolve, reject) => {
+    const s = createApp({ store }).listen(0, '127.0.0.1', () => resolve(s))
+    s.once('error', reject)
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  const request = async (method, pathname, body) => {
+    const res = await fetch(`${base}${pathname}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    })
+    return { status: res.status, body: await res.json() }
+  }
+  return {
+    tmp,
+    store,
+    request,
+    close: () => new Promise((resolve) => server.close(resolve))
+  }
+}
+
+async function mcpClient() {
+  const tmp = await tempHome()
+  const store = tmp.store.createStore(tmp.openDb())
+  const { createMcpServer } = await import('../server/mcp.mjs')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js')
+  const server = createMcpServer({ store })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  const client = new Client({ name: 'taskboard-document-history-test', version: '1.0.0' })
+  await client.connect(clientTransport)
+  return {
+    tmp,
+    store,
+    call: (name, args) => client.callTool({ name, arguments: args }),
+    close: async () => {
+      await client.close()
+      await server.close()
+    }
+  }
+}
+
+async function cli(home, args) {
+  const { stdout } = await execFileP('node', [CLI, ...args], {
+    env: { ...process.env, TASKBOARD_HOME: home },
+    encoding: 'utf8'
+  })
+  return JSON.parse(stdout)
+}
+
+function seedProject(store) {
+  return store.createNode({ type: 'project', name: 'P' })
+}
+
+test('文档历史：创建/更新均留快照，恢复追加新版本且不改写历史', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const store = tmp.store.createStore(tmp.openDb())
+  const p = seedProject(store)
+
+  const doc = store.createDocument(p.id, '设计', 'v1', 'ai')
+  store.updateDocument(doc.id, { name: '详细设计', content: 'v2' }, 'cli')
+  store.updateDocument(doc.id, { content: 'v3' }, 'user')
+
+  let history = store.listDocumentVersions(doc.id)
+  assert.deepEqual(history.map((v) => [v.name, v.content, v.reason, v.createdBy]), [
+    ['详细设计', 'v3', 'update', 'user'],
+    ['详细设计', 'v2', 'update', 'cli'],
+    ['设计', 'v1', 'create', 'ai']
+  ])
+
+  const restored = store.restoreDocumentVersion(doc.id, history.at(-1).id, 'cli')
+  assert.equal(restored.document.name, '设计')
+  assert.equal(restored.document.content, 'v1')
+  assert.equal(restored.version.reason, 'restore')
+  assert.equal(restored.version.createdBy, 'cli')
+
+  history = store.listDocumentVersions(doc.id)
+  assert.equal(history.length, 4)
+  assert.equal(history[0].reason, 'restore')
+  assert.deepEqual(history.slice(1).map((v) => v.reason), ['update', 'update', 'create'])
+})
+
+test('文档历史：恢复旧名称撞到现存文档时报 DOC_NAME_EXISTS，不覆盖两份文档', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const store = tmp.store.createStore(tmp.openDb())
+  const p = seedProject(store)
+  const target = store.createDocument(p.id, '旧名', 'v1')
+  const versionId = store.listDocumentVersions(target.id)[0].id
+  store.updateDocument(target.id, { name: '新名' })
+  store.createDocument(p.id, '旧名', '另一份文档')
+
+  assert.throws(() => store.restoreDocumentVersion(target.id, versionId), /DOC_NAME_EXISTS/)
+  assert.equal(store.listDocuments(p.id).find((d) => d.id === target.id).content, 'v1')
+  assert.equal(store.listDocuments(p.id).find((d) => d.name === '旧名' && d.id !== target.id).content, '另一份文档')
+})
+
+test('文档历史（HTTP）：列表、恢复与 revision 递增', async (t) => {
+  const { tmp, store, request, close } = await httpServer()
+  t.after(async () => {
+    await close()
+    tmp.cleanup()
+  })
+  const p = seedProject(store)
+  const created = await request('POST', `/api/nodes/${p.id}/documents`, { name: '接口设计', content: 'v1' })
+  assert.equal(created.status, 201)
+  const docId = created.body.id
+  await request('PATCH', `/api/documents/${docId}`, { content: 'v2' })
+
+  const before = store.getRevision()
+  const versions = await request('GET', `/api/documents/${docId}/versions`)
+  assert.equal(versions.status, 200)
+  assert.deepEqual(versions.body.map((v) => v.content), ['v2', 'v1'])
+
+  const versionId = versions.body.at(-1).id
+  const restored = await request('POST', `/api/documents/${docId}/versions/${versionId}/restore`, {})
+  assert.equal(restored.status, 200)
+  assert.equal(restored.body.document.content, 'v1')
+  assert.equal(store.getRevision(), before + 1)
+})
+
+test('文档历史（CLI）：doc history 与 doc restore 与 store 语义一致', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const home = tmp.dir
+  await cli(home, ['node', 'upsert', '--path', 'P/R'])
+  await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', 'v1'])
+  await cli(home, ['doc', 'upsert', 'P/R', '--name', '概要设计', '--content', 'v2'])
+  const docs = await cli(home, ['doc', 'list', 'P/R'])
+  const doc = docs.find((d) => d.name === '概要设计')
+
+  const history = await cli(home, ['doc', 'history', String(doc.id)])
+  assert.deepEqual(history.map((v) => v.content), ['v2', 'v1'])
+  const restored = await cli(home, ['doc', 'restore', String(doc.id), '--version', String(history.at(-1).id)])
+  assert.equal(restored.document.content, 'v1')
+  assert.equal(restored.version.reason, 'restore')
+})
+
+test('文档历史（MCP）：doc_version_list / doc_version_restore 真实协议可用', async (t) => {
+  const { tmp, store, call, close } = await mcpClient()
+  t.after(async () => {
+    await close()
+    tmp.cleanup()
+  })
+  const p = seedProject(store)
+  const created = await call('doc_create', { ref: String(p.id), name: 'MCP 设计', content: 'v1' })
+  const doc = JSON.parse(created.content[0].text)
+  await call('doc_update', { docId: doc.id, content: 'v2' })
+
+  const listed = await call('doc_version_list', { docId: doc.id })
+  const versions = JSON.parse(listed.content[0].text)
+  assert.deepEqual(versions.map((v) => v.content), ['v2', 'v1'])
+  const restored = await call('doc_version_restore', { docId: doc.id, versionId: versions.at(-1).id })
+  assert.equal(JSON.parse(restored.content[0].text).document.content, 'v1')
+})
+
+test('文档历史迁移：老库已有文档首次打开回填 migrated 快照且幂等', async (t) => {
+  const tmp = await tempHome()
+  t.after(() => tmp.cleanup())
+  const file = path.join(tmp.dir, 'legacy-docs.db')
+  const now = new Date().toISOString()
+  const legacy = new DatabaseSync(file)
+  legacy.exec(`
+    CREATE TABLE nodes (
+      id INTEGER PRIMARY KEY, type TEXT NOT NULL, parent_id INTEGER, name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'todo', sort INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user', updated_by TEXT NOT NULL DEFAULT 'user'
+    );
+    CREATE TABLE documents (
+      id INTEGER PRIMARY KEY, node_id INTEGER NOT NULL, name TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '', sort INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user', updated_by TEXT NOT NULL DEFAULT 'user'
+    );
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  `)
+  legacy
+    .prepare('INSERT INTO nodes (id,type,parent_id,name,status,sort,created_at,updated_at) VALUES (1,?,NULL,?,?,0,?,?)')
+    .run('project', 'P', 'todo', now, now)
+  legacy
+    .prepare('INSERT INTO documents (id,node_id,name,content,sort,created_at,updated_at,created_by,updated_by) VALUES (4,1,?,?,0,?,?,?,?)')
+    .run('描述', '历史正文', now, now, 'cli', 'cli')
+  legacy.close()
+
+  const db = tmp.openDb(file)
+  const rows = db.prepare('SELECT * FROM document_versions WHERE document_id = 4').all()
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].name, '描述')
+  assert.equal(rows[0].content, '历史正文')
+  assert.equal(rows[0].reason, 'migrated')
+  assert.equal(rows[0].created_by, 'cli')
+  db.close()
+
+  const again = tmp.openDb(file)
+  assert.equal(again.prepare('SELECT COUNT(*) c FROM document_versions WHERE document_id = 4').get().c, 1)
+  again.close()
+})

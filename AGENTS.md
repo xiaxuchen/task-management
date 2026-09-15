@@ -99,7 +99,7 @@ docs/design.md    ← 主设计文档权威副本
 读取  schema · tree · node_get · attr_defs · doc_list · commit_list · repo_list · config_get
 写入  node_upsert · node_update · node_delete · node_reorder
       attr_set · attr_add · attr_update · attr_remove
-      doc_upsert · doc_create · doc_update · doc_remove · doc_reorder
+      doc_upsert · doc_create · doc_update · doc_remove · doc_reorder · doc_version_list · doc_version_restore
       commit_add · commit_remove · repo_add · repo_update · repo_remove · config_set
 批量  batch · import_outline
 门禁  requirement_readiness · delivery_gate

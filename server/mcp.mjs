@@ -224,6 +224,24 @@ export function createMcpServer({ store }) {
     }
   )
 
+  server.tool(
+    'doc_version_list',
+    '列出文档的历史版本（新版本在前）',
+    { docId: z.number() },
+    mcpValidate(async ({ docId }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.listDocumentVersions(docId), null, 2) }] }
+    })
+  )
+
+  server.tool(
+    'doc_version_restore',
+    '恢复文档到指定历史版本；恢复本身会追加一个新版本，不改写历史',
+    { docId: z.number(), versionId: z.number() },
+    mcpValidate(async ({ docId, versionId }) => {
+      return { content: [{ type: 'text', text: JSON.stringify(store.restoreDocumentVersion(docId, versionId, 'ai'), null, 2) }] }
+    })
+  )
+
   server.tool('doc_remove', '删除文档', { docId: z.number() }, async ({ docId }) => {
     return { content: [{ type: 'text', text: JSON.stringify(store.deleteDocument(docId), null, 2) }] }
   })

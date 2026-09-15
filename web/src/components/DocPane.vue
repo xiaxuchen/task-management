@@ -23,6 +23,7 @@
         <el-button v-if="mode === 'edit'" size="small" link type="primary" :disabled="!dirty" @click="saveNow">
           保存
         </el-button>
+        <el-button v-if="activeDoc" size="small" link @click="openHistory">历史</el-button>
       </div>
       <div ref="hostRef" v-show="activeDoc" class="vd-host" />
       <el-empty v-if="!activeDoc" description="选择或新增文档" />
@@ -34,6 +35,24 @@
         <el-button @click="nameDialog = false">取消</el-button>
         <el-button type="primary" @click="doCreate">确认</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="historyDialog" title="文档历史" width="640px">
+      <el-table :data="versions" size="small" max-height="420">
+        <el-table-column prop="createdAt" label="时间" width="170" />
+        <el-table-column prop="createdBy" label="操作者" width="80" />
+        <el-table-column label="变更" width="90">
+          <template #default="{ row }">{{ reasonLabel(row.reason) }}</template>
+        </el-table-column>
+        <el-table-column prop="name" label="文档名" min-width="130" />
+        <el-table-column prop="content" label="正文预览" min-width="180" show-overflow-tooltip />
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="restore(row)">恢复</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!versions.length" description="暂无历史版本" />
     </el-dialog>
   </div>
 </template>
@@ -56,6 +75,8 @@ const mode = ref('preview')
 const dirty = ref(false)
 const nameDialog = ref(false)
 const newDocName = ref('')
+const historyDialog = ref(false)
+const versions = ref([])
 const hostRef = ref(null)
 
 const activeDoc = computed(() => docs.value.find((d) => String(d.id) === activeId.value))
@@ -201,6 +222,37 @@ function onSelect(id) {
 function newDoc() {
   newDocName.value = ''
   nameDialog.value = true
+}
+
+function reasonLabel(reason) {
+  return { create: '创建', update: '更新', restore: '恢复', migrated: '历史' }[reason] || reason
+}
+
+async function openHistory() {
+  if (!activeDoc.value) return
+  if (mode.value === 'edit') await saveNow()
+  versions.value = await api.docVersions(activeDoc.value.id)
+  historyDialog.value = true
+}
+
+async function restore(version) {
+  try {
+    await ElMessageBox.confirm(
+      `恢复「${activeDoc.value?.name}」到 ${version.createdAt} 的版本？当前内容会先保留在历史中。`,
+      '确认恢复',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  const out = await api.docRestore(activeDoc.value.id, version.id)
+  const idx = docs.value.findIndex((d) => d.id === out.document.id)
+  if (idx >= 0) docs.value[idx] = { ...docs.value[idx], ...out.document }
+  versions.value = await api.docVersions(out.document.id)
+  destroyEditor()
+  await nextTick()
+  await render()
+  ElMessage.success('已恢复')
 }
 
 async function doCreate() {

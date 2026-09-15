@@ -235,6 +235,16 @@ export function createApp({ store }) {
     '/api/documents/:docId',
     wrap((req, res) => res.json(store.updateDocument(Number(req.params.docId), req.body || {}, actorOf(req))))
   )
+  app.get(
+    '/api/documents/:docId/versions',
+    wrap((req, res) => res.json(store.listDocumentVersions(Number(req.params.docId))))
+  )
+  app.post(
+    '/api/documents/:docId/versions/:versionId/restore',
+    wrap((req, res) =>
+      res.json(store.restoreDocumentVersion(Number(req.params.docId), Number(req.params.versionId), actorOf(req)))
+    )
+  )
   app.delete(
     '/api/documents/:docId',
     wrap((req, res) => res.json(store.deleteDocument(Number(req.params.docId))))
