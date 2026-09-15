@@ -139,6 +139,47 @@ export function createApp({ store }) {
     })
   )
 
+  // ---------- 需求管理（需求条目 / 状态流转 / 文档关联） ----------
+
+  app.get(
+    '/api/requirements',
+    wrap((req, res) => {
+      let projectId = null
+      if (req.query.projectId !== undefined) {
+        const rawProjectId = String(req.query.projectId).trim()
+        if (!/^\d+$/.test(rawProjectId)) {
+          throw new AppError(CODES.VALIDATION_FAILED, `projectId 必须是正整数，收到 ${req.query.projectId}`, {
+            projectId: req.query.projectId
+          })
+        }
+        projectId = Number(rawProjectId)
+      }
+      const status = req.query.status || null
+      res.json({
+        revision: store.getRevision(),
+        summary: store.requirementSummary({ projectId, status }),
+        items: store.listRequirements({ projectId, status })
+      })
+    })
+  )
+
+  app.post(
+    '/api/requirements',
+    wrap((req, res) => {
+      const { projectId, projectPath = null, name, attrs } = req.body || {}
+      const pid = projectPath ? store.resolveRef(projectPath).id : projectId
+      res.status(201).json(store.createRequirement({ projectId: pid, name, attrs, actor: actorOf(req) }))
+    })
+  )
+
+  app.post(
+    '/api/requirements/:id/transition',
+    wrap((req, res) => {
+      const node = store.resolveRef(refOf(req))
+      res.json(store.transitionRequirement(node.id, { status: (req.body || {}).status, actor: actorOf(req) }))
+    })
+  )
+
   app.post(
     '/api/nodes/upsert',
     wrap((req, res) => {

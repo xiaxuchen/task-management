@@ -71,6 +71,20 @@ const DEFAULT_READINESS = {
 }
 
 /**
+ * 需求管理的状态机。nodes.status 仍是底层字段，通用入口可改其它节点；
+ * requirement 的业务流转必须走这里：待开始 → 进行中 → 提测中 → 已完成，
+ * 未完成前可取消，误取消可通过 cancelled → todo 恢复。
+ */
+const REQUIREMENT_TRANSITIONS = {
+  todo: ['doing', 'cancelled'],
+  doing: ['testing', 'cancelled'],
+  testing: ['done', 'cancelled'],
+  done: [],
+  cancelled: ['todo']
+}
+const DEFAULT_REQUIREMENT_STATUSES = Object.keys(REQUIREMENT_TRANSITIONS)
+
+/**
  * 解析 agent 输出里的逐条测试结论。
  * 契约来自 ops.composeTestPrompt / composeReleaseCheckPrompt：
  *   `<用例名>: PASS|FAIL|BLOCKED - <依据>`
@@ -111,6 +125,10 @@ function parseRunVerdicts(text) {
 export function createStore(db, options = {}) {
   const docPresets = options.docPresets || DEFAULT_DOC_PRESETS
   const readiness = options.readiness || DEFAULT_READINESS
+  const requirementStatuses = Array.isArray(options.status?.allowed?.requirement) && options.status.allowed.requirement.length
+    ? options.status.allowed.requirement.map(String)
+    : DEFAULT_REQUIREMENT_STATUSES
+  const requirementStatusSet = new Set(requirementStatuses)
   const stmt = (sql) => db.prepare(sql)
 
   let bumpDepth = 0
@@ -210,6 +228,7 @@ export function createStore(db, options = {}) {
   function createNode({ parentId = null, type, name, status = 'todo', attrs, actor: by = 'user' }) {
     if (!type) throw new AppError(CODES.VALIDATION_FAILED, 'type 必填')
     if (!name || !String(name).trim()) throw new AppError(CODES.VALIDATION_FAILED, 'name 必填', { field: 'name' })
+    const initialStatus = type === 'requirement' ? assertRequirementCreateStatus(status) : status
     validateParent(type, parentId)
     const ts = now()
     const nextSort = db
@@ -219,12 +238,15 @@ export function createStore(db, options = {}) {
       .prepare(
         'INSERT INTO nodes (type,parent_id,name,status,sort,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?)'
       )
-      .run(type, parentId, String(name).trim(), status, nextSort, ts, ts, actor(by), actor(by))
+      .run(type, parentId, String(name).trim(), initialStatus, nextSort, ts, ts, actor(by), actor(by))
     const id = Number(info.lastInsertRowid)
     // 建节点 + 写属性 + 预置文档属于「一次操作」，只递增一次 revision
     withoutBump(() => {
       if (attrs) setAttrs(id, attrs, by)
-      for (const docName of docPresetNames(type)) upsertDocument(id, docName, '', by)
+      const names = type === 'requirement'
+        ? [...new Set([...docPresetNames(type), ...requirementDocNames()])]
+        : docPresetNames(type)
+      for (const docName of names) upsertDocument(id, docName, '', by)
     })
     bumpRevision()
     return nodeVO(rawNode(id))
@@ -232,7 +254,140 @@ export function createStore(db, options = {}) {
 
   const docPresetNames = (type) => docPresets[type] || []
 
-  function updateNode(id, patch, by = 'user') {
+  function assertRequirementStatus(status) {
+    if (!requirementStatusSet.has(status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知需求状态 ${status}`, {
+        status,
+        allowed: [...requirementStatusSet]
+      })
+    }
+    return status
+  }
+
+  function assertRequirementCreateStatus(status = 'todo') {
+    assertRequirementStatus(status)
+    if (status !== 'todo') {
+      throw new AppError(CODES.VALIDATION_FAILED, `需求创建时状态必须是 todo，收到 ${status}`, {
+        status,
+        allowed: ['todo']
+      })
+    }
+    return 'todo'
+  }
+
+  function canTransitionRequirement(from, to) {
+    return (REQUIREMENT_TRANSITIONS[from] || []).includes(to)
+  }
+
+  const requirementDocNames = () => [
+    readiness.requirementDoc || DEFAULT_READINESS.requirementDoc,
+    readiness.designDoc || DEFAULT_READINESS.designDoc
+  ]
+
+  function requirementDocState(nodeId) {
+    const docs = listDocuments(nodeId)
+    return requirementDocNames().map((name) => {
+      const doc = docs.find((d) => d.name === name) || null
+      return {
+        name,
+        documentId: doc ? doc.id : null,
+        contentLength: doc ? String(doc.content || '').trim().length : 0,
+        linked: !!doc,
+        filled: !!doc && String(doc.content || '').trim() !== ''
+      }
+    })
+  }
+
+  function requirementVO(row) {
+    const node = nodeVO(row)
+    const parent = row.parent_id == null ? null : rawNode(row.parent_id)
+    const readiness = node.type === 'requirement' ? buildRequirementReadiness(node.id, { scope: 'self' }) : null
+    return {
+      ...node,
+      projectId: parent && parent.type === 'project' ? parent.id : null,
+      projectName: parent && parent.type === 'project' ? parent.name : null,
+      attrs: getAttrs(node.id),
+      documents: listDocuments(node.id),
+      docState: requirementDocState(node.id),
+      readiness,
+      canTransitionTo: REQUIREMENT_TRANSITIONS[node.status] || []
+    }
+  }
+
+  function listRequirements({ projectId = null, status = null } = {}) {
+    const where = ["n.type = 'requirement'"]
+    const args = []
+    if (projectId != null) {
+      where.push('n.parent_id = ?')
+      args.push(projectId)
+    }
+    if (status) {
+      assertRequirementStatus(status)
+      where.push('n.status = ?')
+      args.push(status)
+    }
+    const rows = db
+      .prepare(`SELECT n.* FROM nodes n WHERE ${where.join(' AND ')} ORDER BY n.sort, n.id`)
+      .all(...args)
+    return rows.map((r) => requirementVO(r))
+  }
+
+  function createRequirement({ projectId, name, attrs, actor: by = 'user' }) {
+    if (projectId == null) throw new AppError(CODES.VALIDATION_FAILED, 'projectId 必填', { field: 'projectId' })
+    const node = createNode({ parentId: projectId, type: 'requirement', name, attrs, actor: by })
+    return requirementVO(rawNode(node.id))
+  }
+
+  function transitionRequirement(nodeId, { status, actor: by = 'user' } = {}) {
+    const cur = rawNode(nodeId)
+    if (cur.type !== 'requirement') {
+      throw new AppError(CODES.VALIDATION_FAILED, `节点 ${cur.id} 不是需求条目`, { nodeId: cur.id, nodeType: cur.type })
+    }
+    if (!Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `未知需求状态 ${status}`, {
+        status,
+        allowed: Object.keys(REQUIREMENT_TRANSITIONS)
+      })
+    }
+    if (!Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, cur.status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `需求当前状态 ${cur.status} 不在受控流转图内`, {
+        status: cur.status,
+        allowed: Object.keys(REQUIREMENT_TRANSITIONS)
+      })
+    }
+    if (cur.status === status) return requirementVO(cur)
+    if (!canTransitionRequirement(cur.status, status)) {
+      throw new AppError(CODES.VALIDATION_FAILED, `需求不能从 ${cur.status} 流转到 ${status}`, {
+        from: cur.status,
+        to: status,
+        allowed: REQUIREMENT_TRANSITIONS[cur.status] || []
+      })
+    }
+    updateNode(nodeId, { status }, by, { allowRequirementTransition: true })
+    return requirementVO(rawNode(nodeId))
+  }
+
+  function requirementSummary({ projectId = null, status = null } = {}) {
+    const items = listRequirements({ projectId, status })
+    const byStatus = {}
+    for (const key of requirementStatuses) byStatus[key] = 0
+    let missingRequirementDoc = 0
+    let missingDesignDoc = 0
+    for (const item of items) {
+      if (Object.prototype.hasOwnProperty.call(byStatus, item.status)) byStatus[item.status] += 1
+      const [requirementDoc, designDoc] = requirementDocNames()
+      if (!item.docState.find((d) => d.name === requirementDoc).filled) missingRequirementDoc += 1
+      if (!item.docState.find((d) => d.name === designDoc).filled) missingDesignDoc += 1
+    }
+    return {
+      total: Object.values(byStatus).reduce((sum, n) => sum + n, 0),
+      byStatus,
+      missingRequirementDoc,
+      missingDesignDoc
+    }
+  }
+
+  function updateNode(id, patch, by = 'user', options = {}) {
     const cur = rawNode(id)
     const fields = []
     const args = []
@@ -242,6 +397,21 @@ export function createStore(db, options = {}) {
       args.push(String(patch.name).trim())
     }
     if (patch.status !== undefined) {
+      if (cur.type === 'requirement') assertRequirementStatus(patch.status)
+      if (
+        cur.type === 'requirement' &&
+        !options.allowRequirementTransition &&
+        patch.status !== cur.status &&
+        Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, cur.status) &&
+        Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, patch.status) &&
+        !canTransitionRequirement(cur.status, patch.status)
+      ) {
+        throw new AppError(CODES.VALIDATION_FAILED, `需求不能从 ${cur.status} 流转到 ${patch.status}`, {
+          from: cur.status,
+          to: patch.status,
+          allowed: REQUIREMENT_TRANSITIONS[cur.status] || []
+        })
+      }
       fields.push('status = ?')
       args.push(patch.status)
     }
@@ -2721,6 +2891,11 @@ export function createStore(db, options = {}) {
     createNode,
     updateNode,
     deleteNode,
+    listRequirements,
+    createRequirement,
+    transitionRequirement,
+    requirementSummary,
+    REQUIREMENT_TRANSITIONS,
     getNode: (id) => nodeVO(rawNode(id)),
     resolveRef,
     listChildren,

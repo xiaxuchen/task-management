@@ -59,8 +59,10 @@ test('级联删除返回删除计数', async () => {
   store.upsertDocument(t.id, '描述', '正文')
   const res = store.deleteNode(p.id)
   assert.equal(res.nodes, 4)
-  assert.equal(res.documents, 4)
-  assert.equal(res.documentVersions, 4)
+  // 预置文档数：project「描述」1 + requirement「需求内容」+「概要设计」2 + subreq「需求内容」1 + task「描述」1 = 5
+  // （xpx-120 起 requirement 额外预置「概要设计」；xpx-119 起每个文档各有一条初始版本）
+  assert.equal(res.documents, 5)
+  assert.equal(res.documentVersions, 5)
   assert.equal(store.listTree().length, 0)
   tmp.cleanup()
 })
@@ -81,7 +83,7 @@ test('同级排序与 reorder', async () => {
 test('listTree 返回 docCount 与 childCount（表格列展示用）', async () => {
   const { tmp, store } = await setup()
   const p = store.createNode({ type: 'project', name: 'P' }) // 预置「描述」
-  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' }) // 预置「需求内容」
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' }) // 预置「需求内容」+「概要设计」
   const t = store.createNode({ parentId: r.id, type: 'subreq', name: 'S' })
   store.createDocument(t.id, '自定义文档')
 
@@ -89,7 +91,7 @@ test('listTree 返回 docCount 与 childCount（表格列展示用）', async ()
   assert.equal(tree.length, 1)
   assert.equal(tree[0].docCount, 1) // project 预置「描述」
   assert.equal(tree[0].childCount, 1) // requirement R
-  assert.equal(tree[0].children[0].docCount, 1) // requirement 预置「需求内容」
+  assert.equal(tree[0].children[0].docCount, 2) // requirement 预置「需求内容」+「概要设计」
   assert.equal(tree[0].children[0].childCount, 1) // subreq S
   const s = tree[0].children[0].children[0]
   assert.equal(s.docCount, 2) // 预置「需求内容」+ 自定义文档

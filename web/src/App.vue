@@ -3,12 +3,14 @@
     <el-header class="app-header">
       <div class="logo">task-board</div>
       <el-menu :default-active="view" mode="horizontal" @select="onMenu" style="flex:1;border-bottom:none">
+        <el-menu-item index="requirements">需求管理</el-menu-item>
         <el-menu-item index="tree">任务树</el-menu-item>
         <el-menu-item index="attr-defs">属性定义</el-menu-item>
         <el-menu-item index="settings">设置</el-menu-item>
       </el-menu>
     </el-header>
     <el-main style="padding:0;overflow:hidden">
+      <RequirementsView v-if="view === 'requirements'" @select="onNodeSelect" />
       <TreeView v-if="view === 'tree'" ref="treeRef" @select="onNodeSelect" />
       <AttrDefsView v-if="view === 'attr-defs'" />
       <SettingsView v-if="view === 'settings'" />
@@ -19,6 +21,7 @@
 
 <script setup>
 import { ref, shallowRef } from 'vue'
+import RequirementsView from './views/RequirementsView.vue'
 import TreeView from './views/TreeView.vue'
 import AttrDefsView from './views/AttrDefsView.vue'
 import SettingsView from './views/SettingsView.vue'

@@ -27,6 +27,21 @@ export default {
   batch: (data) => api('/batch', { method: 'POST', body: JSON.stringify(data) }),
   importOutline: (data) => api('/import', { method: 'POST', body: JSON.stringify(data) }),
 
+  // 需求管理
+  requirements: ({ projectId, status } = {}) => {
+    const qs = new URLSearchParams()
+    if (projectId) qs.set('projectId', projectId)
+    if (status) qs.set('status', status)
+    const suffix = qs.toString() ? `?${qs}` : ''
+    return api(`/requirements${suffix}`)
+  },
+  requirementCreate: (data) => api('/requirements', { method: 'POST', body: JSON.stringify(data) }),
+  requirementTransition: (id, status) =>
+    api(`/requirements/${encodeURIComponent(id)}/transition`, {
+      method: 'POST',
+      body: JSON.stringify({ status })
+    }),
+
   // 属性定义
   attrDefs: (nodeType) => api(`/attr-defs${nodeType ? `?nodeType=${nodeType}` : ''}`),
   attrDefCreate: (data) => api('/attr-defs', { method: 'POST', body: JSON.stringify(data) }),

@@ -15,6 +15,9 @@
 | PATCH | `/api/nodes/:id` | 更新 `{name?, status?, parentId?, attrs?}`；`attrs` 为 key→value 局部更新 |
 | DELETE | `/api/nodes/:id` | 级联删除（返回删除的节点数与关联行数） |
 | POST | `/api/nodes/reorder` | `{parentId, orderedIds[]}` 一次性写入同级顺序 |
+| GET | `/api/requirements?projectId=&status=` | 需求管理列表：需求条目 + 文档关联状态 + 就绪结论 + KPI |
+| POST | `/api/requirements` | 新建需求条目并自动关联「需求内容 / 概要设计」两份文档 `{projectId?, projectPath?, name, attrs?}` |
+| POST | `/api/requirements/:id/transition` | 需求状态流转 `{status}`；只允许 `todo→doing→testing→done`，未完成前可取消，取消后可恢复 |
 | POST | `/api/nodes/upsert` | 按路径 get-or-create（幂等）：`{path, type?, name?, attrs?}` |
 | POST | `/api/batch` | 批量操作：`{ops:[...], dryRun?}`，一次调用执行多步 |
 | POST | `/api/import` | 大纲导入：`{format:"md", content, parentPath?, dryRun?}` |

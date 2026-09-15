@@ -12,6 +12,9 @@ export const TOOLS = [
   'node_update',
   'node_delete',
   'node_reorder',
+  'requirement_list',
+  'requirement_create',
+  'requirement_transition',
   'attr_defs',
   'attr_add',
   'attr_update',
@@ -1160,7 +1163,14 @@ function runOp(store, op, { dryRun, by }) {
   switch (op.op) {
     case 'node.create':
       if (dryRun) return { planned: 'node.create', name: op.name }
-      return store.createNode({ parentId: op.parentId ?? (op.parentPath ? store.resolveRef(op.parentPath).id : null), type: op.type, name: op.name, attrs: op.attrs, actor: by })
+      return store.createNode({
+        parentId: op.parentId ?? (op.parentPath ? store.resolveRef(op.parentPath).id : null),
+        type: op.type,
+        name: op.name,
+        status: op.status,
+        attrs: op.attrs,
+        actor: by
+      })
     case 'node.upsert':
       return upsertByPath(store, op.path, { type: op.type, attrs: op.attrs, by, dryRun }).node
     case 'node.update': {
