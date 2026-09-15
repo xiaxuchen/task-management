@@ -17,8 +17,10 @@
 **R1 快照保存完整门禁，不只保存结论**：只存 `ready/not_ready` 无法解释“凭什么”，
 因此 `gate_json` 保存 `buildDeliveryGate` 的完整返回（sources / evidence / blockers / totals）。
 
-**R2 指纹是稳定 JSON 的 SHA-256**：对象 key 顺序不能影响等值判断。写入时对完整门禁做键排序后哈希；
-读取时用同一算法重算当前门禁，指纹相同为 `current`，不同为 `drifted`。
+**R2 指纹是稳定 JSON 的 SHA-256，且漂移只认证据集合**：对象 key 顺序不能影响等值判断。
+写入时对完整门禁做键排序后哈希；读取时用同一算法重算当前门禁，指纹相同为 `current`，不同为 `drifted`。
+指纹前会递归剔除展示字段 `name` / `path` / `label`：节点改名、路径调整、文案翻译不属于证据变化，不应触发漂移；
+`id` / `status` / `totals` / `checks` / `reports` / `content` 等证据字段仍完整参与指纹。
 
 **R3 历史不可变、现状实时核对**：`delivery_snapshots` 只插入不更新。读取时在内存中重建当前门禁；
 `drift.currentDecision` 是现状，`snapshot.decision` 是冻结结论，两者绝不混成一个字段。
@@ -30,7 +32,8 @@
 MCP 工具回写 `created_by=mcp`，避免审计记录被错误记成 `user`。
 
 **R6 快照可导出**：`renderDeliverySnapshotMd` 同时输出冻结结论、当前核对、指纹与冻结依据，
-可直接贴进验收 / 上线记录；markdown 表格单元格沿用反斜杠 / 竖线 / 换行转义纪律。
+可直接贴进验收 / 上线记录；标题、备注和 markdown 表格单元格统一沿用反斜杠 / 竖线 / 换行转义纪律，
+并对 `#` 做标题标记转义，用户可写文本不得凭空生成新章节或伪造证据表格。
 
 ## 3. 接口语义
 

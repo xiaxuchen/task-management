@@ -1002,6 +1002,7 @@ export function renderDeliverySnapshotMd(snapshot) {
     String(v == null ? '' : v)
       .replace(/\\/g, '\\\\')
       .replace(/\|/g, '\\|')
+      .replace(/#/g, '\\#')
       .replace(/\r?\n/g, ' ')
   const decisionText = {
     ready: '可交付',
@@ -1014,7 +1015,7 @@ export function renderDeliverySnapshotMd(snapshot) {
     unknown: '无法核对当前证据'
   }[snapshot.drift?.status] || snapshot.drift?.status || '未知'
   const lines = [
-    `# 交付快照 #${snapshot.id}：${snapshot.gate?.node?.name || snapshot.nodeId}`,
+    `# 交付快照 #${snapshot.id}：${cell(snapshot.gate?.node?.name || snapshot.nodeId)}`,
     '',
     `- 冻结时间：${snapshot.createdAt}`,
     `- 操作者：${snapshot.createdBy}`,
@@ -1022,7 +1023,7 @@ export function renderDeliverySnapshotMd(snapshot) {
     `- 冻结结论：${decisionText}`,
     `- 当前核对：${driftText}`,
     `- 证据指纹：${snapshot.fingerprint}`,
-    snapshot.note ? `- 备注：${snapshot.note}` : null,
+    snapshot.note ? `- 备注：${cell(snapshot.note)}` : null,
     '',
     '## 冻结依据',
     '',

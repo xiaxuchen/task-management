@@ -56,6 +56,20 @@ test('delivery snapshot：无改动时 current；源证据变化后 drifted 且�
   assert.notEqual(again.drift.currentFingerprint, again.fingerprint)
 })
 
+test('delivery snapshot：漂移只认证据集合——节点改名不误报 drifted', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const snapshot = store.captureDeliverySnapshot(r.id)
+  assert.equal(snapshot.drift.status, 'current')
+
+  store.updateNode(r.id, { name: 'R-改名' })
+  const [again] = store.listDeliverySnapshots(r.id)
+  assert.equal(again.drift.status, 'current')
+  assert.equal(again.drift.currentFingerprint, again.fingerprint)
+  assert.equal(again.gate.node.name, 'R')
+  assert.equal(store.buildDeliveryGate(r.id).node.name, 'R-改名')
+})
+
 test('delivery snapshot：scope=subtree 冻结子树证据，并按 scope 列表隔离', async (t) => {
   const { tmp, store, p, r } = await setup()
   t.after(() => tmp.cleanup())
@@ -128,6 +142,24 @@ test('delivery snapshot：HTTP 捕获 / 列表 / 单条读取全链路', async (
   const md = await fetch(`${base}/api/delivery-snapshots/${captured.id}?format=md`).then((x) => x.text())
   assert.match(md, /^# 交付快照 #/m)
   assert.match(md, /与当前证据一致/)
+})
+
+test('delivery snapshot：Markdown 导出转义标题与备注，不能注入章节或伪造表格', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  store.updateNode(r.id, { name: 'R\n第二行|标题\\反斜杠' })
+  const snapshot = store.captureDeliverySnapshot(r.id, {
+    note: '正常备注\n\n## 注入标题\n| 伪造来源 | pass | 伪造通过 |'
+  })
+  const { renderDeliverySnapshotMd } = await import('../server/ops.mjs')
+  const md = renderDeliverySnapshotMd(store.getDeliverySnapshot(snapshot.id))
+
+  assert.ok(md.startsWith('# 交付快照 #'))
+  assert.ok(!md.includes('\n第二行'))
+  assert.ok(md.includes('第二行\\|标题\\\\反斜杠'))
+  assert.ok(!/^## 注入标题$/m.test(md))
+  assert.ok(!md.includes('\n| 伪造来源 | pass | 伪造通过 |'))
+  assert.ok(md.includes('备注：正常备注  \\#\\# 注入标题 \\| 伪造来源 \\| pass \\| 伪造通过 \\|'))
 })
 
 test('delivery snapshot：CLI capture / list / get 全链路', async (t) => {
@@ -203,6 +235,57 @@ test('delivery snapshot：MCP 真实协议捕获 / 列表 / 读取', async (t) =
 
   const oneOut = await client.callTool({ name: 'delivery_snapshot_get', arguments: { id: captured.id, format: 'md' } })
   assert.match(oneOut.content[0].text, /MCP 留痕/)
+})
+
+test('delivery snapshot：HTTP / CLI / MCP 的 markdown 输出逐字一致且保持转义', async (t) => {
+  const tmp = await tempHome()
+  const home = tmp.dir
+  const store = tmp.store.createStore(tmp.openDb())
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R\n|标题\\' })
+  store.upsertDocument(r.id, '需求内容', '需求正文')
+  store.upsertDocument(r.id, '概要设计', '设计正文')
+  const c = store.upsertTestCase(r.id, { name: '回归用例', prompt: '跑单测' })
+  const report = store.createTestReport(r.id, { caseId: c.id, status: 'running', kind: 'regression' })
+  store.finishTestReport(report.id, { status: 'pass' })
+  const snapshot = store.captureDeliverySnapshot(r.id, { note: 'A|B\\C\nD' })
+
+  const { createApp } = await import('../server/http.mjs')
+  const app = createApp({ store })
+  const server = await new Promise((resolve, reject) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s))
+    s.once('error', reject)
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  const { createMcpServer } = await import('../server/mcp.mjs')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js')
+  const mcp = createMcpServer({ store })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await mcp.connect(serverTransport)
+  const client = new Client({ name: 'taskboard-snapshot-md-consistency', version: '1.0.0' })
+  await client.connect(clientTransport)
+  t.after(async () => {
+    await client.close()
+    await mcp.close()
+    await new Promise((resolve) => server.close(resolve))
+    tmp.cleanup()
+  })
+
+  const { stdout: cliMd } = await execFileP('node', [CLI, 'delivery', 'snapshot-get', String(snapshot.id), '--format', 'md'], {
+    env: { ...process.env, TASKBOARD_HOME: home },
+    encoding: 'utf8'
+  })
+  const httpMd = await fetch(`${base}/api/delivery-snapshots/${snapshot.id}?format=md`).then((x) => x.text())
+  const mcpMd = (await client.callTool({ name: 'delivery_snapshot_get', arguments: { id: snapshot.id, format: 'md' } })).content[0].text
+  const expected = (await import('../server/ops.mjs')).renderDeliverySnapshotMd(store.getDeliverySnapshot(snapshot.id))
+
+  assert.equal(httpMd, expected)
+  assert.equal(cliMd.trimEnd(), expected)
+  assert.equal(mcpMd, expected)
+  assert.ok(expected.includes('R \\|标题\\'))
+  assert.ok(expected.includes('备注：A\\|B\\\\C D'))
+  assert.ok(!expected.includes('\n## 注入标题'))
 })
 
 test('delivery snapshot：能力清单登记三入口 1:1', async () => {

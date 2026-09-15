@@ -1754,8 +1754,27 @@ export function createStore(db, options = {}) {
     return JSON.stringify(value)
   }
 
+  /**
+   * 交付漂移只认“证据集合”，不认节点/条目的展示文本。
+   * name / path / label 是可改名、可翻译的呈现字段；把它们纳入指纹会让改错别字也触发 drifted。
+   * id / status / totals / checks / reports / content 等证据字段仍完整保留。
+   */
+  const DELIVERY_FINGERPRINT_DISPLAY_KEYS = new Set(['name', 'path', 'label'])
+  function deliveryEvidence(value) {
+    if (Array.isArray(value)) return value.map((v) => deliveryEvidence(v))
+    if (value && typeof value === 'object') {
+      const out = {}
+      for (const [key, child] of Object.entries(value)) {
+        if (DELIVERY_FINGERPRINT_DISPLAY_KEYS.has(key)) continue
+        out[key] = deliveryEvidence(child)
+      }
+      return out
+    }
+    return value
+  }
+
   function deliveryFingerprint(gate) {
-    return createHash('sha256').update(stableJson(gate)).digest('hex')
+    return createHash('sha256').update(stableJson(deliveryEvidence(gate))).digest('hex')
   }
 
   function deliverySnapshotVO(row) {
