@@ -513,3 +513,125 @@ export async function commitTrack(dir, sha, branches) {
   }
   return out
 }
+
+// ---------- 工作区（分支 / worktree）----------
+
+/** 某 ref（分支 / tag / sha）是否存在且指向一个 commit；返回 sha 或 null */
+export async function revParse(dir, ref) {
+  if (!ref) return null
+  const r = await gitTry(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  return r.ok && r.stdout.trim() ? r.stdout.trim() : null
+}
+
+/** 某本地分支当前指向的 sha（只看 refs/heads，不落到远端跟踪分支）；不存在返回 null */
+export async function localBranchSha(dir, branch) {
+  if (!branch) return null
+  const r = await gitTry(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+  return r.ok && r.stdout.trim() ? r.stdout.trim() : null
+}
+
+/** 已登记的 worktree 列表：{ path, branch, head } */
+export async function listWorktrees(dir) {
+  const r = await gitTry(dir, ['worktree', 'list', '--porcelain'])
+  if (!r.ok) return []
+  const out = []
+  let cur = {}
+  for (const line of r.stdout.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      if (cur.path) out.push(cur)
+      cur = { path: line.slice('worktree '.length).trim() }
+    } else if (line.startsWith('HEAD ')) {
+      cur.head = line.slice('HEAD '.length).trim()
+    } else if (line.startsWith('branch ')) {
+      cur.branch = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '')
+    } else if (line.startsWith('detached')) {
+      cur.detached = true
+    }
+  }
+  if (cur.path) out.push(cur)
+  return out
+}
+
+/** 路径的 worktree 占用情况：'same'（就是本分支）| 'other'（被别人占）| null（未占用） */
+export async function worktreeOccupancy(dir, worktreePath, branch) {
+  const list = await listWorktrees(dir)
+  const hit = list.find((w) => samePath(w.path, worktreePath))
+  if (!hit) return null
+  return hit.branch && hit.branch === branch ? 'same' : 'other'
+}
+
+/**
+ * 路径等价判定。git 会把符号链接解析后的真实路径写进 `worktree list`
+ * （macOS 上 `/tmp/...` → `/private/tmp/...`），直接比字符串会漏判成「未占用」，
+ * 进而把幂等复用误报成 409、或在清理时找不到目标。两侧都做 realpath 归一。
+ */
+function samePath(a, b) {
+  if (!a || !b) return false
+  const norm = (p) => {
+    try {
+      return fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p)
+    } catch {
+      return path.resolve(p)
+    }
+  }
+  return norm(a) === norm(b)
+}
+
+/**
+ * 创建工作区（分支 + worktree）。
+ * ① 路径已存在且就是本分支 → 幂等跳过（alreadyExists）
+ * ② 路径被其他分支占用，或存在同名普通目录 → path-occupied（调用方映射 409 WORKTREE_PATH_EXISTS）
+ * ③ 分支不存在 → 从 baseBranch 的**当前最新提交**派生（这正是「以创建时刻为基」的语义）
+ * ④ 分支已存在 → 复用并回报 branchSha，由调用方与 baseBranch 比对判 BRANCH_EXISTS_DIFFERENT_BASE
+ */
+export async function addWorktree(dir, { worktreePath, branch, baseBranch }) {
+  const occupied = await worktreeOccupancy(dir, worktreePath, branch)
+  if (occupied === 'same') {
+    return { ok: true, alreadyExists: true, worktreePath, branch, reason: 'already_exists' }
+  }
+  if (occupied === 'other') {
+    return { ok: false, reason: 'path-occupied', worktreePath, branch }
+  }
+  if (fs.existsSync(worktreePath)) {
+    // 路径存在但不是本仓库登记的 worktree（普通目录）→ 一律视为占用，避免误用/误删
+    return { ok: false, reason: 'path-occupied', worktreePath, branch, message: '路径已存在但不是本仓库的 worktree' }
+  }
+
+  const existing = await localBranchSha(dir, branch)
+  if (existing) {
+    const r = await gitTry(dir, ['worktree', 'add', worktreePath, branch])
+    if (!r.ok) return { ok: false, reason: 'worktree-add-failed', message: String(r.stderr || '').slice(0, 1000) }
+    return { ok: true, branchReused: true, branchSha: existing, worktreePath, branch, reason: 'reused_branch' }
+  }
+
+  // 基线不存在时提前给出可行动判定，避免把 git 的模糊报错透给调用方
+  const baseSha = await revParse(dir, baseBranch)
+  if (!baseSha) return { ok: false, reason: 'base-not-found', baseBranch, worktreePath, branch }
+  const r = await gitTry(dir, ['worktree', 'add', '-b', branch, worktreePath, baseBranch])
+  if (!r.ok) return { ok: false, reason: 'worktree-add-failed', message: String(r.stderr || '').slice(0, 1000) }
+  return { ok: true, created: true, branchSha: baseSha, baseSha, worktreePath, branch, reason: 'created' }
+}
+
+/** 移除 worktree（不删分支）；未登记为 worktree 时按「已不存在」处理（幂等） */
+export async function removeWorktree(dir, worktreePath) {
+  const list = await listWorktrees(dir)
+  if (!list.some((w) => samePath(w.path, worktreePath))) {
+    return { ok: true, alreadyRemoved: true, worktreePath }
+  }
+  const r = await gitTry(dir, ['worktree', 'remove', worktreePath, '--force'])
+  if (!r.ok) return { ok: false, reason: 'worktree-remove-failed', message: String(r.stderr || '').slice(0, 1000) }
+  return { ok: true, removed: true, worktreePath }
+}
+
+/**
+ * 删除本地分支。默认 `-d` 交给 git 自带的「是否已并入上游」检查，
+ * 未并入时返回 reason='branch-not-merged' 由调用方决定是否放行，
+ * 避免清理动作悄悄丢掉尚未合并的开发分支。
+ */
+export async function deleteLocalBranch(dir, branch) {
+  const exists = await localBranchSha(dir, branch)
+  if (!exists) return { ok: true, alreadyRemoved: true, branch }
+  const r = await gitTry(dir, ['branch', '-d', branch])
+  if (!r.ok) return { ok: false, reason: 'branch-not-merged', message: String(r.stderr || '').slice(0, 1000) }
+  return { ok: true, removed: true, branch }
+}
