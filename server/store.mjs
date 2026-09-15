@@ -124,10 +124,29 @@ function parseRunVerdicts(text) {
 export function createStore(db, options = {}) {
   const docPresets = options.docPresets || DEFAULT_DOC_PRESETS
   const readiness = options.readiness || DEFAULT_READINESS
-  const requirementStatuses = Array.isArray(options.status?.allowed?.requirement) && options.status.allowed.requirement.length
-    ? options.status.allowed.requirement.map(String)
+  const transitionStatuses = Object.keys(REQUIREMENT_TRANSITIONS)
+  const configuredRequirementStatuses = Array.isArray(options.status?.allowed?.requirement) && options.status.allowed.requirement.length
+    ? [...new Set(options.status.allowed.requirement.map(String))]
     : DEFAULT_REQUIREMENT_STATUSES
+  const unknownRequirementStatuses = configuredRequirementStatuses.filter((s) => !transitionStatuses.includes(s))
+  if (unknownRequirementStatuses.length) {
+    throw new AppError(
+      CODES.VALIDATION_FAILED,
+      `status.allowed.requirement 包含未定义流转规则的状态：${unknownRequirementStatuses.join(', ')}`,
+      { invalid: unknownRequirementStatuses, allowed: transitionStatuses }
+    )
+  }
+  if (!configuredRequirementStatuses.includes('todo')) {
+    throw new AppError(CODES.VALIDATION_FAILED, 'status.allowed.requirement 必须包含起始状态 todo', {
+      allowed: configuredRequirementStatuses,
+      required: 'todo'
+    })
+  }
+  const requirementStatuses = transitionStatuses.filter((s) => configuredRequirementStatuses.includes(s))
   const requirementStatusSet = new Set(requirementStatuses)
+  const requirementTransitions = Object.fromEntries(
+    requirementStatuses.map((s) => [s, (REQUIREMENT_TRANSITIONS[s] || []).filter((t) => requirementStatusSet.has(t))])
+  )
   const stmt = (sql) => db.prepare(sql)
 
   let bumpDepth = 0
@@ -275,7 +294,7 @@ export function createStore(db, options = {}) {
   }
 
   function canTransitionRequirement(from, to) {
-    return (REQUIREMENT_TRANSITIONS[from] || []).includes(to)
+    return (requirementTransitions[from] || []).includes(to)
   }
 
   const requirementDocNames = () => [
@@ -309,7 +328,7 @@ export function createStore(db, options = {}) {
       documents: listDocuments(node.id),
       docState: requirementDocState(node.id),
       readiness,
-      canTransitionTo: REQUIREMENT_TRANSITIONS[node.status] || []
+      canTransitionTo: requirementTransitions[node.status] || []
     }
   }
 
@@ -342,16 +361,16 @@ export function createStore(db, options = {}) {
     if (cur.type !== 'requirement') {
       throw new AppError(CODES.VALIDATION_FAILED, `节点 ${cur.id} 不是需求条目`, { nodeId: cur.id, nodeType: cur.type })
     }
-    if (!Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, status)) {
+    if (!requirementStatusSet.has(status)) {
       throw new AppError(CODES.VALIDATION_FAILED, `未知需求状态 ${status}`, {
         status,
-        allowed: Object.keys(REQUIREMENT_TRANSITIONS)
+        allowed: [...requirementStatusSet]
       })
     }
-    if (!Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, cur.status)) {
+    if (!requirementStatusSet.has(cur.status)) {
       throw new AppError(CODES.VALIDATION_FAILED, `需求当前状态 ${cur.status} 不在受控流转图内`, {
         status: cur.status,
-        allowed: Object.keys(REQUIREMENT_TRANSITIONS)
+        allowed: [...requirementStatusSet]
       })
     }
     if (cur.status === status) return requirementVO(cur)
@@ -359,7 +378,7 @@ export function createStore(db, options = {}) {
       throw new AppError(CODES.VALIDATION_FAILED, `需求不能从 ${cur.status} 流转到 ${status}`, {
         from: cur.status,
         to: status,
-        allowed: REQUIREMENT_TRANSITIONS[cur.status] || []
+        allowed: requirementTransitions[cur.status] || []
       })
     }
     updateNode(nodeId, { status }, by, { allowRequirementTransition: true })
@@ -401,14 +420,14 @@ export function createStore(db, options = {}) {
         cur.type === 'requirement' &&
         !options.allowRequirementTransition &&
         patch.status !== cur.status &&
-        Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, cur.status) &&
-        Object.prototype.hasOwnProperty.call(REQUIREMENT_TRANSITIONS, patch.status) &&
-        !canTransitionRequirement(cur.status, patch.status)
+        requirementStatusSet.has(patch.status) &&
+        !canTransitionRequirement(cur.status, patch.status) &&
+        requirementStatusSet.has(cur.status)
       ) {
         throw new AppError(CODES.VALIDATION_FAILED, `需求不能从 ${cur.status} 流转到 ${patch.status}`, {
           from: cur.status,
           to: patch.status,
-          allowed: REQUIREMENT_TRANSITIONS[cur.status] || []
+          allowed: requirementTransitions[cur.status] || []
         })
       }
       fields.push('status = ?')

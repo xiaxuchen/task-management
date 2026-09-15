@@ -24,10 +24,12 @@
 这样列表永远不会出现「像需求但没有文档槽位」的条目。
 文档名沿用 `config.readiness`，团队改「详细设计」等命名时无需改本功能。
 
-**R3 状态机在 store 强制**：入口层不能自己判断状态；`createNode` 只允许需求以 `todo` 起始，
-`updateNode` / `transitionRequirement` 对枚举外状态统一拒绝，通用 `updateNode` 还校验
-`REQUIREMENT_TRANSITIONS`。允许 `cancelled → todo` 是刻意保留的恢复通道，但 `done → *` 为空，
-确保完成后的需求不会被静默改回。
+**R3 状态机在 store 强制且只有一套事实来源**：`REQUIREMENT_TRANSITIONS` 定义 workflow 图，
+`config.status.allowed.requirement` 只能是该图的**子集开关**，不能引入图外状态。store 启动时：
+若白名单包含图外状态，或缺少起始状态 `todo`，直接 `VALIDATION_FAILED`；否则按白名单对图做交集，
+`assertRequirementStatus` / `canTransitionRequirement` / `canTransitionTo` / `requirementSummary`
+全部使用这份有效状态集。`createNode` 只允许需求以 `todo` 起始，`updateNode` / `transitionRequirement`
+统一复用该图；允许 `cancelled → todo` 是刻意保留的恢复通道，但 `done → *` 为空。
 
 **R4 文档「关联」与「已填写」分开**：`docState` 同时返回 `linked` 与 `filled`。
 创建需求会自动产生空白文档，如果只报关联状态，列表会把空壳需求误报成完整；

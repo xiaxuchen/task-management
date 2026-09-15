@@ -10,6 +10,15 @@ async function setup() {
   return { tmp, store, p1, p2 }
 }
 
+async function setupWithStatus(allowedRequirement) {
+  const tmp = await tempHome()
+  const store = tmp.store.createStore(tmp.openDb(), {
+    status: { allowed: { requirement: allowedRequirement } }
+  })
+  const p = store.createNode({ type: 'project', name: '项目A' })
+  return { tmp, store, p }
+}
+
 test('需求条目：创建时关联需求内容与概要设计两份文档', async () => {
   const { tmp, store, p1 } = await setup()
   const r = store.createRequirement({ projectId: p1.id, name: '需求A' })
@@ -110,5 +119,38 @@ test('status 筛选下 summary 与 items 口径一致', async () => {
   assert.equal(out.length, 1)
   assert.equal(summary.total, 1)
   assert.deepEqual(summary.byStatus, { todo: 0, doing: 1, testing: 0, done: 0, cancelled: 0 })
+  tmp.cleanup()
+})
+
+test('自定义图外需求状态必须在启动期拒绝，不能成为直达 done 的走廊', async () => {
+  const tmp = await tempHome()
+  assert.throws(
+    () =>
+      tmp.store.createStore(tmp.openDb(), {
+        status: { allowed: { requirement: ['todo', 'doing', 'testing', 'done', 'cancelled', 'blocked'] } }
+      }),
+    /VALIDATION_FAILED/
+  )
+  tmp.cleanup()
+})
+
+test('收窄需求状态配置后，canTransitionTo / 流转 / KPI 共用同一有效状态集', async () => {
+  const { tmp, store, p } = await setupWithStatus(['todo', 'doing', 'testing', 'done'])
+  const r = store.createRequirement({ projectId: p.id, name: 'R' })
+  assert.deepEqual(r.canTransitionTo, ['doing'])
+
+  const doing = store.transitionRequirement(r.id, { status: 'doing' })
+  assert.deepEqual(doing.canTransitionTo, ['testing'])
+  assert.throws(() => store.transitionRequirement(r.id, { status: 'cancelled' }), /VALIDATION_FAILED/)
+  assert.throws(() => store.updateNode(r.id, { status: 'done' }), /VALIDATION_FAILED/)
+
+  const testing = store.transitionRequirement(r.id, { status: 'testing' })
+  assert.deepEqual(testing.canTransitionTo, ['done'])
+  const done = store.transitionRequirement(r.id, { status: 'done' })
+  assert.deepEqual(done.canTransitionTo, [])
+
+  const summary = store.requirementSummary({ projectId: p.id })
+  assert.deepEqual(summary.byStatus, { todo: 0, doing: 0, testing: 0, done: 1 })
+  assert.equal(summary.total, 1)
   tmp.cleanup()
 })
