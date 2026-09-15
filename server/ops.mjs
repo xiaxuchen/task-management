@@ -1002,8 +1002,13 @@ export function runTestCases(
   }
   const effectiveKind = kind || cases[0].kind
 
+  // 显式传了 maxParallel 就先严格校验，**不只在 fanout 分支里校验**——
+  // 否则 `fanout:false` 时非法类型会被静默忽略（HTTP 三入口的 `true` / `"4"` / `[1]` 漏洞就在这），
+  // 与「非法值一律 VALIDATION_FAILED，不静默降级」的纪律相悖。
+  const limit = normalizeMaxParallel(maxParallel)
+
   if (fanout) {
-    return runTestCasesFanout(store, node, cases, { prompt, agent, model, cwd, dryRun, maxParallel }, by)
+    return runTestCasesFanout(store, node, cases, { prompt, agent, model, cwd, dryRun, limit }, by)
   }
 
   const composed = composeTestPrompt(node, cases, prompt)
@@ -1025,8 +1030,7 @@ export function runTestCases(
 }
 
 /** 并行派单分支：每条用例一个 run + 一条报告；dryRun 只回报将派哪些任务与各自的提示词 */
-function runTestCasesFanout(store, node, cases, { prompt, agent, model, cwd, dryRun, maxParallel }, by) {
-  const limit = normalizeMaxParallel(maxParallel)
+function runTestCasesFanout(store, node, cases, { prompt, agent, model, cwd, dryRun, limit }, by) {
   if (cases.length > limit) {
     throw new AppError(
       CODES.VALIDATION_FAILED,
@@ -1068,18 +1072,43 @@ function runTestCasesFanout(store, node, cases, { prompt, agent, model, cwd, dry
   }
 }
 
-/** maxParallel 校验：缺省 4；必须是 1..16 的整数，其它值一律 VALIDATION_FAILED（不静默降级） */
+/**
+ * maxParallel 校验：缺省 4；必须是 1..16 的 **number 类型整数**。
+ *
+ * 先卡 `typeof === 'number'` 再判整数值域：早期写法 `Number(value)` 会把 `true` → 1、
+ * `'4'` → 4、`[1]` → 1 这类非法输入隐式放过，而 MCP（zod `z.number()`）/ CLI（`parseArgs`
+ * 的字符串参数）口径不同，三入口就对不上。这里做单点严格校验，三入口一律把原始值透传进来，
+ * 不做任何预转换，保证 HTTP / CLI / MCP 对非 number 输入的行为 1:1。
+ */
 function normalizeMaxParallel(value) {
   if (value == null) return DEFAULT_MAX_PARALLEL
-  const n = Number(value)
-  if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL_LIMIT) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > MAX_PARALLEL_LIMIT) {
     throw new AppError(
       CODES.VALIDATION_FAILED,
       `maxParallel 必须是 1..${MAX_PARALLEL_LIMIT} 的整数，收到：${value}`,
       { maxParallel: value, allowed: { min: 1, max: MAX_PARALLEL_LIMIT } }
     )
   }
-  return n
+  return value
+}
+
+/**
+ * CLI 入口的 maxParallel 解析：argv 天然是文本，`Number()` 会把 `0x10` → 16、
+ * `1e1` → 10、` 4 ` → 4 这类非规范写法悄悄放过，与 HTTP / MCP 的「非 number 一律拒绝」对不上。
+ * 这里只接受**规范的十进制整数字面量**，其余（`1.5` / `true` / `0x10` / `1e1` / 空串）一律
+ * `VALIDATION_FAILED`，再交给 `normalizeMaxParallel` 做值域判定，保证三入口同一把尺子。
+ */
+export function parseMaxParallelCli(text) {
+  if (text == null) return null
+  const raw = String(text)
+  if (!/^\d+$/.test(raw)) {
+    throw new AppError(
+      CODES.VALIDATION_FAILED,
+      `maxParallel 必须是 1..${MAX_PARALLEL_LIMIT} 的整数，收到：${raw}`,
+      { maxParallel: raw, allowed: { min: 1, max: MAX_PARALLEL_LIMIT } }
+    )
+  }
+  return normalizeMaxParallel(Number(raw))
 }
 
 /** 把用例拼成给 agent 的回归提示词：显式列出每条用例的期望，要求逐条给出结论 */

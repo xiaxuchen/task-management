@@ -25,8 +25,9 @@ TaskBoard 的立项目标是「让 AI 按照流程完成需要并且**并行**�
 - R3 并行护栏 `maxParallel`：缺省 4、上限 16。执行器在本进程内异步 spawn、没有排队调度器，
   所以「选中数 > 护栏」**显式拒绝**（`VALIDATION_FAILED`，带 `selected` / `maxParallel` / `limit`），
   而不是静默截断——截断会让多出来的用例留下永远 running 的报告（假执行中）。
-- R4 `maxParallel` 值域 1..16 的整数；`0` / 负数 / 小数 / 超过上限一律 `VALIDATION_FAILED`，不静默降级
-  （与 `scope` / `format` 同一条纪律）。
+- R4 `maxParallel` 必须是 **number 类型的 1..16 整数**；`true` / `"4"` / `[1]` 等非 number 输入，
+  以及 `0` / 负数 / 小数 / 超过上限，一律 `VALIDATION_FAILED`，不静默降级（与 `scope` / `format` 同一条纪律）。
+  校验对 `fanout` 与 grouped **都生效**（非法值不得因为没走 fan-out 就被静默忽略）。
 - R5 `dryRun=true` 在 fan-out 下只回报**将派哪些任务**与**各自的提示词**（逐条用例成段），不落库、不派单、不动 revision。
 - R6 三入口 1:1：HTTP body / CLI `--fanout --max-parallel N` / MCP schema 字段集一致。
 - R7 CLI 非 dry-run 的 fan-out 要等到**所有** run 终态再退出（复用 `waitForAgentRun` 逐个有界等待；
@@ -35,6 +36,10 @@ TaskBoard 的立项目标是「让 AI 按照流程完成需要并且**并行**�
 - R8 收尾口径不变：每个 run 落终态时仍由 `finalizeReportsForRun` 逐条解析结论回写自己的那条报告；
   fan-out 下每个 run 只有一条报告，解析面更干净。
 - R9 报告归属不变：报告仍挂回**用例所属节点**（`c.nodeId`），验收 / 交付门禁口径不受影响。
+- R10 重试语义：重试是**一次新的执行**——`retryAgentRun` 建 child run 后，为父 run 关联的每条用例
+  随 child run 开一条新的 `running` 报告（旧结论作为历史保留、不原地改写）；child run 落终态时
+  `finalizeReportsForRun` 收尾该报告，验收报告按「最近一条」取到重试后的结论。
+  不带用例报告的普通 agent 任务重试不凭空建报告；「建 child run + 随 child 报告」合并为**一次** revision 递增。
 
 ## 3. 非目标（首版）
 
@@ -46,8 +51,13 @@ TaskBoard 的立项目标是「让 AI 按照流程完成需要并且**并行**�
 ## 4. 验收标准
 
 - `test/test-fanout.test.mjs`：grouped 缺省行为不变（单 run + N 报告）；fan-out 每用例一个 run / 报告 /
-  独立提示词；护栏拒绝与值域校验；`dryRun` 不落库不动 revision；`caseIds` / `kind` 过滤；三入口字段一致；
+  独立提示词；护栏拒绝与值域校验；**非 number 类型严格拒绝（HTTP / CLI / MCP 三入口口径一致）**；
+  `dryRun` 不落库不动 revision；`caseIds` / `kind` 过滤；三入口字段一致；
   收尾后每条报告各自独立结论（一条 fail 不影响另一条 pass）。
-- `test/http.test.mjs` / `test/cli-regression-loop.test.mjs`：入口契约（HTTP body 字段、CLI `--fanout`）。
+- `test/agent.test.mjs` / `test/run-finalize.test.mjs`：**重试刷新用例报告**（缺陷 1 回归）——
+  store 级（child 报告新建 / child 终态刷新 / 验收取重试结论 / 普通任务不建报告 / grouped 多用例 /
+  只 +1 revision）与进程级真实 CLI `agent run retry` 端到端。
+- `test/cli-regression-loop.test.mjs`：入口契约（HTTP body 字段、CLI `--fanout` / `--max-parallel`
+  严格整数字面量与 grouped 下的拒绝）。
 - `npm test` 全绿；三入口 1:1；文档同步更新（本目录 + `docs/design/04-api.md` + `docs/api.md`
   + `docs/design/08-testing.md` + `features/README.md`）。

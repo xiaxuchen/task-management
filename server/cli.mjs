@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { openDb } from './db.mjs'
 import { createStore } from './store.mjs'
 import { loadConfig, saveConfig, maskToken, DB_PATH } from './config.mjs'
-import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd, buildDeliveryGateFull } from './ops.mjs'
+import { buildSchema, renderTreeMd, upsertByPath, importOutline, applyBatch, getCommitDiff, getNodeDiffs, getCommitTrack, getNodeTracks, getNodePushGate, getCombinedDiff, getNodeDuplicates, runTestCases, renderAcceptanceMd, runReleaseChecks, renderReleaseChecklistMd, renderReadinessMd, renderDeliveryGateMd, renderPushGateMd, buildDeliveryGateFull, parseMaxParallelCli } from './ops.mjs'
 import { startAgentRun, retryAndDispatch, waitForAgentRun } from './agent.mjs'
 
 const OPTIONS = {
@@ -403,7 +403,9 @@ export async function run(argv) {
         cwd: values.cwd,
         dryRun: !!values['dry-run'],
         fanout: !!values.fanout,
-        maxParallel: values['max-parallel'] != null ? Number(values['max-parallel']) : null
+        // argv 是文本：由 ops.parseMaxParallelCli 做规范整数字面量校验，
+        // 保证与 HTTP / MCP 一样严格拒绝 `1.5` / `true` / `0x10` / 空串等非 number 输入。
+        maxParallel: parseMaxParallelCli(values['max-parallel'])
       }, by)
       json(await settleCliDispatch(store, out, values))
       break

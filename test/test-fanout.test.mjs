@@ -137,6 +137,51 @@ test('fanout：maxParallel 值域 1..16，非法值一律 VALIDATION_FAILED（�
   assert.equal(store.listAgentRuns(task.id).length, 0)
 })
 
+test('fanout 缺陷2回归：maxParallel 严格拒绝非 number 类型（true / "4" / [1] 等）', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  const { runTestCases } = await import('../server/ops.mjs')
+  store.createTestCase(task.id, { name: 'A', prompt: 'p' })
+  const dir = agentDir(t)
+  // 旧实现用 Number(value) 隐式转换：true→1、"4"→4、[1]→1 都会被放过（独立测试缺陷 2）。
+  for (const bad of [true, false, '4', '1', [1], {}, '', ' ', '0x10', '1e1']) {
+    assert.throws(
+      () => runTestCases(store, task.id, { agent: 'echo', cwd: dir, fanout: true, maxParallel: bad }),
+      (e) => e.code === 'VALIDATION_FAILED' && /maxParallel 必须是 1\.\.16 的整数/.test(e.message),
+      `maxParallel=${JSON.stringify(bad)} 应当被严格拒绝`
+    )
+  }
+  assert.equal(store.listAgentRuns(task.id).length, 0, '拒绝后不留任务')
+})
+
+test('fanout 缺陷2回归：非法 maxParallel 在 grouped（fanout=false）下也拒绝，不被静默忽略', async (t) => {
+  const { tmp, store, task } = await setup()
+  t.after(() => tmp.cleanup())
+  const { runTestCases } = await import('../server/ops.mjs')
+  store.createTestCase(task.id, { name: 'A', prompt: 'p' })
+  const dir = agentDir(t)
+  // 旧实现把校验放在 fanout 分支内，grouped 时非法类型被静默忽略（HTTP 漏洞）。
+  assert.throws(
+    () => runTestCases(store, task.id, { agent: 'echo', cwd: dir, fanout: false, maxParallel: '4' }),
+    (e) => e.code === 'VALIDATION_FAILED'
+  )
+  assert.equal(store.listAgentRuns(task.id).length, 0)
+})
+
+test('fanout 缺陷2回归：parseMaxParallelCli 只看规范十进制整数，其余一律拒绝', async (t) => {
+  const { parseMaxParallelCli } = await import('../server/ops.mjs')
+  assert.equal(parseMaxParallelCli(null), null, '缺省不传 → null（走默认 4）')
+  assert.equal(parseMaxParallelCli('4'), 4)
+  assert.equal(parseMaxParallelCli('16'), 16)
+  for (const bad of ['1.5', 'true', '0x10', '1e1', '', ' ', '-1', '0', '17', '4abc', ' 4 ']) {
+    assert.throws(
+      () => parseMaxParallelCli(bad),
+      (e) => e.code === 'VALIDATION_FAILED' && /maxParallel 必须是 1\.\.16 的整数/.test(e.message),
+      `CLI maxParallel=${JSON.stringify(bad)} 应当被拒绝`
+    )
+  }
+})
+
 test('fanout：maxParallel 边界值 1 与 16 可用', async (t) => {
   const { tmp, store, task } = await setup()
   t.after(() => tmp.cleanup())
@@ -261,6 +306,75 @@ test('fanout：HTTP /api/nodes/:id/test-runs 透传 fanout 与 maxParallel', asy
   assert.equal(over.status, 400)
   const overBody = await over.json()
   assert.equal(overBody.error.code, 'VALIDATION_FAILED')
+})
+
+test('fanout 缺陷2回归：HTTP 对非 number maxParallel 一律 400 VALIDATION_FAILED（含 grouped）', async (t) => {
+  const tmp = await tempHome()
+  const store = tmp.store.createStore(tmp.openDb())
+  const { createApp } = await import('../server/http.mjs')
+  const app = createApp({ store })
+  const server = await new Promise((resolve, reject) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s))
+    s.once('error', reject)
+  })
+  t.after(() => {
+    server.close()
+    tmp.cleanup()
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  store.createTestCase(r.id, { name: 'A', prompt: 'p' })
+
+  const post = (payload) =>
+    fetch(`${base}/api/nodes/${r.id}/test-runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(async (res) => ({ status: res.status, body: await res.json() }))
+
+  for (const bad of [true, '4', [1], '1e1', '0x10', 1.5]) {
+    const fan = await post({ fanout: true, dryRun: true, maxParallel: bad })
+    assert.equal(fan.status, 400, `fanout maxParallel=${JSON.stringify(bad)}`)
+    assert.equal(fan.body.error.code, 'VALIDATION_FAILED')
+    // grouped 分支同样不能静默忽略
+    const grouped = await post({ dryRun: true, maxParallel: bad })
+    assert.equal(grouped.status, 400, `grouped maxParallel=${JSON.stringify(bad)}`)
+    assert.equal(grouped.body.error.code, 'VALIDATION_FAILED')
+  }
+  assert.equal(store.listAgentRuns(r.id).length, 0)
+})
+
+test('fanout 缺陷2回归：MCP 对非 number maxParallel 返回 isError + VALIDATION_FAILED，不泄漏 -32602', async (t) => {
+  const tmp = await tempHome()
+  const store = tmp.store.createStore(tmp.openDb())
+  const { createMcpServer } = await import('../server/mcp.mjs')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js')
+  const server = createMcpServer({ store })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  const client = new Client({ name: 'taskboard-fanout-type', version: '1.0.0' })
+  await client.connect(clientTransport)
+  t.after(async () => {
+    await client.close()
+    await server.close()
+    tmp.cleanup()
+  })
+
+  const p = store.createNode({ type: 'project', name: 'P' })
+  const r = store.createNode({ parentId: p.id, type: 'requirement', name: 'R' })
+  store.createTestCase(r.id, { name: 'A', prompt: 'p' })
+
+  for (const bad of [true, '4', [1], 1.5]) {
+    const out = await client.callTool({
+      name: 'test_run',
+      arguments: { node: r.id, fanout: true, dryRun: true, maxParallel: bad }
+    })
+    assert.equal(out.isError, true, `maxParallel=${JSON.stringify(bad)} 应当 isError`)
+    assert.match(out.content[0].text, /VALIDATION_FAILED/)
+    assert.ok(!/MCP error -32602/.test(out.content[0].text), '不得泄漏 SDK -32602')
+  }
 })
 
 test('fanout：MCP test_run 暴露 fanout / maxParallel 且与 ops 结果一致', async (t) => {
