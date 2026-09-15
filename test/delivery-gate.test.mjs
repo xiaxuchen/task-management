@@ -141,6 +141,31 @@ test('delivery_gate：纯读聚合，不产生 revision', async (t) => {
   assert.equal(store.getRevision(), before)
 })
 
+test('delivery_gate：必做上线项已 done 但检查用例未执行时仍不可交付（假绿灯回归）', async (t) => {
+  const { tmp, store, r } = await setup()
+  t.after(() => tmp.cleanup())
+  const testCase = makeReadinessPass(store, r.id)
+  // 上线项全部完成，但登记在册的代码检查从未执行：旧实现会给出 ready
+  store.createReleaseItem(r.id, { name: '执行上线 SQL', kind: 'sql', status: 'done' })
+  const lint = store.createTestCase(r.id, { name: '静态检查', prompt: '跑 lint', kind: 'code_check' })
+  // 签收指纹覆盖全部启用用例：先登记检查用例，再签收，验证的才是上线证据本身。
+  makeAcceptancePass(store, r.id, testCase.id)
+
+  const gate = store.buildDeliveryGate(r.id)
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(sourceOf(gate, 'release').status, 'fail')
+  assert.ok(gate.blockers.some((b) => b.source === 'release' && b.name === lint.name))
+
+  // 检查用例回写 pass 后才恢复可交付
+  const report = store.createTestReport(r.id, { caseId: lint.id, kind: 'code_check', status: 'running' })
+  store.finishTestReport(report.id, { status: 'pass', summary: '无告警' })
+  // 新检查结论也会改变验收证据指纹；按签收闭环语义重新签收后验证最终就绪。
+  store.upsertAcceptanceSignoff(r.id, { decision: 'accepted', comment: '检查通过后重新验收' })
+  const after = store.buildDeliveryGate(r.id)
+  assert.equal(after.decision, 'ready')
+  assert.equal(sourceOf(after, 'release').status, 'pass')
+})
+
 test('delivery_gate：markdown 渲染含最终结论与阻塞项', async (t) => {
   const { tmp, store, r } = await setup()
   t.after(() => tmp.cleanup())
