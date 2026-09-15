@@ -11,7 +11,7 @@ test('openDb 建出全部表并开启 WAL / 外键', async () => {
     .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     .all()
     .map((r) => r.name)
-  for (const t of ['nodes', 'attr_defs', 'attr_values', 'commits', 'mrs', 'documents', 'repos', 'merges', 'unit_repos', 'test_cases', 'test_reports', 'release_items', 'meta']) {
+  for (const t of ['nodes', 'attr_defs', 'attr_values', 'commits', 'mrs', 'documents', 'document_versions', 'repos', 'merges', 'unit_repos', 'test_cases', 'test_reports', 'release_items', 'meta']) {
     assert.ok(tables.includes(t), `缺表 ${t}`)
   }
   assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')

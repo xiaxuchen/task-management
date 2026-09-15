@@ -31,8 +31,19 @@ if (!fs.existsSync(dbPath)) {
 const db = new DatabaseSync(dbPath)
 db.exec('PRAGMA foreign_keys = OFF')
 
-/** 导出顺序即导入顺序（外键依赖在前） */
-const TABLE_ORDER = ['attr_defs', 'repos', 'nodes', 'attr_values', 'documents', 'commits', 'mrs', 'merges', 'unit_repos']
+/** 导出顺序即导入顺序（外键依赖在前；document_versions 必须紧跟 documents） */
+const TABLE_ORDER = [
+  'attr_defs',
+  'repos',
+  'nodes',
+  'attr_values',
+  'documents',
+  'document_versions',
+  'commits',
+  'mrs',
+  'merges',
+  'unit_repos'
+]
 
 const tables = {}
 for (const t of TABLE_ORDER) {

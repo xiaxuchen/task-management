@@ -60,6 +60,7 @@ test('级联删除返回删除计数', async () => {
   const res = store.deleteNode(p.id)
   assert.equal(res.nodes, 4)
   assert.equal(res.documents, 4)
+  assert.equal(res.documentVersions, 4)
   assert.equal(store.listTree().length, 0)
   tmp.cleanup()
 })

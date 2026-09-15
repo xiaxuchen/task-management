@@ -60,6 +60,7 @@ const OPTIONS = {
   title: { type: 'string' },
   'since-seq': { type: 'string' },
   ids: { type: 'string' },
+  version: { type: 'string' },
   branches: { type: 'boolean' },
   keep: { type: 'string' },
   remove: { type: 'string' },
@@ -95,6 +96,8 @@ const HELP = `task-board <命令>
   node get <ref>                     ref = 节点 id 或路径（项目A/需求1）
   attr list [--type <nodeType>]
   doc list <ref>
+  doc history <docId>                    列出文档历史版本（新版本在前）
+  doc restore <docId> --version <vid>    恢复文档到指定历史版本（追加新版本，不改写历史）
   commit list <ref> [--subtree]
   commit diff <cid>                  单个 commit 的 diff（文件列表 + patch）
   commit track <cid>                 检测提交是否已合入测试/预发/上线分支
@@ -314,6 +317,12 @@ export async function run(argv) {
       json(store.upsertDocument(node.id, values.name, body, by))
       break
     }
+    case 'doc history':
+      json(store.listDocumentVersions(Number(ref)))
+      break
+    case 'doc restore':
+      json(store.restoreDocumentVersion(Number(ref), Number(values.version), by))
+      break
     case 'commit list':
       json(store.listCommits(store.resolveRef(ref).id, { subtree: !!values.subtree }))
       break

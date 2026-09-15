@@ -31,3 +31,4 @@
   - 导入幂等：清空业务表后按旧 id→新 id 重映射重建（含父子与外键），revision 一并对齐
   - 安全：不导出/不恢复 `config.json`（含 GitLab token）；不建议直接提交 `data.db`（二进制 + WAL 会丢数据）
   - 验证：还原到临时空库后 nodes/docunents/attr_values 计数一致、正文 120804 字符一致、父子关系无孤儿
+- fix(foundation): 数据快照纳入 document_versions 并重映射文档外键，孤儿版本丢弃

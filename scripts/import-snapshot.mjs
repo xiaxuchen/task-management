@@ -38,7 +38,18 @@ if (snap.format !== 'taskboard-snapshot') {
 }
 
 /** 清空顺序：外键依赖在后的先删（与导入顺序相反） */
-const IMPORT_ORDER = ['attr_defs', 'repos', 'nodes', 'attr_values', 'documents', 'commits', 'mrs', 'merges', 'unit_repos']
+const IMPORT_ORDER = [
+  'attr_defs',
+  'repos',
+  'nodes',
+  'attr_values',
+  'documents',
+  'document_versions',
+  'commits',
+  'mrs',
+  'merges',
+  'unit_repos'
+]
 const DELETE_ORDER = [...IMPORT_ORDER].reverse()
 
 const db = new DatabaseSync(dbPath)
@@ -55,7 +66,7 @@ try {
   for (const t of DELETE_ORDER) db.prepare(`DELETE FROM ${t}`).run()
 
   // 主键重映射：旧 id → 新 id（父子/外键关系靠它重建，不依赖旧 id）
-  const idMaps = { attr_defs: new Map(), repos: new Map(), nodes: new Map() }
+  const idMaps = { attr_defs: new Map(), repos: new Map(), nodes: new Map(), documents: new Map() }
 
   // 1) attr_defs（无外键依赖）
   for (const r of snap.tables.attr_defs || []) {
@@ -84,20 +95,33 @@ try {
     insert('attr_values', { ...r, node_id: mapNode(r.node_id), attr_def_id: idMaps.attr_defs.get(r.attr_def_id) ?? null })
   }
 
-  // 5) documents / commits / mrs（依赖 nodes）
-  for (const t of ['documents', 'commits', 'mrs']) {
+  // 5) documents（依赖 nodes；记录旧 id → 新 id 供历史快照重映射）
+  for (const r of snap.tables.documents || []) {
+    const info = insert('documents', { ...r, node_id: mapNode(r.node_id) })
+    idMaps.documents.set(r.id, Number(info.lastInsertRowid))
+  }
+
+  // 6) document_versions（依赖 documents；孤儿行直接丢弃，绝不沿用旧 document_id）
+  for (const r of snap.tables.document_versions || []) {
+    const documentId = idMaps.documents.get(r.document_id)
+    if (documentId == null) continue
+    insert('document_versions', { ...r, document_id: documentId })
+  }
+
+  // 7) commits / mrs（依赖 nodes）
+  for (const t of ['commits', 'mrs']) {
     for (const r of snap.tables[t] || []) insert(t, { ...r, node_id: mapNode(r.node_id) })
   }
 
-  // 6) merges（依赖 nodes；repo 存的是仓库名，无需映射）
+  // 8) merges（依赖 nodes；repo 存的是仓库名，无需映射）
   for (const r of snap.tables.merges || []) insert('merges', { ...r, node_id: mapNode(r.node_id) })
 
-  // 7) unit_repos（依赖 nodes + repos）
+  // 9) unit_repos（依赖 nodes + repos）
   for (const r of snap.tables.unit_repos || []) {
     insert('unit_repos', { ...r, node_id: mapNode(r.node_id), repo_id: idMaps.repos.get(r.repo_id) ?? null })
   }
 
-  // 8) revision 对齐快照（前端轮询据此刷新）
+  // 10) revision 对齐快照（前端轮询据此刷新）
   db.prepare("UPDATE meta SET value = ? WHERE key = 'revision'").run(String(snap.revision ?? 0))
 
   db.exec('COMMIT')

@@ -272,6 +272,13 @@ export function createStore(db, options = {}) {
     const placeholders = ids.map(() => '?').join(',')
     const counts = {
       documents: db.prepare(`SELECT COUNT(*) c FROM documents WHERE node_id IN (${placeholders})`).get(...ids).c,
+      documentVersions: db
+        .prepare(
+          `SELECT COUNT(*) c FROM document_versions WHERE document_id IN (
+             SELECT id FROM documents WHERE node_id IN (${placeholders})
+           )`
+        )
+        .get(...ids).c,
       attrValues: db.prepare(`SELECT COUNT(*) c FROM attr_values WHERE node_id IN (${placeholders})`).get(...ids).c,
       commits: db.prepare(`SELECT COUNT(*) c FROM commits WHERE node_id IN (${placeholders})`).get(...ids).c,
       mrs: db.prepare(`SELECT COUNT(*) c FROM mrs WHERE node_id IN (${placeholders})`).get(...ids).c,
@@ -575,6 +582,68 @@ export function createStore(db, options = {}) {
     }
   }
 
+  function documentVersionVO(r) {
+    return {
+      id: r.id,
+      documentId: r.document_id,
+      name: r.name,
+      content: r.content,
+      reason: r.reason,
+      createdAt: r.created_at,
+      createdBy: r.created_by
+    }
+  }
+
+  /**
+   * 保存文档快照。快照只追加，不修改，恢复历史版本也会形成一条新快照，
+   * 这样历史链能够完整解释每次文档状态的变化。
+   */
+  function saveDocumentVersion(row, reason = 'update') {
+    const info = db
+      .prepare(
+        'INSERT INTO document_versions (document_id,name,content,reason,created_at,created_by) VALUES (?,?,?,?,?,?)'
+      )
+      .run(row.id, row.name, row.content ?? '', reason, now(), row.updated_by || row.created_by || 'user')
+    return documentVersionVO(db.prepare('SELECT * FROM document_versions WHERE id = ?').get(Number(info.lastInsertRowid)))
+  }
+
+  function listDocumentVersions(docId) {
+    const cur = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
+    return db.prepare('SELECT * FROM document_versions WHERE document_id = ? ORDER BY id DESC').all(docId).map(documentVersionVO)
+  }
+
+  function restoreDocumentVersion(docId, versionId, by = 'user') {
+    const cur = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
+    if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
+    const version = db.prepare('SELECT * FROM document_versions WHERE id = ? AND document_id = ?').get(versionId, docId)
+    if (!version) throw new AppError(CODES.NOT_FOUND, `文档版本 ${versionId} 不存在`, { id: versionId, documentId: docId })
+    const targetName = String(version.name || '').trim()
+    if (!targetName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    const duplicate = db
+      .prepare('SELECT id FROM documents WHERE node_id = ? AND name = ? AND id <> ?')
+      .get(cur.node_id, targetName, docId)
+    if (duplicate) {
+      throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${targetName}」`, {
+        nodeId: cur.node_id,
+        name: targetName
+      })
+    }
+    const ts = now()
+    const byActor = actor(by)
+    db.prepare('UPDATE documents SET name = ?, content = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(
+      targetName,
+      version.content ?? '',
+      ts,
+      byActor,
+      docId
+    )
+    const restored = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
+    const snapshot = saveDocumentVersion(restored, 'restore')
+    bumpRevision()
+    return { document: docVO(restored), version: snapshot }
+  }
+
   function listDocuments(nodeId) {
     rawNode(nodeId)
     return db.prepare('SELECT * FROM documents WHERE node_id = ? ORDER BY sort, id').all(nodeId).map(docVO)
@@ -593,34 +662,44 @@ export function createStore(db, options = {}) {
         'INSERT INTO documents (node_id,name,content,sort,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)'
       )
       .run(nodeId, docName, String(content ?? ''), sort, ts, ts, actor(by), actor(by))
+    const created = db.prepare('SELECT * FROM documents WHERE id = ?').get(Number(info.lastInsertRowid))
+    saveDocumentVersion(created, 'create')
     bumpRevision()
-    return docVO(db.prepare('SELECT * FROM documents WHERE id = ?').get(Number(info.lastInsertRowid)))
+    return docVO(created)
   }
 
   function updateDocument(docId, patch, by = 'user') {
     const cur = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
     if (!cur) throw new AppError(CODES.NOT_FOUND, `文档 ${docId} 不存在`, { id: docId })
+    const nextName = patch.name !== undefined ? String(patch.name || '').trim() : null
+    const nextContent = patch.content !== undefined ? String(patch.content ?? '') : null
+    if (patch.name !== undefined && !nextName) {
+      throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    }
+    const nameChanged = patch.name !== undefined && nextName !== cur.name
+    const contentChanged = patch.content !== undefined && nextContent !== cur.content
+    if (!nameChanged && !contentChanged) return docVO(cur)
     const fields = []
     const args = []
-    if (patch.name !== undefined) {
-      const docName = String(patch.name || '').trim()
-      if (!docName) throw new AppError(CODES.VALIDATION_FAILED, '文档名必填', { field: 'name' })
+    if (nameChanged) {
       const dup = db
         .prepare('SELECT id FROM documents WHERE node_id = ? AND name = ? AND id <> ?')
-        .get(cur.node_id, docName, docId)
-      if (dup) throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${docName}」`, { name: docName })
+        .get(cur.node_id, nextName, docId)
+      if (dup) throw new AppError(CODES.DOC_NAME_EXISTS, `节点下已存在文档「${nextName}」`, { name: nextName })
       fields.push('name = ?')
-      args.push(docName)
+      args.push(nextName)
     }
-    if (patch.content !== undefined) {
+    if (contentChanged) {
       fields.push('content = ?')
-      args.push(String(patch.content ?? ''))
+      args.push(nextContent)
     }
     fields.push('updated_at = ?', 'updated_by = ?')
     args.push(now(), actor(by), docId)
     db.prepare(`UPDATE documents SET ${fields.join(', ')} WHERE id = ?`).run(...args)
+    const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId)
+    saveDocumentVersion(updated, 'update')
     bumpRevision()
-    return docVO(db.prepare('SELECT * FROM documents WHERE id = ?').get(docId))
+    return docVO(updated)
   }
 
   function upsertDocument(nodeId, name, content = null, by = 'user') {
@@ -2518,6 +2597,8 @@ export function createStore(db, options = {}) {
     upsertDocument,
     deleteDocument,
     reorderDocuments,
+    listDocumentVersions,
+    restoreDocumentVersion,
     docPresetNames,
     // commits
     getCommit,

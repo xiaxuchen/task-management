@@ -17,7 +17,14 @@
 - R5 AI 友好 upsert：`upsertDocument(nodeId, name, content)` 按名 get-or-create —— 已存在则更新内容并返回 `{created:false}`，重复调用安全。
 - R6 排序 / 删除：`reorderDocuments(nodeId, orderedIds)` 一次性重排；`deleteDocument(docId)` 删除单篇（删节点时随外键级联全删）。
 - R7 副作用：每次写入 `revision` +1，并记录 `created_by` / `updated_by`（user / ai / cli / import）。
+- R8 版本留痕：文档创建、改名或改正文时自动保存不可变快照（名称 / 正文 / 变更原因 / 操作者 / 时间）。
+- R9 历史查询：按文档 id 倒序列出历史版本，供 Web 与 AI 判断之前发生了什么。
+- R10 版本恢复：可恢复历史版本并追加一条 `restore` 快照，不改写既有历史；恢复旧名称撞到现存文档时返回 `DOC_NAME_EXISTS`。
+- R11 老库迁移：老库首次打开时为已有文档回填一条 `migrated` 基线快照，重复打开不重复回填。
+- R12 快照迁移：数据快照导出/导入必须包含 `document_versions` 并按新 document id 重映射；孤儿版本丢弃，不得串到其它文档。
+- R13 降噪与口径：空 patch 或名称/正文未变化时不追加无差异快照；恢复前快照名按现有文档命名口径 `trim` 后校验，空名拒绝。
 
 ## 3. 验收标准
 
 - `test/store-docs.test.mjs`：按类型预置文档、按名 upsert 幂等且覆盖内容、重名新建与改名撞名报 `DOC_NAME_EXISTS`、排序与删除
+- `test/document-history.test.mjs`：创建 / 更新留痕、恢复追加新版本、重名恢复拒绝、HTTP / CLI / MCP 一致性、老库迁移幂等

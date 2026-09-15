@@ -216,6 +216,20 @@ curl -s -X POST http://127.0.0.1:3210/api/nodes/1/documents/reorder \
 curl -s -X DELETE http://127.0.0.1:3210/api/documents/4
 ```
 
+### 文档历史与恢复
+
+```bash
+curl -s http://127.0.0.1:3210/api/documents/4/versions
+curl -s -X POST http://127.0.0.1:3210/api/documents/4/versions/2/restore
+```
+
+```json
+{
+  "document": { "id": 4, "name": "需求内容", "content": "旧正文", "updatedBy": "user" },
+  "version": { "id": 5, "documentId": 4, "name": "需求内容", "content": "旧正文", "reason": "restore", "createdBy": "user" }
+}
+```
+
 重名 → `409`：
 
 ```json

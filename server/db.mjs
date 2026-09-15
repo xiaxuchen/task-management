@@ -103,6 +103,19 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS idx_documents_node ON documents(node_id, sort);
 
+-- 文档历史：每次创建 / 改名 / 改正文后保存一份不可变快照。
+-- 恢复历史版本会生成一个新快照，不覆盖或删除任何既有版本。
+CREATE TABLE IF NOT EXISTS document_versions (
+  id INTEGER PRIMARY KEY,
+  document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT 'update',
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'user'
+);
+CREATE INDEX IF NOT EXISTS idx_document_versions_doc ON document_versions(document_id, id);
+
 CREATE TABLE IF NOT EXISTS repos (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -526,6 +539,24 @@ function migrate(db) {
       UNIQUE(node_id, name)
     );
     CREATE INDEX IF NOT EXISTS idx_release_items_node ON release_items(node_id, sort, id);
+  `)
+
+  // 文档历史（v6）：SCHEMA 会为新老库建表；老库中已有文档在首次打开时各回填一份当前快照。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS document_versions (
+      id INTEGER PRIMARY KEY,
+      document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL DEFAULT 'update',
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'user'
+    );
+    CREATE INDEX IF NOT EXISTS idx_document_versions_doc ON document_versions(document_id, id);
+    INSERT INTO document_versions (document_id, name, content, reason, created_at, created_by)
+    SELECT d.id, d.name, d.content, 'migrated', d.updated_at, d.updated_by
+      FROM documents d
+     WHERE NOT EXISTS (SELECT 1 FROM document_versions v WHERE v.document_id = d.id);
   `)
 
   // max_attempts 从「死字段」升级为硬上限（默认 3）。老库的历史行都带着旧的默认 1，
