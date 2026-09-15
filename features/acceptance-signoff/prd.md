@@ -17,7 +17,7 @@
   （Web=user、CLI=cli、MCP=mcp）。
 - R3 状态机：无用例 `not_applicable`；有用例未签收 `pending`；签收后证据变化 `stale`；
   其余为 `accepted` / `rejected`。
-- R4 证据绑定：签收保存验收报告（用例、期望、最近报告及结论、分桶）的 sha256 指纹；
+- R4 证据绑定：签收保存验收报告（用例、执行指令、期望、最近报告及结论、分桶）的 sha256 指纹；
   任何测试证据变化都会让旧签收失效。
 - R5 交付门禁：验收来源只在「无阻塞测试结果 + 当前证据 accepted」时通过；
   `pending/rejected/stale` 一律阻塞并给出可行动 blocker。

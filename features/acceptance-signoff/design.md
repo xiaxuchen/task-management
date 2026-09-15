@@ -18,9 +18,10 @@
 **R1 测试与验收分离**：`test_reports` 是客观执行事实，`acceptance_signoffs` 是业务判断。
 测试全绿只让 acceptance 来源进入「可签收」候选，不能直接变绿。
 
-**R2 证据指纹**：签收时对 scope、分桶、passRate、每条用例的 id/name/kind/expectation/
-latestStatus/latestReportId/latestAt 做 sha256。它覆盖「用例集变化、期望变化、最新报告变化」
-三类会导致旧验收结论失效的事件；展示字段与排序不参与指纹，避免噪声。
+**R2 证据指纹**：签收时对 scope、分桶、passRate 与按稳定 `caseId` 升序排序的 canonical 用例集合
+做 sha256；每条用例纳入 id/name/kind/prompt/expectation/latestStatus/latestReportId。
+它覆盖「用例集变化、执行指令变化、期望变化、最新报告变化」四类会导致旧验收结论失效的事件；
+展示字段与排序不参与指纹，避免噪声。
 
 **R3 状态优先级**：存在签收时，先判 `stale`，再返回 `accepted/rejected`；
 没有签收时按用例数返回 `not_applicable/pending`。这样过期签收绝不会继续显示为已验收。

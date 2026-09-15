@@ -403,7 +403,8 @@ index：`idx_test_reports_node(node_id, id)`、`idx_test_reports_case(case_id, i
 | created_at / updated_at | TEXT | |
 
 约束：`UNIQUE(node_id, scope)`；index：`idx_acceptance_signoffs_node(node_id, scope)`。
-签收绑定证据指纹：用例、期望或最近报告结论一旦变化，既有签收自动视为 `stale`，交付门禁重新阻塞。
+签收绑定证据指纹：用例、执行指令、期望或最近报告结论一旦变化，既有签收自动视为 `stale`，交付门禁重新阻塞；
+指纹按稳定 `caseId` 排序构造 canonical 集合，仅调整展示顺序不会失效。
 分桶总数守恒：`pass + fail + blocked + error + cancelled + running + notRun = cases`；
 `running`（已派单未回写）与 `notRun`（从未派单）都不计入通过率分母，
 通过率 = `pass / settled`（`settled` = 五种终态之和），无完结时 `passRate = null`。

@@ -1293,6 +1293,7 @@ export function createStore(db, options = {}) {
         nodeId: c.nodeId,
         name: c.name,
         kind: c.kind,
+        prompt: c.prompt,
         expectation: c.expectation,
         latestStatus: latest ? latest.status : 'not_run',
         latestReportId: latest ? latest.id : null,
@@ -1327,19 +1328,26 @@ export function createStore(db, options = {}) {
       items,
       reports: reports.slice(0, 20)
     }
-    // 证据指纹只绑定验收结论本身（用例集、期望、最近一次报告及其结论），
-    // 不包含聚合时的展示排序等易噪声字段。任何一处变化都会让既有签收失效。
+    // 证据指纹绑定“验收时实际签了什么”：按稳定 case id 构造 canonical 集合，
+    // 纳入执行指令 prompt、期望、最近一次报告与结论；sort / latestAt 等展示或时间噪声不参与，
+    // 否则仅 reorder 也会让签收失效。
+    const canonicalCases = report.items
+      .map((i) => ({
+        caseId: i.caseId,
+        nodeId: i.nodeId,
+        name: i.name,
+        kind: i.kind,
+        prompt: i.prompt,
+        expectation: i.expectation,
+        latestStatus: i.latestStatus,
+        latestReportId: i.latestReportId
+      }))
+      .sort((a, b) => a.caseId - b.caseId || a.nodeId - b.nodeId)
     const fingerprintInput = {
       scope: effectiveScope,
       totals: report.totals,
       passRate: report.passRate,
-      items: report.items.map((i) => ({
-        name: i.name,
-        kind: i.kind,
-        expectation: i.expectation,
-        latestStatus: i.latestStatus,
-        latestAt: i.latestAt
-      }))
+      cases: canonicalCases
     }
     report.evidenceFingerprint = createHash('sha256').update(JSON.stringify(fingerprintInput)).digest('hex')
     return report

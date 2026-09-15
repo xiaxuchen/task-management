@@ -93,6 +93,39 @@ test('验收签收：用例期望变化也会让旧签收失效', async (t) => {
   assert.equal(store.buildDeliveryGate(r.id).blockers.at(-1).detail, '验收签收已失效（测试证据已变化）')
 })
 
+test('验收签收：用例 prompt 变化会 stale 并阻塞交付', async (t) => {
+  const { tmp, store, r, testCase } = await setup()
+  t.after(() => tmp.cleanup())
+  passCase(store, r.id, testCase.id)
+  const fingerprintBefore = store.buildAcceptanceStatus(r.id).report.evidenceFingerprint
+  store.upsertAcceptanceSignoff(r.id, { decision: 'accepted' })
+  assert.equal(store.buildDeliveryGate(r.id).decision, 'ready')
+
+  store.updateTestCase(testCase.id, { prompt: '改为支付回归（执行步骤已变化）' })
+  const status = store.buildAcceptanceStatus(r.id)
+  assert.notEqual(status.report.evidenceFingerprint, fingerprintBefore)
+  assert.equal(status.state, 'stale')
+  assert.equal(store.buildDeliveryGate(r.id).decision, 'not_ready')
+  assert.equal(store.buildDeliveryGate(r.id).blockers.at(-1).detail, '验收签收已失效（测试证据已变化）')
+})
+
+test('验收签收：仅调整用例排序不会让签收 stale', async (t) => {
+  const { tmp, store, r, testCase } = await setup()
+  t.after(() => tmp.cleanup())
+  passCase(store, r.id, testCase.id)
+  const second = store.upsertTestCase(r.id, { name: '第二条用例', prompt: '跑第二条' })
+  passCase(store, r.id, second.id)
+  store.upsertAcceptanceSignoff(r.id, { decision: 'accepted' })
+  assert.equal(store.buildDeliveryGate(r.id).decision, 'ready')
+
+  const fingerprintBefore = store.buildAcceptanceStatus(r.id).report.evidenceFingerprint
+  store.reorderTestCases(r.id, [second.id, testCase.id])
+  const status = store.buildAcceptanceStatus(r.id)
+  assert.equal(status.report.evidenceFingerprint, fingerprintBefore)
+  assert.equal(status.state, 'accepted')
+  assert.equal(store.buildDeliveryGate(r.id).decision, 'ready')
+})
+
 test('验收签收：没有用例时拒绝签收，状态为 not_applicable', async (t) => {
   const { tmp, store, r } = await setup()
   t.after(() => tmp.cleanup())
@@ -148,6 +181,47 @@ test('验收签收（HTTP）：状态 / 签收 / md 输出可用', async (t) => 
   assert.equal(md.status, 200)
   assert.match(md.headers.get('content-type') || '', /text\/markdown/)
   assert.match(await md.text(), /# 验收签收：R/)
+})
+
+test('验收签收（HTTP）：prompt 变化 stale 阻塞，仅 reorder 不 stale', async (t) => {
+  const { tmp, store, r, testCase } = await setup()
+  const { createApp } = await import('../server/http.mjs')
+  const server = await new Promise((resolve, reject) => {
+    const s = createApp({ store }).listen(0, '127.0.0.1', () => resolve(s))
+    s.once('error', reject)
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  const request = (method, pathname, body) =>
+    fetch(`${base}${pathname}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    }).then((x) => x.json())
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve))
+    tmp.cleanup()
+  })
+
+  passCase(store, r.id, testCase.id)
+  const second = store.upsertTestCase(r.id, { name: '第二条用例', prompt: '跑第二条' })
+  passCase(store, r.id, second.id)
+  await request('POST', `/api/nodes/${r.id}/acceptance-signoff`, { decision: 'accepted' })
+  const before = await request('GET', `/api/nodes/${r.id}/acceptance-status`)
+  assert.equal(before.state, 'accepted')
+
+  await request('POST', `/api/nodes/${r.id}/test-cases/reorder`, { orderedIds: [second.id, testCase.id] })
+  const afterReorder = await request('GET', `/api/nodes/${r.id}/acceptance-status`)
+  assert.equal(afterReorder.report.evidenceFingerprint, before.report.evidenceFingerprint)
+  assert.equal(afterReorder.state, 'accepted')
+  assert.equal((await request('GET', `/api/nodes/${r.id}/delivery-gate`)).decision, 'ready')
+
+  await request('PATCH', `/api/test-cases/${testCase.id}`, { prompt: '改为支付回归（执行步骤已变化）' })
+  const afterPrompt = await request('GET', `/api/nodes/${r.id}/acceptance-status`)
+  assert.notEqual(afterPrompt.report.evidenceFingerprint, before.report.evidenceFingerprint)
+  assert.equal(afterPrompt.state, 'stale')
+  const gate = await request('GET', `/api/nodes/${r.id}/delivery-gate`)
+  assert.equal(gate.decision, 'not_ready')
+  assert.equal(gate.sources.find((s) => s.key === 'acceptance').evidence.signoffState, 'stale')
 })
 
 test('验收签收（CLI）：acceptance-status / acceptance-sign 与 store 一致', async (t) => {
